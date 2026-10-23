@@ -1,0 +1,198 @@
+import { z } from 'zod';
+
+import { AVATAR_IDS } from '../catalog.js';
+
+/**
+ * Adventure document stored per account.
+ * Keep the ids aligned with the Expo client's `parseSave` output.
+ * Broken fields are rejected here; the client already drops them locally.
+ */
+
+const REGION_IDS = [
+  'forest',
+  'beach',
+  'mountains',
+  'ocean',
+  'volcano',
+  'desert',
+  'plains',
+  'tundra',
+  'swamp',
+  'savannah',
+  'light',
+  'dark',
+  'chaos',
+  'outer-space',
+] as const;
+
+const ITEM_IDS = [
+  'hp-potion',
+  'mana-potion',
+  'stamina-potion',
+  'ration',
+  'town-scroll',
+  'antidote',
+  'berry',
+  'mana-fruit',
+  'hearty-fruit',
+  'net',
+  'sword',
+  'armor',
+] as const;
+
+const stackSchema = z.object({
+  itemId: z.enum(ITEM_IDS),
+  qty: z.number().int().min(1).max(999),
+});
+
+const tamedSchema = z.object({
+  id: z.string().regex(/^[a-z0-9:_-]{1,80}$/i),
+  kindId: z.string().regex(/^[a-z0-9:_-]{1,80}$/i),
+  name: z.string().trim().min(1).max(40),
+  level: z.number().int().min(1).max(200),
+  exp: z.number().int().min(0).max(10_000_000),
+  tint: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  maxHp: z.number().int().min(1).max(99_999),
+  maxMp: z.number().int().min(0).max(99_999),
+  hp: z.number().int().min(0).max(99_999),
+  mp: z.number().int().min(0).max(99_999),
+  attack: z.number().int().min(0).max(99_999),
+  defense: z.number().int().min(0).max(99_999),
+  speed: z.number().int().min(0).max(9_999),
+  basicId: z.string().regex(/^[a-z0-9:_-]{1,80}$/i).optional(),
+  skillIds: z.array(z.string().regex(/^[a-z0-9:_-]{1,80}$/i)).max(4).optional(),
+});
+
+export const saveSchema = z.object({
+  version: z.literal(1),
+  revision: z.number().int().min(0).max(1_000_000_000),
+  updatedAt: z.string().min(16).max(40),
+  profile: z.object({
+    name: z.string().trim().min(1).max(18),
+    level: z.number().int().min(1).max(200),
+    exp: z.number().int().min(0).max(10_000_000),
+    gender: z.enum(['male', 'female']),
+    baseCharacterId: z.enum(AVATAR_IDS),
+    hairColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    outfitColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    selectedRegion: z.enum(REGION_IDS),
+  }),
+  status: z.object({
+    hp: z.number().int().min(0).max(99_999),
+    maxHp: z.number().int().min(1).max(99_999),
+    mp: z.number().int().min(0).max(99_999),
+    maxMp: z.number().int().min(0).max(99_999),
+    stamina: z.number().int().min(0).max(99_999),
+    maxStamina: z.number().int().min(1).max(99_999),
+    gold: z.number().int().min(0).max(9_999_999),
+  }),
+  inventory: z.object({
+    bag: z.array(stackSchema).max(64),
+    storage: z.array(stackSchema).max(64),
+    weapon: z.object({ itemId: z.literal('sword'), plus: z.number().int().min(0).max(5) }).nullable(),
+    armor: z.object({ itemId: z.literal('armor'), plus: z.number().int().min(0).max(5) }).nullable(),
+  }),
+  roster: z.array(tamedSchema).max(200),
+  quests: z.object({
+    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    winsToday: z.number().int().min(0).max(9_999),
+    feedsToday: z.number().int().min(0).max(9_999),
+    scrollsToday: z.number().int().min(0).max(9_999),
+    totalWins: z.number().int().min(0).max(999_999),
+    claimed: z.array(z.string().min(1).max(40)).max(100),
+  }),
+  codex: z.object({
+    species: z.array(z.string().regex(/^[a-z0-9:_-]{1,80}$/i)).max(300),
+    skills: z.array(z.string().regex(/^[a-z0-9:_-]{1,80}$/i)).max(400),
+  }),
+  world: z.object({
+    scene: z.enum(['town', 'wilds']),
+    regionId: z.enum(REGION_IDS),
+    zoneId: z.string().regex(/^[a-z0-9:_-]{1,80}$/i),
+    homeRegion: z.enum(REGION_IDS),
+    unlocked: z.array(z.enum(REGION_IDS)).max(20),
+    baseAttack: z.number().int().min(1).max(99_999),
+    baseDefense: z.number().int().min(0).max(99_999),
+    innReadyAt: z.number().min(0).max(10_000_000_000_000),
+    pet: z.object({
+      name: z.string().trim().min(1).max(40),
+      hp: z.number().int().min(0).max(99_999),
+      maxHp: z.number().int().min(1).max(99_999),
+      mp: z.number().int().min(0).max(99_999),
+      maxMp: z.number().int().min(0).max(99_999),
+      stamina: z.number().int().min(0).max(99_999),
+      maxStamina: z.number().int().min(1).max(99_999),
+    }),
+    heroSkills: z
+      .object({
+        professionId: z.string().regex(/^[a-z-]{1,32}$/),
+        basicId: z.string().regex(/^[a-z0-9:_-]{1,80}$/i),
+        skillIds: z.array(z.string().regex(/^[a-z0-9:_-]{1,80}$/i)).max(4),
+      })
+      .nullable(),
+    adventureLevel: z.number().int().min(1).max(200),
+    adventureExp: z.number().int().min(0).max(10_000_000),
+  }),
+  avatar: z
+    .union([
+      z.object({ kind: z.literal('preset'), characterId: z.enum(AVATAR_IDS) }),
+      z.object({ kind: z.literal('custom'), uri: z.string().min(1).max(120_000) }),
+    ])
+    .nullable(),
+});
+
+export type GameSave = z.infer<typeof saveSchema>;
+
+export function isNewerSave(incoming: GameSave, existing: GameSave): boolean {
+  const next = Date.parse(incoming.updatedAt);
+  const prev = Date.parse(existing.updatedAt);
+  if (Number.isFinite(next) && Number.isFinite(prev)) return next >= prev;
+  return incoming.revision >= existing.revision;
+}
+
+/** Minimal valid document for the smoke test. */
+export function sampleSave(updatedAt: string, gold: number, revision = 1): GameSave {
+  return {
+    version: 1,
+    revision,
+    updatedAt,
+    profile: {
+      name: 'Lan',
+      level: 1,
+      exp: 0,
+      gender: 'female',
+      baseCharacterId: 'f-archer',
+      hairColor: '#7a4630',
+      outfitColor: '#3e6b4d',
+      selectedRegion: 'forest',
+    },
+    status: { hp: 90, maxHp: 100, mp: 30, maxMp: 40, stamina: 20, maxStamina: 40, gold },
+    inventory: {
+      bag: [
+        { itemId: 'net', qty: 3 },
+        { itemId: 'hp-potion', qty: 2 },
+      ],
+      storage: [],
+      weapon: null,
+      armor: null,
+    },
+    roster: [],
+    quests: { day: '2026-10-23', winsToday: 1, feedsToday: 0, scrollsToday: 0, totalWins: 1, claimed: [] },
+    codex: { species: [], skills: [] },
+    world: {
+      scene: 'town',
+      regionId: 'forest',
+      zoneId: 'town:forest',
+      homeRegion: 'forest',
+      unlocked: ['forest'],
+      baseAttack: 12,
+      baseDefense: 4,
+      innReadyAt: 0,
+      pet: { name: 'Sóc nhỏ', hp: 18, maxHp: 18, mp: 8, maxMp: 8, stamina: 12, maxStamina: 12 },
+      heroSkills: null,
+      adventureLevel: 1,
+      adventureExp: 0,
+    },
+    avatar: { kind: 'preset', characterId: 'f-archer' },
+  };
+}

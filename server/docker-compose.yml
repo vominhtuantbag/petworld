@@ -1,0 +1,10 @@
+services:
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - game-thu-gian-mongo:/data/db
+
+volumes:
+  game-thu-gian-mongo:

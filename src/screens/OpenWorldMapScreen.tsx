@@ -1,0 +1,157 @@
+import { useState } from 'react';
+import { Platform, StyleSheet, View } from 'react-native';
+
+import { CharacterAvatar } from '../components/CharacterAvatar';
+import { MapHud, type MapMenuId } from '../components/map/MapHud';
+import { portraitFacesRight } from '../components/world/facing';
+import { FieldStage } from '../components/world/FieldStage';
+import { MOBILE_WORLD_ZOOM } from '../components/world/FieldView';
+import { PlayerInfoHUD } from '../components/world/PlayerInfoHUD';
+import { Minimap } from '../components/world/Minimap';
+import { getCharacter } from '../data/characters';
+import { useAvatarLook } from '../state/avatarLook';
+import { useSetup } from '../state/SetupContext';
+import { useWorld } from '../state/WorldContext';
+import { theme } from '../theme/theme';
+import { lootFits } from '../world/items';
+import { expForNextLevel } from '../world/progression';
+import { useFieldSession } from '../world/useFieldSession';
+import type { Encounter, FieldEvent, MonsterActor } from '../world/types';
+
+/**
+ * Wilderness around the current town. Monsters stay inside their uneven
+ * level zone and chase when you enter the hidden danger circle. Gates link
+ * the neighboring towns and, far from the entrance, the next map tier.
+ */
+export function OpenWorldMapScreen() {
+  const world = useWorld();
+  const setup = useSetup();
+  const { field, update } = useFieldSession(world.zoneId);
+  const [menu, setMenu] = useState<MapMenuId | null>(null);
+  const [customizing, setCustomizing] = useState(false);
+  const look = useAvatarLook(setup.player?.baseCharacterId);
+  const character = getCharacter(setup.player?.baseCharacterId);
+
+  const onEvent = (event: FieldEvent) => {
+    if (event.type === 'travel') {
+      world.travelTo(event.toZone, event.arrive, event.unlock);
+      return;
+    }
+    if (event.type === 'pickup') {
+      world.collect(event.loot);
+      return;
+    }
+    if (event.type === 'hazard') {
+      world.sufferHazard(event.dt);
+      return;
+    }
+    if (event.type === 'march') {
+      world.march(event.distance, event.dt);
+      return;
+    }
+    if (event.type === 'quicksand') {
+      world.hurtQuicksand();
+      return;
+    }
+    if (event.type === 'puddle') {
+      world.drainPuddle();
+      return;
+    }
+    if (event.type === 'encounter') {
+      const pool = battlePool(field.monsters, field.player, event.monster);
+      world.beginEncounter({ ...pool[0], pool });
+    }
+  };
+
+  return (
+    <View style={styles.screen}>
+      <FieldStage
+        field={field}
+        onField={update}
+        onEvent={onEvent}
+        canTake={(loot) => lootFits(world.bag, loot)}
+        paused={menu !== null || customizing}
+        playerLevel={world.adventureLevel}
+        stamina={world.vitals.stamina}
+        testID="world-screen"
+        zoom={Platform.OS === 'web' ? 1 : MOBILE_WORLD_ZOOM}
+        playerFacesRight={portraitFacesRight(character?.professionId, character?.gender)}
+        player={
+          character && setup.player ? (
+            <CharacterAvatar
+              character={character}
+              hairColor={setup.player.hairColor}
+              outfitColor={setup.player.outfitColor}
+              size={89}
+            />
+          ) : null
+        }
+      >
+        <View pointerEvents="box-none" style={styles.top}>
+          <PlayerInfoHUD
+            name={setup.player?.name ?? 'Bạn'}
+            level={world.adventureLevel}
+            classTitle={character?.title ?? 'Nhân vật'}
+            exp={world.adventureExp}
+            expNeeded={expForNextLevel(world.adventureLevel)}
+            vitals={world.vitals}
+            gold={world.gold}
+            portrait={look.portrait}
+            customUri={look.customUri}
+            hairColor={setup.player?.hairColor ?? '#e0aa78'}
+            outfitColor={setup.player?.outfitColor ?? '#3d6b45'}
+            ownCharacterId={setup.player?.baseCharacterId ?? null}
+            notice={world.notice}
+            onChoosePreset={look.choosePreset}
+            onChooseImage={look.chooseImage}
+            onBusy={setCustomizing}
+          />
+          <Minimap field={field} />
+        </View>
+      </FieldStage>
+      <MapHud menu={menu} onOpen={setMenu} onClose={() => setMenu(null)} />
+    </View>
+  );
+}
+
+function battlePool(monsters: MonsterActor[], player: { x: number; y: number }, trigger: MonsterActor): Encounter[] {
+  const ranked = [...monsters].sort((a, b) => {
+    const da = Math.hypot(a.x - player.x, a.y - player.y);
+    const db = Math.hypot(b.x - player.x, b.y - player.y);
+    return da - db;
+  });
+  const pool: Encounter[] = [];
+  const seen = new Set<string>();
+  for (const monster of [trigger, ...ranked]) {
+    if (seen.has(monster.id)) continue;
+    seen.add(monster.id);
+    pool.push(toCard(monster));
+    if (pool.length >= 6) break;
+  }
+  while (pool.length < 3) {
+    const base = pool[pool.length - 1];
+    pool.push({ ...base, id: `${base.id}-pack-${pool.length}`, name: `${base.name} ${pool.length + 1}` });
+  }
+  return pool;
+}
+
+function toCard(monster: MonsterActor): Encounter {
+  return {
+    id: monster.id,
+    kindId: monster.kindId,
+    name: monster.name,
+    level: monster.level,
+    hp: monster.maxHp,
+    maxHp: monster.maxHp,
+    attack: monster.attack,
+    defense: monster.defense,
+    speed: monster.speed,
+    tint: monster.tint,
+    elite: monster.elite,
+  };
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: theme.bgDeep },
+  top: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+});
