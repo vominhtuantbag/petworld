@@ -143,6 +143,44 @@ export const saveSchema = z.object({
 
 export type GameSave = z.infer<typeof saveSchema>;
 
+export function saveIssue(error: z.ZodError): string {
+  const issue = error.issues[0];
+  const path = issue?.path.join('.') || 'save';
+  return `Bản lưu không hợp lệ (${path}).`;
+}
+
+/** Accept `{ save }` or the document itself, and map mana fields onto mp. */
+export function coerceSaveInput(body: unknown): unknown {
+  if (!isRecord(body)) return body;
+  const source = isRecord(body.save) ? body.save : body.version === 1 || isRecord(body.profile) ? body : null;
+  if (!source) return body.save;
+  const save: Record<string, unknown> = { ...source };
+  if (isRecord(save.status)) save.status = aliasMana(save.status);
+  if (isRecord(save.world)) {
+    const world: Record<string, unknown> = { ...save.world };
+    if (isRecord(world.pet)) world.pet = aliasMana(world.pet);
+    save.world = world;
+    if (isRecord(save.profile)) {
+      const profile: Record<string, unknown> = { ...save.profile };
+      if (profile.level == null && world.adventureLevel != null) profile.level = world.adventureLevel;
+      if (profile.exp == null && world.adventureExp != null) profile.exp = world.adventureExp;
+      save.profile = profile;
+    }
+  }
+  return save;
+}
+
+function aliasMana(row: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...row };
+  if (next.mp == null && next.mana != null) next.mp = next.mana;
+  if (next.maxMp == null && next.maxMana != null) next.maxMp = next.maxMana;
+  return next;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export function isNewerSave(incoming: GameSave, existing: GameSave): boolean {
   const next = Date.parse(incoming.updatedAt);
   const prev = Date.parse(existing.updatedAt);

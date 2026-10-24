@@ -9,8 +9,9 @@ import { clearSessionCache, readSessionCache, writeSessionCache } from './save/s
 /**
  * Session for the signed-in account. The JWT stays in SecureStore (or
  * localStorage on web). Character stats always come back from the server.
- * If the server cannot be reached, the last session stored on this device
- * still opens so a reload does not throw the player out.
+ * If the server cannot be reached, or the account was wiped while this
+ * device still has a session, the last session stored here still opens so a
+ * reload does not throw the player out.
  */
 
 type AuthContextValue = {
@@ -50,14 +51,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await applySession(stored);
         } catch (error) {
           const status = error instanceof ApiError ? error.status : 0;
-          if (status === 0 || status >= 500) {
-            const cached = await readSessionCache();
-            if (!cancelled && cached) {
-              setToken(stored);
-              setUser(cached.user);
-              setCharacter(cached.character);
-              return;
-            }
+          const cached = await readSessionCache();
+          if (!cancelled && cached && (status === 0 || status === 401 || status >= 500)) {
+            setToken(stored);
+            setUser(cached.user);
+            setCharacter(cached.character);
+            return;
           }
           await clearToken();
           await clearSessionCache();

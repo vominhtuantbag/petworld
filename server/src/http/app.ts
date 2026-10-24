@@ -9,7 +9,7 @@ import { config } from '../config.js';
 import type { AccountStore } from '../domain.js';
 import { toPublicUser } from '../domain.js';
 import { TournamentBoard, type Cup } from '../tournament/board.js';
-import { saveSchema } from '../saves/schema.js';
+import { coerceSaveInput, saveIssue, saveSchema } from '../saves/schema.js';
 
 const registerSchema = z.object({
   username: z
@@ -189,9 +189,9 @@ export function createApp(store: AccountStore, board = new TournamentBoard()) {
         response.status(401).json({ error: 'Phiên đăng nhập không còn hiệu lực.' });
         return;
       }
-      const parsed = saveSchema.safeParse(request.body?.save);
+      const parsed = saveSchema.safeParse(coerceSaveInput(request.body));
       if (!parsed.success) {
-        response.status(400).json({ error: 'Bản lưu không hợp lệ.' });
+        response.status(400).json({ error: saveIssue(parsed.error) });
         return;
       }
       const result = await store.saveAdventure(user.id, parsed.data);

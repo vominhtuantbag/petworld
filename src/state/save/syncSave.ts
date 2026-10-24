@@ -1,45 +1,25 @@
 import { ApiError, fetchMySave, putMySave } from '../../net/api';
-import { isNewerSave, parseSave, type GameSave } from './gameSave';
-import { readLocalSave, writeLocalSave } from './localSave';
+import { parseSave, progressScore, toServerSave, type GameSave } from './gameSave';
+import { writeLocalSave } from './localSave';
 
 /**
- * Picks the newer of the device copy and the server copy.
- * A network failure keeps the local document so a reload still restores progress.
+ * Server copy, or null when Render is asleep, reset, or still starting.
+ * Callers apply the AsyncStorage document before awaiting this.
  */
-export async function loadGameSave(userId: string, token: string | null): Promise<{ save: GameSave | null; synced: boolean }> {
-  const local = await readLocalSave(userId);
-  let remote: GameSave | null = null;
-  if (token) {
-    try {
-      remote = parseSave(await fetchMySave(token));
-    } catch (error) {
-      console.warn('[Game Thư Giãn] Chưa tải được bản lưu từ máy chủ.', error);
-    }
+export async function fetchRemoteSave(token: string | null): Promise<GameSave | null> {
+  if (!token) return null;
+  try {
+    return parseSave(await fetchMySave(token));
+  } catch (error) {
+    console.warn('[Game Thư Giãn] Chưa tải được bản lưu từ máy chủ.', error);
+    return null;
   }
-  const winner = local && remote ? (isNewerSave(local, remote) ? local : remote) : (local ?? remote);
-  let synced = !token || !winner || winner === remote;
-  if (winner && token && winner !== remote) {
-    try {
-      const body = await putMySave(token, winner);
-      synced = body.accepted;
-    } catch (error) {
-      synced = false;
-      console.warn('[Game Thư Giãn] Chưa đẩy được bản lưu mới hơn lên máy chủ.', error);
-    }
-  }
-  if (winner && winner !== local) {
-    try {
-      await writeLocalSave(userId, winner);
-    } catch (error) {
-      console.warn('[Game Thư Giãn] Không ghi được bản lưu máy chủ xuống máy.', error);
-    }
-  }
-  return { save: winner, synced };
 }
 
 let syncWarningShown = false;
 
 export async function commitGameSave(userId: string, token: string | null, save: GameSave): Promise<boolean> {
+  const local = toServerSave(save);
   try {
     await writeLocalSave(userId, save);
   } catch (error) {
@@ -48,11 +28,19 @@ export async function commitGameSave(userId: string, token: string | null, save:
   }
   if (!token) return true;
   try {
-    const body = await putMySave(token, save);
-    const remote = parseSave(body.save);
+    const body = await putMySave(token, local);
     syncWarningShown = false;
-    if (!body.accepted && remote && isNewerSave(remote, save)) return true;
-    return body.accepted;
+    if (body.accepted) return true;
+    const remote = parseSave(body.save);
+    if (remote && progressScore(remote) > progressScore(save)) return true;
+    const retry: GameSave = {
+      ...save,
+      updatedAt: new Date().toISOString(),
+      revision: (remote?.revision ?? save.revision) + 1,
+    };
+    const again = await putMySave(token, toServerSave(retry));
+    if (again.accepted) await writeLocalSave(userId, retry);
+    return again.accepted;
   } catch (error) {
     const status = error instanceof ApiError ? error.status : 0;
     if (!syncWarningShown) {
@@ -60,6 +48,6 @@ export async function commitGameSave(userId: string, token: string | null, save:
       const detail = error instanceof Error ? error.message : 'lỗi không rõ';
       console.warn(`[Game Thư Giãn] Chưa đồng bộ được máy chủ (${status}). Bản lưu vẫn nằm trên máy.`, detail);
     }
-    return status === 400;
+    return false;
   }
 }

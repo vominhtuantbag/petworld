@@ -17,6 +17,8 @@ import { OpenWorldMapScreen } from './src/screens/OpenWorldMapScreen';
 import { TournamentScreen } from './src/screens/TournamentScreen';
 import { TownScreen } from './src/screens/TownScreen';
 import { AuthProvider, useAuth } from './src/state/AuthContext';
+import { playerFromSave } from './src/state/save/gameSave';
+import { readDeviceSave, readLocalSave } from './src/state/save/localSave';
 import { BattleProvider, useBattle } from './src/state/BattleContext';
 import { SetupProvider, useSetup } from './src/state/SetupContext';
 import { WorldProvider, useWorld } from './src/state/WorldContext';
@@ -113,11 +115,26 @@ function useSavedCharacter() {
       setup.resetSetup();
       return;
     }
-    if (!auth.character || hydratedUserId.current === auth.user.id) return;
-    const player = toPlayer(auth.character);
-    if (!player) return;
-    hydratedUserId.current = auth.user.id;
-    setup.applySavedPlayer(player);
+    if (hydratedUserId.current === auth.user.id) return;
+    const userId = auth.user.id;
+    const fromServer = auth.character ? toPlayer(auth.character) : null;
+    if (fromServer) {
+      hydratedUserId.current = userId;
+      setup.applySavedPlayer(fromServer);
+      return;
+    }
+    let cancel = false;
+    void (async () => {
+      const save = (await readLocalSave(userId)) ?? (await readDeviceSave());
+      if (cancel || hydratedUserId.current === userId) return;
+      const player = save ? playerFromSave(save) : null;
+      if (!player) return;
+      hydratedUserId.current = userId;
+      setup.applySavedPlayer(player);
+    })();
+    return () => {
+      cancel = true;
+    };
   }, [auth.ready, auth.user, auth.character, setup]);
 }
 

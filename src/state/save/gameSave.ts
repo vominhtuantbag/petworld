@@ -377,6 +377,53 @@ export function isNewerSave(left: GameSave, right: GameSave): boolean {
   return left.revision >= right.revision;
 }
 
+/** Higher means more adventure progress. Gold and item counts are left out so spending them is not treated as a reset. */
+export function progressScore(save: GameSave): number {
+  const gear = (save.inventory.weapon ? 1 : 0) + (save.inventory.armor ? 1 : 0);
+  return (
+    save.profile.level * 1_000_000 +
+    save.roster.length * 100_000 +
+    save.profile.exp +
+    save.quests.totalWins * 1_000 +
+    save.codex.species.length +
+    save.codex.skills.length +
+    gear * 10 +
+    (save.avatar ? 1 : 0)
+  );
+}
+
+/**
+ * The device copy stays unless the server has gone further (higher level,
+ * more pets, more exp, more of the codex). A newer but equal or weaker Render
+ * copy — including one written after a reset — does not replace gold, items,
+ * or position stored on this device.
+ */
+export function preferSave(local: GameSave, remote: GameSave): GameSave {
+  if (progressScore(remote) > progressScore(local)) return remote;
+  return local;
+}
+
+export function playerFromSave(save: GameSave): InitializedPlayer | null {
+  const region = getRegion(save.profile.selectedRegion);
+  if (!region || !save.profile.name) return null;
+  return {
+    name: save.profile.name,
+    gender: save.profile.gender,
+    baseCharacterId: save.profile.baseCharacterId,
+    hairColor: save.profile.hairColor,
+    outfitColor: save.profile.outfitColor,
+    selectedRegion: region.id,
+  };
+}
+
+/** Drop a huge custom portrait so the rest of the save still fits the API body. */
+export function toServerSave(save: GameSave): GameSave {
+  if (save.avatar?.kind === 'custom' && save.avatar.uri.length > 48_000) {
+    return { ...save, avatar: null };
+  }
+  return save;
+}
+
 function unwrap(raw: unknown): Record<string, unknown> | null {
   if (typeof raw === 'string') {
     try {
