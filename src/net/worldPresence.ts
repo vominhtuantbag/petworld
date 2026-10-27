@@ -35,6 +35,8 @@ export type MapChatMessage = {
 
 export type WorldEnter = {
   zoneId: string;
+  userId?: string;
+  username?: string;
   x: number;
   y: number;
   facing: 1 | -1;

@@ -69,25 +69,46 @@ export function useMultiplayer(presence: PresenceInput | null) {
     const mine = selfId;
 
     const publish = () => setPlayers(snapshot(ghosts.current));
+    const misses = new Map<string, number>();
 
     const onList = (payload: { players?: WorldAvatar[] }) => {
-      ghosts.current.clear();
-      for (const avatar of payload.players ?? []) remember(ghosts.current, avatar, mine, true);
+      const seen = new Set<string>();
+      for (const avatar of payload.players ?? []) {
+        if (!avatar?.userId || avatar.userId === mine) continue;
+        seen.add(avatar.userId);
+        misses.delete(avatar.userId);
+        remember(ghosts.current, avatar, mine, false);
+      }
+      for (const id of [...ghosts.current.keys()]) {
+        if (seen.has(id)) continue;
+        const count = (misses.get(id) ?? 0) + 1;
+        if (count >= 2) {
+          ghosts.current.delete(id);
+          misses.delete(id);
+        } else {
+          misses.set(id, count);
+        }
+      }
       publish();
     };
     const onJoined = (avatar: WorldAvatar) => {
       remember(ghosts.current, avatar, mine, true);
       publish();
     };
-    const onMoved = (motion: WorldMotion) => {
-      if (!motion || motion.userId === mine) return;
+    const onMoved = (motion: WorldMotion & Partial<WorldAvatar>) => {
+      if (!motion?.userId || motion.userId === mine) return;
       const ghost = ghosts.current.get(motion.userId);
-      if (!ghost) return;
+      if (!ghost) {
+        if (motion.username && motion.baseCharacterId) remember(ghosts.current, motion as WorldAvatar, mine, true);
+        publish();
+        return;
+      }
       ghost.x = motion.x;
       ghost.y = motion.y;
       ghost.facing = motion.facing === -1 ? -1 : 1;
       ghost.hp = motion.hp;
       ghost.maxHp = motion.maxHp;
+      if (typeof motion.username === 'string') ghost.username = motion.username;
     };
     const onLeft = (payload: { userId?: string }) => {
       if (!payload.userId) return;
@@ -111,6 +132,7 @@ export function useMultiplayer(presence: PresenceInput | null) {
     };
 
     live.on('current_players_list', onList);
+    live.on('player_list', onList);
     live.on('player_joined', onJoined);
     live.on('player_moved', onMoved);
     live.on('player_left', onLeft);
@@ -121,7 +143,10 @@ export function useMultiplayer(presence: PresenceInput | null) {
     const enter = () => {
       const current = poseRef.current;
       if (!current) return;
-      live.emit('world:enter', wire(current, facingRef.current));
+      const body = wire(current, facingRef.current, mine, auth.user?.username ?? current.name);
+      live.emit('player_enter_map', body);
+      live.emit('join_world', body);
+      live.emit('world:enter', body);
       sent.x = current.x;
       sent.y = current.y;
       sent.facing = facingRef.current;
@@ -140,7 +165,7 @@ export function useMultiplayer(presence: PresenceInput | null) {
       sent.y = current.y;
       sent.facing = facing;
       sent.hp = current.hp;
-      live.emit('player_move', { x: current.x, y: current.y, facing, hp: current.hp, maxHp: current.maxHp });
+      live.emit('player_move', wire(current, facing, mine, auth.user?.username ?? current.name));
     }, SEND_MS);
 
     return () => {
@@ -148,6 +173,7 @@ export function useMultiplayer(presence: PresenceInput | null) {
       live.emit('world:leave');
       live.off('connect', enter);
       live.off('current_players_list', onList);
+      live.off('player_list', onList);
       live.off('player_joined', onJoined);
       live.off('player_moved', onMoved);
       live.off('player_left', onLeft);
@@ -157,7 +183,7 @@ export function useMultiplayer(presence: PresenceInput | null) {
       setPlayers([]);
       setMessages([]);
     };
-  }, [socket, signature, selfId]);
+  }, [socket, signature, selfId, auth.user?.username]);
 
   useGameLoop(presence !== null, (dt) => {
     const now = Date.now();
@@ -227,9 +253,11 @@ function snapshot(ghosts: Map<string, Ghost>): RemotePlayer[] {
   }));
 }
 
-function wire(presence: PresenceInput, facing: 1 | -1): WorldEnter {
+function wire(presence: PresenceInput, facing: 1 | -1, userId: string | null, username: string): WorldEnter {
   return {
     zoneId: presence.zoneId,
+    userId: userId ?? undefined,
+    username,
     x: presence.x,
     y: presence.y,
     facing,

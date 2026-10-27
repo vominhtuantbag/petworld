@@ -5,11 +5,14 @@ import { CharacterAvatar } from '../components/CharacterAvatar';
 import { MapHud, type MapMenuId } from '../components/map/MapHud';
 import { portraitFacesRight } from '../components/world/facing';
 import { FieldStage } from '../components/world/FieldStage';
+import { MapChat } from '../components/world/MapChat';
 import { PlayerInfoHUD } from '../components/world/PlayerInfoHUD';
+import { RemotePlayer } from '../components/world/RemotePlayer';
 import { ServicePanel } from '../components/town/ServicePanel';
 import { getCharacter } from '../data/characters';
 import { useAvatarLook } from '../state/avatarLook';
 import { useSetup } from '../state/SetupContext';
+import { useMultiplayer } from '../state/useMultiplayer';
 import { useWorld } from '../state/WorldContext';
 import { theme } from '../theme/theme';
 import { worldZoom } from '../web/mobileWeb';
@@ -30,8 +33,26 @@ export function TownScreen() {
   const [panel, setPanel] = useState<ServiceId | 'bag' | null>(null);
   const [menu, setMenu] = useState<MapMenuId | null>(null);
   const [customizing, setCustomizing] = useState(false);
+  const [chatFocused, setChatFocused] = useState(false);
   const look = useAvatarLook(setup.player?.baseCharacterId);
   const character = getCharacter(setup.player?.baseCharacterId);
+  const others = useMultiplayer(
+    setup.player
+      ? {
+          zoneId: world.zoneId,
+          x: field.player.x,
+          y: field.player.y,
+          name: setup.player.name,
+          baseCharacterId: setup.player.baseCharacterId,
+          gender: setup.player.gender,
+          hairColor: setup.player.hairColor,
+          outfitColor: setup.player.outfitColor,
+          level: world.adventureLevel,
+          hp: world.vitals.hp,
+          maxHp: world.vitals.maxHp,
+        }
+      : null,
+  );
 
   const onEvent = (event: FieldEvent) => {
     if (event.type === 'service') {
@@ -51,10 +72,16 @@ export function TownScreen() {
         onField={update}
         onEvent={onEvent}
         canTake={(loot) => lootFits(world.bag, loot)}
-        paused={panel !== null || menu !== null || customizing}
+        paused={panel !== null || menu !== null || customizing || chatFocused}
         testID="town-screen"
         zoom={worldZoom()}
         playerFacesRight={portraitFacesRight(character?.professionId, character?.gender)}
+        remotes={others.players.map((player) => ({
+          id: player.userId,
+          x: player.x,
+          y: player.y,
+          node: <RemotePlayer player={player} />,
+        }))}
         player={
           character && setup.player ? (
             <CharacterAvatar
@@ -87,6 +114,7 @@ export function TownScreen() {
           />
         </View>
       </FieldStage>
+      <MapChat messages={others.messages} onSend={others.sendChat} onFocusChange={setChatFocused} />
       <MapHud menu={menu} onOpen={setMenu} onClose={() => setMenu(null)} />
       {panel ? <ServicePanel panel={panel} onClose={() => setPanel(null)} /> : null}
     </View>

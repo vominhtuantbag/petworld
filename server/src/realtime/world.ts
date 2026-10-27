@@ -42,18 +42,23 @@ export class WorldPresence {
 
   attach() {
     this.io.on('connection', (socket) => {
-      socket.on('world:enter', (payload: unknown) => this.enter(socket, payload));
+      const enter = (payload: unknown) => this.enter(socket, payload);
+      socket.on('world:enter', enter);
+      socket.on('join_world', enter);
+      socket.on('player_enter_map', enter);
       socket.on('player_move', (payload: unknown) => this.move(socket, payload));
       socket.on('map_chat', (payload: unknown) => this.chat(socket, payload));
       socket.on('world:leave', () => this.leave(socket));
       socket.on('disconnect', () => this.leave(socket));
     });
+    const roster = setInterval(() => this.broadcastRosters(), 2000);
+    roster.unref?.();
   }
 
   private enter(socket: Socket, payload: unknown) {
     const userId = socket.data.userId as string | undefined;
-    const username = socket.data.username as string | undefined;
-    if (!userId || !username) return;
+    if (!userId) return;
+    const username = this.username(socket, payload);
     const avatar = readAvatar(payload, userId, username);
     const zoneId = readZone(payload);
     if (!avatar || !zoneId) return;
@@ -76,16 +81,19 @@ export class WorldPresence {
     this.people.set(userId, next);
     const room = zoneRoom(zoneId);
     socket.join(room);
-    socket.emit('current_players_list', { players: this.others(zoneId, userId) });
+    this.sendRoster(socket, zoneId, userId);
     if (!staying) socket.to(room).emit('player_joined', avatar);
-    else socket.to(room).emit('player_moved', motion(next));
+    else socket.to(room).emit('player_moved', publicAvatar(next));
   }
 
   private move(socket: Socket, payload: unknown) {
     const userId = socket.data.userId as string | undefined;
     if (!userId) return;
     const person = this.people.get(userId);
-    if (!person || person.socketId !== socket.id) return;
+    if (!person || person.socketId !== socket.id) {
+      if (readZone(payload)) this.enter(socket, payload);
+      return;
+    }
     const step = readMotion(payload);
     if (!step) return;
     const now = Date.now();
@@ -96,7 +104,7 @@ export class WorldPresence {
     person.facing = step.facing;
     person.maxHp = step.maxHp;
     person.hp = Math.min(step.hp, step.maxHp);
-    socket.to(zoneRoom(person.zoneId)).emit('player_moved', motion(person));
+    socket.to(zoneRoom(person.zoneId)).emit('player_moved', publicAvatar(person));
   }
 
   private chat(socket: Socket, payload: unknown) {
@@ -132,6 +140,30 @@ export class WorldPresence {
     this.io.to(zoneRoom(person.zoneId)).emit('player_left', { userId: person.userId });
   }
 
+  private username(socket: Socket, payload: unknown): string {
+    const stored = socket.data.username;
+    if (typeof stored === 'string' && stored.trim()) return stored.trim();
+    const hinted = payload && typeof payload === 'object' ? (payload as { username?: unknown }).username : undefined;
+    const name = typeof hinted === 'string' ? hinted.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 24) : '';
+    const username = name || 'Khách';
+    socket.data.username = username;
+    return username;
+  }
+
+  private sendRoster(socket: Socket, zoneId: string, userId: string) {
+    const players = this.others(zoneId, userId);
+    socket.emit('current_players_list', { players });
+    socket.emit('player_list', { players });
+  }
+
+  private broadcastRosters() {
+    for (const person of this.people.values()) {
+      const socket = this.io.sockets.sockets.get(person.socketId);
+      if (!socket) continue;
+      this.sendRoster(socket, person.zoneId, person.userId);
+    }
+  }
+
   private others(zoneId: string, userId: string): WorldAvatar[] {
     const list: WorldAvatar[] = [];
     for (const person of this.people.values()) {
@@ -150,17 +182,6 @@ export class WorldPresence {
 
 function zoneRoom(zoneId: string): string {
   return `zone:${zoneId}`;
-}
-
-function motion(person: Presence) {
-  return {
-    userId: person.userId,
-    x: person.x,
-    y: person.y,
-    facing: person.facing,
-    hp: person.hp,
-    maxHp: person.maxHp,
-  };
 }
 
 function publicAvatar(person: Presence): WorldAvatar {

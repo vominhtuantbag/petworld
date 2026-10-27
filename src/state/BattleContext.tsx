@@ -63,6 +63,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     socket.on('connect', () => {
       setConnection('online');
       setNotice(null);
+      console.info(`[Game Thư Giãn] Socket connected ${SOCKET_URL}`);
     });
     socket.on('disconnect', () => setConnection('connecting'));
     const onReplaced = () => {
@@ -79,6 +80,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
         reportSessionReplaced(token);
         return;
       }
+      console.warn(`[Game Thư Giãn] Socket chưa nối được ${SOCKET_URL}. ${error.message}`);
       setConnection('connecting');
     });
     socket.on('queue:status', (next: QueueView) => setQueue(next));

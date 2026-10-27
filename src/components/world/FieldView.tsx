@@ -304,10 +304,11 @@ function placeRemotes(
   remotes: FieldRemote[] | undefined,
   frame: { x: number; y: number; w: number; h: number } | null,
 ): { key: string; y: number; node: ReactNode }[] {
-  if (!remotes || !frame) return [];
-  return remotes
-    .filter((remote) => overlapsFrame({ x: remote.x - 48, y: remote.y - 96, w: 96, h: 140 }, frame))
-    .map((remote) => ({ key: remote.id, y: remote.y + 28, node: remote.node }));
+  if (!remotes) return [];
+  const visible = frame
+    ? remotes.filter((remote) => overlapsFrame({ x: remote.x - 80, y: remote.y - 160, w: 160, h: 280 }, frame))
+    : remotes;
+  return visible.map((remote) => ({ key: remote.id, y: remote.y + 28, node: remote.node }));
 }
 
 function gateNodes(
