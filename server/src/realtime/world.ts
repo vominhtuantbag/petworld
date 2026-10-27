@@ -6,6 +6,9 @@ import type { Server, Socket } from 'socket.io';
  * room, so a town never sees the wilderness next door.
  */
 
+const OPEN_WORLD = 'open_world';
+const RING = ['plains', 'mountains', 'forest', 'swamp', 'beach', 'ocean', 'tundra', 'savannah', 'volcano', 'desert'];
+
 const MOVE_GAP_MS = 50;
 const CHAT_GAP_MS = 500;
 const CHAT_MAX = 120;
@@ -26,6 +29,7 @@ export type WorldAvatar = {
   level: number;
   hp: number;
   maxHp: number;
+  zoneId: string;
 };
 
 type Presence = WorldAvatar & {
@@ -49,7 +53,10 @@ export class WorldPresence {
       };
       socket.on('world:enter', enter);
       socket.on('join_world', enter);
+      socket.on('player_join', enter);
+      socket.on('enter_world', enter);
       socket.on('player_enter_map', enter);
+      socket.on('world:who', () => this.replyWho(socket));
       socket.on('player_move', (payload: unknown) => this.move(socket, payload));
       socket.on('map_chat', (payload: unknown) => this.chat(socket, payload));
       socket.on('world:leave', () => this.leave(socket));
@@ -68,7 +75,7 @@ export class WorldPresence {
     }
     const username = this.username(socket, payload);
     const avatar = readAvatar(payload, userId, username);
-    const zoneId = readZone(payload);
+    const zoneId = canonicalZone(readZone(payload) ?? '');
     if (!avatar || !zoneId) {
       console.warn(`[world] enter rejected for ${username}`, payload);
       return;
@@ -92,12 +99,26 @@ export class WorldPresence {
     this.people.set(userId, next);
     const room = zoneRoom(zoneId);
     await socket.join(room);
+    if (!zoneId.startsWith('town:')) await socket.join(OPEN_WORLD);
+    else socket.leave(OPEN_WORLD);
     const others = this.crowd(zoneId) - 1;
-    console.log(`[world] ${username} in ${room} at ${avatar.x},${avatar.y} others=${others}`);
+    console.log(`[world] ${username} joined ${room} at ${avatar.x},${avatar.y} others=${others} user=${userId}`);
+    socket.emit('world:self', { userId, username, zoneId, room });
     this.broadcastSync(zoneId);
     const view = publicAvatar(next);
-    if (!staying) socket.to(room).emit('player_joined', view);
-    else socket.to(room).emit('player_moved', view);
+    if (!staying) this.emitOthers(socket, room, zoneId, 'player_joined', view);
+    else this.emitOthers(socket, room, zoneId, 'player_moved', view);
+  }
+
+  private replyWho(socket: Socket) {
+    const userId = socket.data.userId as string | undefined;
+    if (!userId) return;
+    const person = this.people.get(userId);
+    if (!person || person.socketId !== socket.id) return;
+    const players = this.others(person.zoneId, userId);
+    socket.emit('world:self', { userId, username: person.username, zoneId: person.zoneId, room: zoneRoom(person.zoneId) });
+    socket.emit('sync_players', { players, zoneId: person.zoneId });
+    console.log(`[world] who ${person.username} ${person.zoneId} sees ${players.map((player) => player.username).join(', ') || 'nobody'}`);
   }
 
   private move(socket: Socket, payload: unknown) {
@@ -120,7 +141,7 @@ export class WorldPresence {
     person.hp = Math.min(step.hp, step.maxHp);
     const room = zoneRoom(person.zoneId);
     const view = publicAvatar(person);
-    socket.to(room).emit('player_moved', view);
+    this.emitOthers(socket, room, person.zoneId, 'player_moved', view);
     this.broadcastSync(person.zoneId);
     const logged = this.lastMoveLog.get(person.userId) ?? 0;
     if (now - logged > 2000) {
@@ -198,6 +219,15 @@ export class WorldPresence {
     }
   }
 
+  private emitOthers(socket: Socket, room: string, zoneId: string, event: 'player_joined' | 'player_moved', view: WorldAvatar) {
+    for (const person of this.people.values()) {
+      if (person.zoneId !== zoneId || person.userId === view.userId) continue;
+      this.io.sockets.sockets.get(person.socketId)?.emit(event, view);
+    }
+    socket.to(room).emit(event, view);
+    if (!zoneId.startsWith('town:')) socket.to(OPEN_WORLD).emit(event, view);
+  }
+
   private others(zoneId: string, userId: string): WorldAvatar[] {
     const list: WorldAvatar[] = [];
     for (const person of this.people.values()) {
@@ -233,7 +263,28 @@ function publicAvatar(person: Presence): WorldAvatar {
     level: person.level,
     hp: person.hp,
     maxHp: person.maxHp,
+    zoneId: person.zoneId,
   };
+}
+
+function canonicalZone(zoneId: string): string {
+  if (!zoneId || zoneId.startsWith('town:')) return zoneId;
+  const parts = zoneId.split(':');
+  const province = parts[0] ?? '';
+  const band = parts[1];
+  if (!RING.includes(province)) return zoneId;
+  if (band === 'outskirts') return `${province}:m1`;
+  if (band === 'depths') return `${province}:m2`;
+  if (band?.startsWith('m') && parts.length === 2) return `${province}:${band}`;
+  if (parts.length === 3) {
+    const col = Number(parts[1]);
+    const row = Number(parts[2]);
+    if (Number.isInteger(col) && Number.isInteger(row)) {
+      const tier = Math.max(1, Math.min(10, col + row + 1));
+      return `${province}:m${tier}`;
+    }
+  }
+  return zoneId;
 }
 
 function readZone(payload: unknown): string | null {
@@ -263,6 +314,7 @@ function readAvatar(payload: unknown, userId: string, username: string): WorldAv
     level: clamp(body.level, 1, 999, 1),
     hp: Math.min(clamp(body.hp, 0, 100_000, maxHp), maxHp),
     maxHp,
+    zoneId: '',
   };
 }
 

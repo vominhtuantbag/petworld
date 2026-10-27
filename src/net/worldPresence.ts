@@ -14,6 +14,7 @@ export type WorldAvatar = {
   level: number;
   hp: number;
   maxHp: number;
+  zoneId?: string;
 };
 
 export type WorldMotion = {

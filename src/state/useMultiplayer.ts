@@ -47,6 +47,9 @@ export function useMultiplayer(presence: PresenceInput | null) {
   const facingRef = useRef<1 | -1>(1);
   const lastPos = useRef({ x: presence?.x ?? 0, y: presence?.y ?? 0 });
   const ghosts = useRef(new Map<string, Ghost>());
+  const generation = useRef(0);
+  const selfIdRef = useRef<string | null>(selfId);
+  selfIdRef.current = selfId;
   const [players, setPlayers] = useState<RemotePlayer[]>([]);
   const [messages, setMessages] = useState<MapChatMessage[]>([]);
   poseRef.current = presence;
@@ -67,7 +70,9 @@ export function useMultiplayer(presence: PresenceInput | null) {
   useEffect(() => {
     const live = socket;
     if (!live || !signature) return;
-    const mine = selfId;
+    const token = ++generation.current;
+    const zone = poseRef.current?.zoneId ?? '';
+    const myName = auth.user?.username ?? poseRef.current?.name ?? '';
 
     let lastDraw = '';
     let lastDrawAt = 0;
@@ -82,40 +87,48 @@ export function useMultiplayer(presence: PresenceInput | null) {
       }
       setPlayers(next);
     };
-    const misses = new Map<string, number>();
-
     const onList = (payload: { players?: WorldAvatar[] } | WorldAvatar[]) => {
-      const seen = new Set<string>();
       for (const avatar of readList(payload)) {
-        if (!avatar?.userId || avatar.userId === mine) continue;
-        seen.add(avatar.userId);
-        misses.delete(avatar.userId);
-        remember(ghosts.current, avatar, mine, true);
-      }
-      for (const id of [...ghosts.current.keys()]) {
-        if (seen.has(id)) continue;
-        const count = (misses.get(id) ?? 0) + 1;
-        if (count >= 2) {
-          ghosts.current.delete(id);
-          misses.delete(id);
-        } else {
-          misses.set(id, count);
-        }
+        const id = avatarId(avatar);
+        if (!id || isSelf(id, avatar.username, selfIdRef.current, myName)) continue;
+        if (!sameMap(zone, avatar.zoneId)) continue;
+        remember(ghosts.current, { ...avatar, userId: id }, selfIdRef.current, true);
       }
       publish();
     };
     const onJoined = (avatar: WorldAvatar) => {
-      remember(ghosts.current, avatar, mine, true);
+      const id = avatarId(avatar);
+      if (!id || isSelf(id, avatar.username, selfIdRef.current, myName) || !sameMap(zone, avatar.zoneId)) return;
+      remember(ghosts.current, { ...avatar, userId: id }, selfIdRef.current, true);
       publish();
     };
+    const onSelf = (payload: { userId?: string }) => {
+      if (payload?.userId) selfIdRef.current = payload.userId;
+    };
     const onMoved = (motion: WorldMotion & Partial<WorldAvatar>) => {
-      if (!motion?.userId || motion.userId === mine) return;
+      const id = avatarId(motion);
+      if (!id || isSelf(id, motion.username, selfIdRef.current, myName) || !sameMap(zone, motion.zoneId)) return;
       const x = Number(motion.x);
       const y = Number(motion.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-      const ghost = ghosts.current.get(motion.userId);
+      const ghost = ghosts.current.get(id);
       if (!ghost) {
-        if (motion.username && motion.baseCharacterId) remember(ghosts.current, { ...motion, x, y } as WorldAvatar, mine, true);
+        remember(ghosts.current, {
+          userId: id,
+          username: motion.username || 'Khách',
+          name: motion.name || motion.username || 'Khách',
+          x,
+          y,
+          facing: motion.facing === -1 ? -1 : 1,
+          baseCharacterId: motion.baseCharacterId || 'm-wanderer',
+          gender: motion.gender === 'female' ? 'female' : 'male',
+          hairColor: motion.hairColor || '#7a4630',
+          outfitColor: motion.outfitColor || '#3e6b4d',
+          level: motion.level || 1,
+          hp: Number(motion.hp) || 1,
+          maxHp: Number(motion.maxHp) || 1,
+          zoneId: motion.zoneId,
+        }, selfIdRef.current, true);
         publish();
         return;
       }
@@ -157,6 +170,7 @@ export function useMultiplayer(presence: PresenceInput | null) {
     live.on('player_moved', onMoved);
     live.on('player_left', onLeft);
     live.on('player_disconnect', onLeft);
+    live.on('world:self', onSelf);
     live.on('map_chat', onChat);
     live.on('world:error', onError);
     let lastPacketLog = 0;
@@ -174,9 +188,11 @@ export function useMultiplayer(presence: PresenceInput | null) {
     const enter = () => {
       const current = poseRef.current;
       if (!current) return;
-      const body = wire(current, facingRef.current, mine, auth.user?.username ?? current.name);
+      const body = wire(current, facingRef.current, selfIdRef.current, auth.user?.username ?? current.name);
       console.log(`[multiplayer] player_enter_map ${SOCKET_URL} zone=${body.zoneId} at ${body.x},${body.y} as ${body.username}`);
       live.emit('player_enter_map', body);
+      live.emit('player_join', body);
+      live.emit('world:who');
       sent.x = current.x;
       sent.y = current.y;
       sent.facing = facingRef.current;
@@ -185,6 +201,9 @@ export function useMultiplayer(presence: PresenceInput | null) {
     if (live.connected) enter();
     live.on('connect', enter);
 
+    const who = setInterval(() => {
+      if (live.connected) live.emit('world:who');
+    }, 2000);
     const timer = setInterval(() => {
       const current = poseRef.current;
       if (!current || !live.connected) return;
@@ -195,12 +214,12 @@ export function useMultiplayer(presence: PresenceInput | null) {
       sent.y = current.y;
       sent.facing = facing;
       sent.hp = current.hp;
-      live.emit('player_move', wire(current, facing, mine, auth.user?.username ?? current.name));
+      live.emit('player_move', wire(current, facing, selfIdRef.current, auth.user?.username ?? current.name));
     }, SEND_MS);
 
     return () => {
       clearInterval(timer);
-      live.emit('world:leave');
+      clearInterval(who);
       live.off('connect', enter);
       live.offAny(onAny);
       live.off('current_players_list', onList);
@@ -210,11 +229,16 @@ export function useMultiplayer(presence: PresenceInput | null) {
       live.off('player_moved', onMoved);
       live.off('player_left', onLeft);
       live.off('player_disconnect', onLeft);
+      live.off('world:self', onSelf);
       live.off('map_chat', onChat);
       live.off('world:error', onError);
-      ghosts.current.clear();
-      setPlayers([]);
-      setMessages([]);
+      const leaving = token;
+      setTimeout(() => {
+        if (generation.current !== leaving) return;
+        live.emit('world:leave');
+        ghosts.current.clear();
+        setPlayers([]);
+      }, 500);
     };
   }, [socket, signature, selfId, auth.user?.username]);
 
@@ -252,6 +276,42 @@ export function useMultiplayer(presence: PresenceInput | null) {
   return { players, messages, sendChat };
 }
 
+function avatarId(avatar: { userId?: string; username?: string; id?: string } | null | undefined): string | null {
+  if (!avatar) return null;
+  if (typeof avatar.userId === 'string' && avatar.userId) return avatar.userId;
+  if (typeof avatar.id === 'string' && avatar.id) return avatar.id;
+  return null;
+}
+
+function isSelf(id: string, username: string | undefined, mine: string | null, myName: string): boolean {
+  if (!mine || id !== mine) return false;
+  if (username && myName && username !== myName) return false;
+  return true;
+}
+
+function sameMap(local: string, remote?: string): boolean {
+  if (!remote) return true;
+  return canonicalZone(local) === canonicalZone(remote);
+}
+
+function canonicalZone(zoneId: string): string {
+  if (!zoneId || zoneId.startsWith('town:')) return zoneId;
+  const ring = ['plains', 'mountains', 'forest', 'swamp', 'beach', 'ocean', 'tundra', 'savannah', 'volcano', 'desert'];
+  const parts = zoneId.split(':');
+  const province = parts[0] ?? '';
+  const band = parts[1];
+  if (!ring.includes(province)) return zoneId;
+  if (band === 'outskirts') return `${province}:m1`;
+  if (band === 'depths') return `${province}:m2`;
+  if (band?.startsWith('m') && parts.length === 2) return `${province}:${band}`;
+  if (parts.length === 3) {
+    const col = Number(parts[1]);
+    const row = Number(parts[2]);
+    if (Number.isInteger(col) && Number.isInteger(row)) return `${province}:m${Math.max(1, Math.min(10, col + row + 1))}`;
+  }
+  return zoneId;
+}
+
 function readList(payload: { players?: WorldAvatar[] } | WorldAvatar[]): WorldAvatar[] {
   if (Array.isArray(payload)) return payload;
   return Array.isArray(payload?.players) ? payload.players : [];
@@ -264,8 +324,8 @@ function describePacket(payload: unknown): unknown {
   return { user: body.username ?? body.userId, x: body.x, y: body.y, text: body.text };
 }
 
-function remember(ghosts: Map<string, Ghost>, avatar: WorldAvatar, selfId: string | null, snap: boolean) {
-  if (!avatar?.userId || avatar.userId === selfId) return;
+function remember(ghosts: Map<string, Ghost>, avatar: WorldAvatar, _selfId: string | null, snap: boolean) {
+  if (!avatar?.userId) return;
   const previous = ghosts.get(avatar.userId);
   ghosts.set(avatar.userId, {
     ...avatar,
