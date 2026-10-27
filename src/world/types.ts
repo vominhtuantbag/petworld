@@ -254,6 +254,8 @@ export type FieldState = {
   zones: MapZone[];
   /** Chunk that contains this point stays empty so the arrival pad is safe. */
   quietSpawn: Vec | null;
+  /** Seconds left after Bỏ chạy. Monsters do not chase or start a fight. */
+  peace?: number;
 };
 
 export type FieldEvent =

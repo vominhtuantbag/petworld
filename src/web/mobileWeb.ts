@@ -13,13 +13,10 @@ export function isMobileWeb(): boolean {
 }
 
 /**
- * Desktop web keeps one world pixel per screen pixel on a wide window.
- * A phone browser has that same camera on a short window, so the map looks
- * cropped. Handsets use the native zoom, which pulls the camera back.
+ * Web PC and web mobile use the same wide camera as the native app.
+ * The value does not depend on the window size, so a desktop browser is not
+ * cropped tighter than a phone.
  */
 export function worldZoom(): number {
-  if (Platform.OS !== 'web') return MOBILE_WORLD_ZOOM;
-  if (!isMobileWeb() || typeof window === 'undefined') return 1;
-  const shortSide = Math.min(window.innerWidth, window.innerHeight);
-  return shortSide < 520 ? MOBILE_WORLD_ZOOM : 1;
+  return MOBILE_WORLD_ZOOM;
 }

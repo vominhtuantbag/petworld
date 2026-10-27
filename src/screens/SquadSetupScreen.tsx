@@ -182,6 +182,15 @@ export function SquadSetupScreen() {
           )}
         </View>
       </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Bỏ chạy"
+        testID="run-away"
+        onPress={() => world.cancelSquad()}
+        style={styles.flee}
+      >
+        <Text style={[styles.fleeLabel, { fontSize: font(14) }]}>Bỏ chạy</Text>
+      </Pressable>
       <View style={styles.basics}>
         <Text style={[styles.paneTitle, { fontSize: font(13) }]}>Đòn đánh thường</Text>
         {basics.map((skill) => {
@@ -219,6 +228,22 @@ function PetFace({ kindId, name, tint }: { kindId: string; name: string; tint: s
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg, padding: 8, gap: 8 },
+  flee: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
+    zIndex: 4,
+    minWidth: 112,
+    minHeight: 44,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.card,
+    borderWidth: 1,
+    borderColor: theme.gold,
+  },
+  fleeLabel: { color: theme.ink, fontWeight: '800' },
   top: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   slot: {
     flex: 1,
@@ -245,7 +270,7 @@ const styles = StyleSheet.create({
   },
   confirmLabel: { color: '#1b140c', fontWeight: '800' },
   confirmHint: { color: '#1b140c' },
-  basics: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  basics: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 128 },
   basic: {
     paddingHorizontal: 12,
     paddingVertical: 8,

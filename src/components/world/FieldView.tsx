@@ -21,9 +21,8 @@ type Props = {
   /** False when the drawn portrait already looks left, so the mirror faces right. */
   playerFacesRight?: boolean;
   /**
-   * 1 is the current framing: one world pixel per screen pixel, using the
-   * original translate camera. A smaller value pulls the camera back.
-   * Desktop web stays at 1. Phone browsers use the native zoom.
+   * 1 is one world pixel per screen pixel. A smaller value pulls the camera
+   * back. Web and native both use the wide camera.
    */
   zoom?: number;
   onSensor: (sensor: Sensor) => void;

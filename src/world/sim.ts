@@ -10,6 +10,8 @@ import type { ChunkRecord, FieldEvent, FieldState, LootActor, MonsterActor, Rect
 const PLAYER_SPEED = 230;
 const LOOT_CAP = 12;
 const PICKUP_R = 24;
+/** How long the map stays safe after the player runs from a fight. */
+export const FLEE_PEACE_SEC = 1.5;
 
 export type FieldAxes = { x: number; y: number };
 
@@ -43,8 +45,9 @@ export function stepField(
     dt,
     awake,
   );
+  const peace = Math.max(0, (awake.peace ?? 0) - dt);
   const water = awake.decor.filter((rect) => isWaterKind(rect.kind));
-  const monsters = awake.monsters.map((monster) => stepMonster(monster, player, awake, dt, events, playerLevel, water));
+  const monsters = awake.monsters.map((monster) => stepMonster(monster, player, awake, dt, events, playerLevel, water, peace > 0));
   let loot = awake.loot;
   const dropped = monsters.flatMap((monster) => monster.dropped);
   if (dropped.length > 0) {
@@ -91,6 +94,7 @@ export function stepField(
     state: {
       ...awake,
       decor,
+      peace,
       player: { ...awake.player, x: player.x, y: player.y },
       monsters: monsters.map((entry) => entry.monster),
       loot,
@@ -315,6 +319,23 @@ function pointInRect(x: number, y: number, rect: Rect): boolean {
   return x >= rect.x && y >= rect.y && x <= rect.x + rect.w && y <= rect.y + rect.h;
 }
 
+/** Keep the player where they stand, and stop every monster from chasing for 1.5s. */
+export function grantFleePeace(field: FieldState): FieldState {
+  const settle = (monster: MonsterActor) => ({ ...monster, calm: 0 });
+  const chunks = { ...field.chunks };
+  for (const key of Object.keys(chunks)) {
+    const bucket = chunks[key];
+    if (!bucket) continue;
+    chunks[key] = { ...bucket, monsters: bucket.monsters.map(settle) };
+  }
+  return {
+    ...field,
+    peace: FLEE_PEACE_SEC,
+    chunks,
+    monsters: field.monsters.map(settle),
+  };
+}
+
 /** Push the player out of contact and calm the monster. Used when a fight is declined. */
 export function disengage(field: FieldState, monsterId: string): FieldState {
   const monster = field.monsters.find((entry) => entry.id === monsterId);
@@ -342,13 +363,14 @@ function stepMonster(
   events: FieldEvent[],
   playerLevel: number,
   water: Rect[],
+  peaceful: boolean,
 ): { monster: MonsterActor; dropped: LootActor[] } {
   const dropped: LootActor[] = [];
   let nextDrop = monster.nextDrop - dt;
   let calm = Math.max(0, monster.calm - dt);
   let pause = Math.max(0, monster.pause - dt);
   const distance = Math.hypot(monster.x - player.x, monster.y - player.y);
-  const chasing = calm <= 0 && distance <= monster.agro;
+  const chasing = !peaceful && calm <= 0 && distance <= monster.agro;
   let patrolIndex = monster.patrolIndex;
   // Patrol points stay inside this monster's level zone. The leash below
   // stops a chase at the zone edge, so a higher band never pulls you in.

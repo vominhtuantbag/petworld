@@ -831,6 +831,17 @@ export function BattleScreen() {
             </>
           )}
         </View>
+        {!battle?.over ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Bỏ chạy"
+            testID="run-away"
+            onPress={() => world.cancelSquad()}
+            style={[styles.flee, { minHeight: s(44), paddingHorizontal: s(12) }]}
+          >
+            <Text style={[styles.fleeLabel, { fontSize: font(12) }]}>Bỏ chạy</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       </SafeAreaView>
@@ -1378,6 +1389,16 @@ const styles = StyleSheet.create({
   target: { overflow: 'hidden', borderWidth: 2, borderColor: '#9aa89f', backgroundColor: '#d7d2c8' },
   targetOn: { borderColor: '#ff2d2d' },
   commands: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: 6 },
+  flee: {
+    minWidth: 96,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.card,
+    borderWidth: 1,
+    borderColor: theme.gold,
+  },
+  fleeLabel: { color: theme.ink, fontWeight: '800' },
   square: {
     alignItems: 'center',
     justifyContent: 'center',

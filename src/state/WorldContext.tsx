@@ -10,7 +10,7 @@ import { useSetup } from './SetupContext';
 import { entryBlock, parseSector, parseTier, resolveZoneId } from '../world/atlas';
 import { createField, fieldNeedsRebuild, monsterStats, nextRegion, townZoneId } from '../world/catalog';
 import { speciesById } from '../world/monsters';
-import { disengage } from '../world/sim';
+import { grantFleePeace } from '../world/sim';
 import { ADVENTURE_LEVEL_CAP, expForNextLevel, expFromMonster, MARCH_REGEN_PER_SEC, MARCH_STAMINA_PER_PX } from '../world/progression';
 import {
   BAG_SLOTS,
@@ -513,11 +513,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const cancelSquad = useCallback(() => {
     setState((current) => {
       const saved = current.fields[current.zoneId];
-      const monsterId = current.encounter?.id;
-      const fields =
-        saved && monsterId
-          ? { ...current.fields, [current.zoneId]: disengage(saved, monsterId) }
-          : current.fields;
+      const fields = saved ? { ...current.fields, [current.zoneId]: grantFleePeace(saved) } : current.fields;
       return { ...current, scene: 'wilds', encounter: null, squad: null, notice: 'Đã rút khỏi trận.', fields };
     });
   }, []);
