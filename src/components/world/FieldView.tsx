@@ -125,7 +125,6 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
             ),
           })),
         ...gateNodes(field, frame, onSensor),
-        ...placeRemotes(remotes, frame),
         {
           key: 'party',
           y: field.player.y + 28,
@@ -231,16 +230,6 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
                     style={[styles.loot, { left: drop.x - 8, top: drop.y - 8, backgroundColor: drop.tint, zIndex: Math.round(drop.y * 10) }]}
                   />
                 ))}
-                {placeRemotes(remotes, frame).map((item) => (
-                  <View
-                    key={item.key}
-                    pointerEvents="box-none"
-                    collapsable={false}
-                    style={{ position: 'absolute', left: 0, top: 0, zIndex: Math.round(item.y * 10) }}
-                  >
-                    {item.node}
-                  </View>
-                ))}
                 {gateNodes(field, frame, onSensor).map((item) => (
                   <View
                     key={item.key}
@@ -271,6 +260,16 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
             )}
           {rolling.map((rect, index) => drawProp(rect, index, 'weed', desert, swamp, scenic))}
           {overlay.map((rect, index) => drawProp(rect, index, 'cover', desert, swamp))}
+          {placeRemotes(remotes).map((item) => (
+            <View
+              key={item.key}
+              pointerEvents="box-none"
+              collapsable={false}
+              style={{ position: 'absolute', left: 0, top: 0, zIndex: 1000000 + Math.round(item.y) }}
+            >
+              {item.node}
+            </View>
+          ))}
           {field.sensors.filter((sensor) => !sensor.toZone && shown({ x: sensor.x - sensor.r, y: sensor.y - sensor.r, w: sensor.r * 2, h: sensor.r * 2 })).map((sensor) => (
             <Pressable
               key={sensor.id}
@@ -300,15 +299,11 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
   );
 }
 
-function placeRemotes(
-  remotes: FieldRemote[] | undefined,
-  frame: { x: number; y: number; w: number; h: number } | null,
-): { key: string; y: number; node: ReactNode }[] {
+function placeRemotes(remotes: FieldRemote[] | undefined): { key: string; y: number; node: ReactNode }[] {
   if (!remotes) return [];
-  const visible = frame
-    ? remotes.filter((remote) => overlapsFrame({ x: remote.x - 80, y: remote.y - 160, w: 160, h: 280 }, frame))
-    : remotes;
-  return visible.map((remote) => ({ key: remote.id, y: remote.y + 28, node: remote.node }));
+  return remotes
+    .filter((remote) => Number.isFinite(remote.x) && Number.isFinite(remote.y))
+    .map((remote) => ({ key: remote.id, y: remote.y + 28, node: remote.node }));
 }
 
 function gateNodes(

@@ -25,5 +25,7 @@ function resolvePublicUrl(configured: string | undefined): string {
   return RENDER_URL;
 }
 
-export const API_URL = resolvePublicUrl(process.env.EXPO_PUBLIC_API_URL);
-export const SOCKET_URL = resolvePublicUrl(process.env.EXPO_PUBLIC_SOCKET_URL ?? process.env.EXPO_PUBLIC_API_URL);
+const configuredServer = process.env.EXPO_PUBLIC_SERVER_URL ?? process.env.EXPO_PUBLIC_SOCKET_URL ?? process.env.EXPO_PUBLIC_API_URL;
+
+export const API_URL = resolvePublicUrl(process.env.EXPO_PUBLIC_API_URL ?? process.env.EXPO_PUBLIC_SERVER_URL);
+export const SOCKET_URL = resolvePublicUrl(configuredServer);

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { SOCKET_URL } from '../config/env';
 import { useGameLoop } from '../hooks/useGameLoop';
 import type { MapChatMessage, WorldAvatar, WorldEnter, WorldMotion } from '../net/worldPresence';
 import { stepHorizontalFacing } from '../components/world/facing';
@@ -68,16 +69,28 @@ export function useMultiplayer(presence: PresenceInput | null) {
     if (!live || !signature) return;
     const mine = selfId;
 
-    const publish = () => setPlayers(snapshot(ghosts.current));
+    let lastDraw = '';
+    let lastDrawAt = 0;
+    const publish = () => {
+      const next = snapshot(ghosts.current);
+      const line = next.map((player) => `${player.username}@${Math.round(player.x)},${Math.round(player.y)}`).join(' | ') || 'nobody';
+      const now = Date.now();
+      if (line !== lastDraw || now - lastDrawAt > 1000) {
+        console.log(`[multiplayer] sprites ${next.length}: ${line}`);
+        lastDraw = line;
+        lastDrawAt = now;
+      }
+      setPlayers(next);
+    };
     const misses = new Map<string, number>();
 
-    const onList = (payload: { players?: WorldAvatar[] }) => {
+    const onList = (payload: { players?: WorldAvatar[] } | WorldAvatar[]) => {
       const seen = new Set<string>();
-      for (const avatar of payload.players ?? []) {
+      for (const avatar of readList(payload)) {
         if (!avatar?.userId || avatar.userId === mine) continue;
         seen.add(avatar.userId);
         misses.delete(avatar.userId);
-        remember(ghosts.current, avatar, mine, false);
+        remember(ghosts.current, avatar, mine, true);
       }
       for (const id of [...ghosts.current.keys()]) {
         if (seen.has(id)) continue;
@@ -97,18 +110,24 @@ export function useMultiplayer(presence: PresenceInput | null) {
     };
     const onMoved = (motion: WorldMotion & Partial<WorldAvatar>) => {
       if (!motion?.userId || motion.userId === mine) return;
+      const x = Number(motion.x);
+      const y = Number(motion.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
       const ghost = ghosts.current.get(motion.userId);
       if (!ghost) {
-        if (motion.username && motion.baseCharacterId) remember(ghosts.current, motion as WorldAvatar, mine, true);
+        if (motion.username && motion.baseCharacterId) remember(ghosts.current, { ...motion, x, y } as WorldAvatar, mine, true);
         publish();
         return;
       }
-      ghost.x = motion.x;
-      ghost.y = motion.y;
+      ghost.x = x;
+      ghost.y = y;
+      ghost.drawX = x;
+      ghost.drawY = y;
       ghost.facing = motion.facing === -1 ? -1 : 1;
       ghost.hp = motion.hp;
       ghost.maxHp = motion.maxHp;
       if (typeof motion.username === 'string') ghost.username = motion.username;
+      publish();
     };
     const onLeft = (payload: { userId?: string }) => {
       if (!payload.userId) return;
@@ -133,20 +152,31 @@ export function useMultiplayer(presence: PresenceInput | null) {
 
     live.on('current_players_list', onList);
     live.on('player_list', onList);
+    live.on('sync_players', onList);
     live.on('player_joined', onJoined);
     live.on('player_moved', onMoved);
     live.on('player_left', onLeft);
+    live.on('player_disconnect', onLeft);
     live.on('map_chat', onChat);
     live.on('world:error', onError);
+    let lastPacketLog = 0;
+    const onAny = (event: string, payload: unknown) => {
+      const watched = event === 'player_joined' || event === 'player_left' || event === 'player_disconnect' || event === 'sync_players' || event === 'current_players_list' || event === 'player_list' || event === 'player_moved' || event === 'map_chat' || event === 'world:error';
+      if (!watched) return;
+      const now = Date.now();
+      if ((event === 'player_moved' || event === 'sync_players' || event === 'current_players_list' || event === 'player_list') && now - lastPacketLog < 1000) return;
+      lastPacketLog = now;
+      console.log(`[multiplayer] ${event}`, describePacket(payload), `sprites=${ghosts.current.size} url=${SOCKET_URL}`);
+    };
+    live.onAny(onAny);
 
     const sent = { x: Number.NaN, y: Number.NaN, facing: 1 as 1 | -1, hp: Number.NaN };
     const enter = () => {
       const current = poseRef.current;
       if (!current) return;
       const body = wire(current, facingRef.current, mine, auth.user?.username ?? current.name);
+      console.log(`[multiplayer] player_enter_map ${SOCKET_URL} zone=${body.zoneId} at ${body.x},${body.y} as ${body.username}`);
       live.emit('player_enter_map', body);
-      live.emit('join_world', body);
-      live.emit('world:enter', body);
       sent.x = current.x;
       sent.y = current.y;
       sent.facing = facingRef.current;
@@ -172,11 +202,14 @@ export function useMultiplayer(presence: PresenceInput | null) {
       clearInterval(timer);
       live.emit('world:leave');
       live.off('connect', enter);
+      live.offAny(onAny);
       live.off('current_players_list', onList);
       live.off('player_list', onList);
+      live.off('sync_players', onList);
       live.off('player_joined', onJoined);
       live.off('player_moved', onMoved);
       live.off('player_left', onLeft);
+      live.off('player_disconnect', onLeft);
       live.off('map_chat', onChat);
       live.off('world:error', onError);
       ghosts.current.clear();
@@ -217,6 +250,18 @@ export function useMultiplayer(presence: PresenceInput | null) {
   }, [socket]);
 
   return { players, messages, sendChat };
+}
+
+function readList(payload: { players?: WorldAvatar[] } | WorldAvatar[]): WorldAvatar[] {
+  if (Array.isArray(payload)) return payload;
+  return Array.isArray(payload?.players) ? payload.players : [];
+}
+
+function describePacket(payload: unknown): unknown {
+  if (!payload || typeof payload !== 'object') return payload;
+  const body = payload as { players?: WorldAvatar[]; username?: string; userId?: string; x?: number; y?: number; text?: string };
+  if (Array.isArray(body.players)) return body.players.map((player) => `${player.username}@${Math.round(player.x)},${Math.round(player.y)}`);
+  return { user: body.username ?? body.userId, x: body.x, y: body.y, text: body.text };
 }
 
 function remember(ghosts: Map<string, Ghost>, avatar: WorldAvatar, selfId: string | null, snap: boolean) {

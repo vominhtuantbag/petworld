@@ -37,31 +37,42 @@ type Presence = WorldAvatar & {
 
 export class WorldPresence {
   private readonly people = new Map<string, Presence>();
+  private readonly lastMoveLog = new Map<string, number>();
 
   constructor(private readonly io: Server) {}
 
   attach() {
     this.io.on('connection', (socket) => {
-      const enter = (payload: unknown) => this.enter(socket, payload);
+      console.log(`[world] handshake socket=${socket.id} user=${String(socket.data.userId ?? '?')}`);
+      const enter = (payload: unknown) => {
+        void this.enter(socket, payload).catch((error: unknown) => console.error('[world] enter failed', error));
+      };
       socket.on('world:enter', enter);
       socket.on('join_world', enter);
       socket.on('player_enter_map', enter);
       socket.on('player_move', (payload: unknown) => this.move(socket, payload));
       socket.on('map_chat', (payload: unknown) => this.chat(socket, payload));
       socket.on('world:leave', () => this.leave(socket));
+      socket.on('player_disconnect', () => this.leave(socket));
       socket.on('disconnect', () => this.leave(socket));
     });
-    const roster = setInterval(() => this.broadcastRosters(), 2000);
+    const roster = setInterval(() => this.broadcastRosters(), 1000);
     roster.unref?.();
   }
 
-  private enter(socket: Socket, payload: unknown) {
+  private async enter(socket: Socket, payload: unknown) {
     const userId = socket.data.userId as string | undefined;
-    if (!userId) return;
+    if (!userId) {
+      console.warn(`[world] enter ignored, socket ${socket.id} has no user`);
+      return;
+    }
     const username = this.username(socket, payload);
     const avatar = readAvatar(payload, userId, username);
     const zoneId = readZone(payload);
-    if (!avatar || !zoneId) return;
+    if (!avatar || !zoneId) {
+      console.warn(`[world] enter rejected for ${username}`, payload);
+      return;
+    }
 
     const previous = this.people.get(userId);
     const staying = previous?.socketId === socket.id && previous.zoneId === zoneId;
@@ -80,10 +91,13 @@ export class WorldPresence {
     };
     this.people.set(userId, next);
     const room = zoneRoom(zoneId);
-    socket.join(room);
-    this.sendRoster(socket, zoneId, userId);
-    if (!staying) socket.to(room).emit('player_joined', avatar);
-    else socket.to(room).emit('player_moved', publicAvatar(next));
+    await socket.join(room);
+    const others = this.crowd(zoneId) - 1;
+    console.log(`[world] ${username} in ${room} at ${avatar.x},${avatar.y} others=${others}`);
+    this.broadcastSync(zoneId);
+    const view = publicAvatar(next);
+    if (!staying) socket.to(room).emit('player_joined', view);
+    else socket.to(room).emit('player_moved', view);
   }
 
   private move(socket: Socket, payload: unknown) {
@@ -104,7 +118,15 @@ export class WorldPresence {
     person.facing = step.facing;
     person.maxHp = step.maxHp;
     person.hp = Math.min(step.hp, step.maxHp);
-    socket.to(zoneRoom(person.zoneId)).emit('player_moved', publicAvatar(person));
+    const room = zoneRoom(person.zoneId);
+    const view = publicAvatar(person);
+    socket.to(room).emit('player_moved', view);
+    this.broadcastSync(person.zoneId);
+    const logged = this.lastMoveLog.get(person.userId) ?? 0;
+    if (now - logged > 2000) {
+      this.lastMoveLog.set(person.userId, now);
+      console.log(`[world] move ${person.username} ${room} -> ${person.x},${person.y}`);
+    }
   }
 
   private chat(socket: Socket, payload: unknown) {
@@ -137,7 +159,13 @@ export class WorldPresence {
     const socket = this.io.sockets.sockets.get(person.socketId);
     socket?.leave(zoneRoom(person.zoneId));
     this.people.delete(person.userId);
-    this.io.to(zoneRoom(person.zoneId)).emit('player_left', { userId: person.userId });
+    this.lastMoveLog.delete(person.userId);
+    const notice = { userId: person.userId };
+    const room = zoneRoom(person.zoneId);
+    console.log(`[world] left ${person.username} ${room}`);
+    this.io.to(room).emit('player_left', notice);
+    this.io.to(room).emit('player_disconnect', notice);
+    this.broadcastSync(person.zoneId);
   }
 
   private username(socket: Socket, payload: unknown): string {
@@ -150,17 +178,23 @@ export class WorldPresence {
     return username;
   }
 
-  private sendRoster(socket: Socket, zoneId: string, userId: string) {
-    const players = this.others(zoneId, userId);
-    socket.emit('current_players_list', { players });
-    socket.emit('player_list', { players });
+  private broadcastRosters() {
+    const zones = new Set<string>();
+    for (const person of this.people.values()) zones.add(person.zoneId);
+    for (const zoneId of zones) this.broadcastSync(zoneId);
   }
 
-  private broadcastRosters() {
+  /** Direct emit so a roster is not lost when a socket has not finished joining the room. */
+  private broadcastSync(zoneId: string) {
     for (const person of this.people.values()) {
+      if (person.zoneId !== zoneId) continue;
       const socket = this.io.sockets.sockets.get(person.socketId);
       if (!socket) continue;
-      this.sendRoster(socket, person.zoneId, person.userId);
+      const players = this.others(zoneId, person.userId);
+      const packet = { players };
+      socket.emit('sync_players', packet);
+      socket.emit('current_players_list', packet);
+      socket.emit('player_list', packet);
     }
   }
 

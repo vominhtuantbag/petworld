@@ -6,12 +6,13 @@ import { theme } from '../../theme/theme';
 
 type Props = {
   messages: MapChatMessage[];
+  online: number;
   onSend: (text: string) => void;
   onFocusChange: (focused: boolean) => void;
 };
 
 /** Shared map chat for everyone standing in the same zone. */
-export function MapChat({ messages, onSend, onFocusChange }: Props) {
+export function MapChat({ messages, online, onSend, onFocusChange }: Props) {
   const [text, setText] = useState('');
   const visible = messages.slice(-6);
 
@@ -24,6 +25,7 @@ export function MapChat({ messages, onSend, onFocusChange }: Props) {
 
   return (
     <View style={styles.dock} testID="map-chat" pointerEvents="auto">
+      <Text style={styles.online} testID="map-online">{online > 0 ? `${online} người chơi khác trên map` : 'Chưa thấy người chơi khác'}</Text>
       {visible.length > 0 ? (
         <View style={styles.log}>
           {visible.map((message) => (
@@ -65,6 +67,7 @@ const styles = StyleSheet.create({
     zIndex: 30,
     gap: 4,
   },
+  online: { color: theme.gold, fontSize: 11, fontWeight: '800' },
   log: {
     maxHeight: 108,
     paddingHorizontal: 8,
