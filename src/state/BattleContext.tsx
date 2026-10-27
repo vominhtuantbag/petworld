@@ -10,6 +10,7 @@ type Connection = 'offline' | 'connecting' | 'online';
 
 type BattleContextValue = {
   connection: Connection;
+  socket: Socket | null;
   queue: QueueView;
   battle: BattleView | null;
   notice: string | null;
@@ -29,6 +30,7 @@ const BattleContext = createContext<BattleContextValue | null>(null);
 export function BattleProvider({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const socketRef = useRef<Socket | null>(null);
+  const [socket, setSocket] = useState<Socket | null>(null);
   const [connection, setConnection] = useState<Connection>('offline');
   const [queue, setQueue] = useState<QueueView>({ state: 'idle', position: 0 });
   const [battle, setBattle] = useState<BattleView | null>(null);
@@ -38,6 +40,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     if (!auth.token) {
       socketRef.current?.close();
       socketRef.current = null;
+      setSocket(null);
       setConnection('offline');
       setQueue({ state: 'idle', position: 0 });
       setBattle(null);
@@ -55,6 +58,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       reconnectionDelayMax: 5000,
     });
     socketRef.current = socket;
+    setSocket(socket);
 
     socket.on('connect', () => {
       setConnection('online');
@@ -92,6 +96,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     return () => {
       socket.close();
       if (socketRef.current === socket) socketRef.current = null;
+      setSocket((current) => (current === socket ? null : current));
     };
   }, [auth.token, auth.refreshCharacter]);
 
@@ -114,8 +119,8 @@ export function BattleProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<BattleContextValue>(
-    () => ({ connection, queue, battle, notice, findMatch, cancelMatch, sendAction, leaveBattle }),
-    [connection, queue, battle, notice, findMatch, cancelMatch, sendAction, leaveBattle],
+    () => ({ connection, socket, queue, battle, notice, findMatch, cancelMatch, sendAction, leaveBattle }),
+    [connection, socket, queue, battle, notice, findMatch, cancelMatch, sendAction, leaveBattle],
   );
 
   return <BattleContext.Provider value={value}>{children}</BattleContext.Provider>;
@@ -125,4 +130,9 @@ export function useBattle(): BattleContextValue {
   const value = useContext(BattleContext);
   if (!value) throw new Error('useBattle must be used within BattleProvider');
   return value;
+}
+
+/** The one live socket for this account. Open-world presence reuses it. */
+export function useSocket(): Socket | null {
+  return useBattle().socket;
 }

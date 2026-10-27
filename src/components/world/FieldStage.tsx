@@ -6,7 +6,7 @@ import { useGameLoop } from '../../hooks/useGameLoop';
 import { useLayout } from '../../theme/useLayout';
 import { stepField, armPortal, resetPortal, resetTerrainHazards, type FieldAxes } from '../../world/sim';
 import type { FieldEvent, FieldState, LootActor } from '../../world/types';
-import { FieldView } from './FieldView';
+import { FieldView, type FieldRemote } from './FieldView';
 import { MovePad } from './MovePad';
 
 type Props = {
@@ -23,6 +23,7 @@ type Props = {
   playerFacesRight?: boolean;
   /** 1 keeps the original framing. Town and the open world pass a smaller value on mobile. */
   zoom?: number;
+  remotes?: FieldRemote[];
   children?: ReactNode;
 };
 
@@ -30,7 +31,7 @@ type Props = {
  * Shared loop for the town and the wilderness. `paused` freezes the player
  * while a shop is open; monsters still advance so the world does not nap.
  */
-export function FieldStage({ field, onField, onEvent, canTake, paused, playerLevel = 1, stamina, testID, player, playerFacesRight = true, zoom = 1, children }: Props) {
+export function FieldStage({ field, onField, onEvent, canTake, paused, playerLevel = 1, stamina, testID, player, playerFacesRight = true, zoom = 1, remotes, children }: Props) {
   const insets = useSafeAreaInsets();
   const { s, height } = useLayout();
   const pad = Math.round(Math.min(height * 0.34, Math.max(96, s(118))));
@@ -89,6 +90,7 @@ export function FieldStage({ field, onField, onEvent, canTake, paused, playerLev
         player={player}
         playerFacesRight={playerFacesRight}
         zoom={zoom}
+        remotes={remotes}
         onSensor={(sensor) => {
           if (pausedRef.current) return;
           if (sensor.service) onEventRef.current({ type: 'service', service: sensor.service });

@@ -26,6 +26,15 @@ type Props = {
    */
   zoom?: number;
   onSensor: (sensor: Sensor) => void;
+  /** Other accounts already positioned in world pixels. */
+  remotes?: FieldRemote[];
+};
+
+export type FieldRemote = {
+  id: string;
+  x: number;
+  y: number;
+  node: ReactNode;
 };
 
 /**
@@ -33,7 +42,7 @@ type Props = {
  * player stays near the middle. Building and gate labels are pressable, so
  * a tap works as well as walking into the sensor.
  */
-export function FieldView({ field, player, playerFacesRight = true, zoom = 1, onSensor }: Props) {
+export function FieldView({ field, player, playerFacesRight = true, zoom = 1, onSensor, remotes }: Props) {
   const [view, setView] = useState({ w: 0, h: 0 });
   const lastPlayer = useRef({ x: field.player.x, y: field.player.y });
   const playerFacing = useRef<1 | -1>(1);
@@ -116,6 +125,7 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
             ),
           })),
         ...gateNodes(field, frame, onSensor),
+        ...placeRemotes(remotes, frame),
         {
           key: 'party',
           y: field.player.y + 28,
@@ -221,6 +231,16 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
                     style={[styles.loot, { left: drop.x - 8, top: drop.y - 8, backgroundColor: drop.tint, zIndex: Math.round(drop.y * 10) }]}
                   />
                 ))}
+                {placeRemotes(remotes, frame).map((item) => (
+                  <View
+                    key={item.key}
+                    pointerEvents="box-none"
+                    collapsable={false}
+                    style={{ position: 'absolute', left: 0, top: 0, zIndex: Math.round(item.y * 10) }}
+                  >
+                    {item.node}
+                  </View>
+                ))}
                 {gateNodes(field, frame, onSensor).map((item) => (
                   <View
                     key={item.key}
@@ -278,6 +298,16 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
       {swamp ? <SwampMist /> : null}
     </View>
   );
+}
+
+function placeRemotes(
+  remotes: FieldRemote[] | undefined,
+  frame: { x: number; y: number; w: number; h: number } | null,
+): { key: string; y: number; node: ReactNode }[] {
+  if (!remotes || !frame) return [];
+  return remotes
+    .filter((remote) => overlapsFrame({ x: remote.x - 48, y: remote.y - 96, w: 96, h: 140 }, frame))
+    .map((remote) => ({ key: remote.id, y: remote.y + 28, node: remote.node }));
 }
 
 function gateNodes(

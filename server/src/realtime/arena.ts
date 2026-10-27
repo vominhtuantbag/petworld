@@ -109,6 +109,7 @@ export class Arena {
     }
     socket.data.userId = auth.sub;
     socket.data.sid = auth.sid;
+    socket.data.username = user.username;
   }
 
   /**

@@ -5,11 +5,14 @@ import { CharacterAvatar } from '../components/CharacterAvatar';
 import { MapHud, type MapMenuId } from '../components/map/MapHud';
 import { portraitFacesRight } from '../components/world/facing';
 import { FieldStage } from '../components/world/FieldStage';
+import { MapChat } from '../components/world/MapChat';
 import { PlayerInfoHUD } from '../components/world/PlayerInfoHUD';
 import { Minimap } from '../components/world/Minimap';
+import { RemotePlayer } from '../components/world/RemotePlayer';
 import { getCharacter } from '../data/characters';
 import { useAvatarLook } from '../state/avatarLook';
 import { useSetup } from '../state/SetupContext';
+import { useMultiplayer } from '../state/useMultiplayer';
 import { useWorld } from '../state/WorldContext';
 import { theme } from '../theme/theme';
 import { worldZoom } from '../web/mobileWeb';
@@ -29,8 +32,26 @@ export function OpenWorldMapScreen() {
   const { field, update } = useFieldSession(world.zoneId);
   const [menu, setMenu] = useState<MapMenuId | null>(null);
   const [customizing, setCustomizing] = useState(false);
+  const [chatFocused, setChatFocused] = useState(false);
   const look = useAvatarLook(setup.player?.baseCharacterId);
   const character = getCharacter(setup.player?.baseCharacterId);
+  const others = useMultiplayer(
+    setup.player
+      ? {
+          zoneId: world.zoneId,
+          x: field.player.x,
+          y: field.player.y,
+          name: setup.player.name,
+          baseCharacterId: setup.player.baseCharacterId,
+          gender: setup.player.gender,
+          hairColor: setup.player.hairColor,
+          outfitColor: setup.player.outfitColor,
+          level: world.adventureLevel,
+          hp: world.vitals.hp,
+          maxHp: world.vitals.maxHp,
+        }
+      : null,
+  );
 
   const onEvent = (event: FieldEvent) => {
     if (event.type === 'travel') {
@@ -70,12 +91,18 @@ export function OpenWorldMapScreen() {
         onField={update}
         onEvent={onEvent}
         canTake={(loot) => lootFits(world.bag, loot)}
-        paused={menu !== null || customizing}
+        paused={menu !== null || customizing || chatFocused}
         playerLevel={world.adventureLevel}
         stamina={world.vitals.stamina}
         testID="world-screen"
         zoom={worldZoom()}
         playerFacesRight={portraitFacesRight(character?.professionId, character?.gender)}
+        remotes={others.players.map((player) => ({
+          id: player.userId,
+          x: player.x,
+          y: player.y,
+          node: <RemotePlayer player={player} />,
+        }))}
         player={
           character && setup.player ? (
             <CharacterAvatar
@@ -109,6 +136,7 @@ export function OpenWorldMapScreen() {
           <Minimap field={field} />
         </View>
       </FieldStage>
+      <MapChat messages={others.messages} onSend={others.sendChat} onFocusChange={setChatFocused} />
       <MapHud menu={menu} onOpen={setMenu} onClose={() => setMenu(null)} />
     </View>
   );

@@ -336,25 +336,6 @@ export function grantFleePeace(field: FieldState): FieldState {
   };
 }
 
-/** Push the player out of contact and calm the monster. Used when a fight is declined. */
-export function disengage(field: FieldState, monsterId: string): FieldState {
-  const monster = field.monsters.find((entry) => entry.id === monsterId);
-  if (!monster) return field;
-  const away = unit(field.player.x - monster.x, field.player.y - monster.y);
-  const player = clampToWorld(
-    field.player.x + away.x * 180,
-    field.player.y + away.y * 180,
-    field.player.r,
-    field.width,
-    field.height,
-  );
-  return {
-    ...field,
-    player: { ...field.player, ...player },
-    monsters: field.monsters.map((entry) => (entry.id === monsterId ? { ...entry, calm: 4 } : entry)),
-  };
-}
-
 function stepMonster(
   monster: MonsterActor,
   player: Vec & { r: number },

@@ -11,7 +11,7 @@ import { entryBlock, parseSector, parseTier, resolveZoneId } from '../world/atla
 import { createField, fieldNeedsRebuild, monsterStats, nextRegion, townZoneId } from '../world/catalog';
 import { speciesById } from '../world/monsters';
 import { grantFleePeace } from '../world/sim';
-import { ADVENTURE_LEVEL_CAP, expForNextLevel, expFromMonster, MARCH_REGEN_PER_SEC, MARCH_STAMINA_PER_PX } from '../world/progression';
+import { ADVENTURE_LEVEL_CAP, expForNextLevel, MARCH_REGEN_PER_SEC, MARCH_STAMINA_PER_PX } from '../world/progression';
 import {
   BAG_SLOTS,
   INN_COOLDOWN_MS,
@@ -113,7 +113,6 @@ type WorldContextValue = WorldState & {
   cancelSquad: () => void;
   returnToSquad: (patch: { vitals: Vitals; bag: Stack[]; pets: { id: string; hp: number; mp: number }[] }) => void;
   beginEncounter: (monster: Encounter) => void;
-  fleeEncounter: () => void;
   resolveBattle: (result: BattleResult) => void;
   march: (distance: number, dt: number) => void;
   sufferHazard: (dt: number) => void;
@@ -571,21 +570,6 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const fleeEncounter = useCallback(() => {
-    setState((current) => {
-      const gained = current.encounter ? expFromMonster(current.encounter.level, Boolean(current.encounter.elite)) : 0;
-      const progressed = applyExp(current, gained, professionRef.current);
-      const leveled = progressed.adventureLevel > current.adventureLevel;
-      return {
-        ...progressed,
-        scene: 'wilds',
-        encounter: null,
-        squad: null,
-        notice: leveled ? `Cấp phiêu lưu ${progressed.adventureLevel}.` : 'Đã rút khỏi trận.',
-      };
-    });
-  }, []);
-
   const hazardClock = useRef(0);
   const march = useCallback((distance: number, dt: number) => {
     setState((current) => {
@@ -659,7 +643,6 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       equipPetSkill,
       cancelSquad,
       returnToSquad,
-      fleeEncounter,
       resolveBattle,
       march,
       sufferHazard,
@@ -693,7 +676,6 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     equipPetSkill,
     cancelSquad,
     returnToSquad,
-    fleeEncounter,
     resolveBattle,
     march,
     sufferHazard,

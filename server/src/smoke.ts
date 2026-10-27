@@ -61,6 +61,8 @@ async function main() {
     console.log('[smoke] auth, matchmaking, and one combat round passed');
     left.socket.close();
     right.socket.close();
+    await checkOpenWorld(base, lan.token, bao.token, `lan_${stamp}`, `bao_${stamp}`);
+    console.log('[smoke] two players shared one map, moved, chatted, and left');
     await checkSingleSession(base, `lan_${stamp}@example.com`, lan.token);
     console.log('[smoke] a second login kicked the previous session');
   } finally {
@@ -115,6 +117,81 @@ async function checkSecondTab(base: string, token: string) {
   if (!second.socket.connected) throw new Error('The newer tab was disconnected.');
   first.socket.close();
   second.socket.close();
+}
+
+async function checkOpenWorld(base: string, lanToken: string, baoToken: string, lanName: string, baoName: string) {
+  const lan = connect(base, lanToken);
+  const bao = connect(base, baoToken);
+  await Promise.all([lan.ready, bao.ready]);
+  try {
+    const joined = waitFor<{ username: string }>(lan.socket, 'player_joined', (payload) => payload.username === baoName);
+    const listed = waitFor<{ players: { username: string }[] }>(
+      bao.socket,
+      'current_players_list',
+      (payload) => payload.players.some((player) => player.username === lanName),
+    );
+    lan.socket.emit('world:enter', worldPose(40, 40));
+    await delay(40);
+    bao.socket.emit('world:enter', worldPose(80, 60));
+    await Promise.all([joined, listed]);
+
+    const moved = waitFor<{ x: number; y: number }>(bao.socket, 'player_moved', (payload) => payload.x === 240 && payload.y === 180);
+    await delay(80);
+    lan.socket.emit('player_move', { x: 240, y: 180, facing: 1, hp: 70, maxHp: 100 });
+    await moved;
+
+    const heard = waitFor<{ username: string; text: string }>(
+      bao.socket,
+      'map_chat',
+      (payload) => payload.username === lanName && payload.text === 'Xin chào',
+    );
+    lan.socket.emit('map_chat', { text: 'Xin chào' });
+    await heard;
+
+    const leftMap = waitFor<{ userId: string }>(lan.socket, 'player_left', () => true);
+    bao.socket.emit('world:leave');
+    await leftMap;
+  } finally {
+    lan.socket.close();
+    bao.socket.close();
+  }
+}
+
+function worldPose(x: number, y: number) {
+  return {
+    zoneId: 'wild:forest:1',
+    x,
+    y,
+    facing: 1,
+    name: 'Khách',
+    baseCharacterId: 'f-archer',
+    gender: 'female',
+    hairColor: '#7a4630',
+    outfitColor: '#3e6b4d',
+    level: 3,
+    hp: 90,
+    maxHp: 100,
+  };
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function waitFor<T>(socket: ReturnType<typeof connect>['socket'], event: string, ok: (payload: T) => boolean): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      socket.off(event, onEvent);
+      reject(new Error(`Timed out waiting for ${event}.`));
+    }, 4000);
+    const onEvent = (payload: T) => {
+      if (!ok(payload)) return;
+      clearTimeout(timer);
+      socket.off(event, onEvent);
+      resolve(payload);
+    };
+    socket.on(event, onEvent);
+  });
 }
 
 async function login(base: string, email: string) {
