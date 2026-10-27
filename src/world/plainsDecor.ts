@@ -10,7 +10,7 @@ import type { FieldState, Rect } from './types';
  * - `PLAINS_DENSITY` — how many flower clusters, tufts, puddles, and interior obstacles.
  * - `PLAINS_BORDER` — pine and boulder wall inset from each edge. Raise `depth`
  *   or `TREE_W` / `ROCK_W` when the forest should block a wider path.
- * - `PLAINS_HORIZON` — share of the screen used by sky, peaks, and the pine line.
+ * The far sky and mountain band is not drawn. The meadow uses the full viewport.
  *
  * Flowers, grass bushes, grass patches, mushrooms, and water are walked over.
  * Water (`vungnuoc`) is 3× the png. Standing in it is ×0.85 speed and −2 thể lực each second.
@@ -22,9 +22,6 @@ import type { FieldState, Rect } from './types';
  */
 
 export const PLAINS_GRASS = '#7ad44a';
-
-/** Fraction of the viewport given to the sky, mountains, and forest line. */
-export const PLAINS_HORIZON = 0.34;
 
 /**
  * How far the backdrop drifts compared with the meadow.

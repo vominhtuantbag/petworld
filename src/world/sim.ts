@@ -417,7 +417,7 @@ function stepMonster(
     player.x = clamp(player.r, field.width - player.r, player.x + away.x * 170);
     player.y = clamp(player.r, field.height - player.r, player.y + away.y * 170);
     moved.calm = 4;
-    events.push({ type: 'encounter', monster: { ...moved, hp: moved.maxHp } });
+    events.push({ type: 'encounter', monster: moved });
   }
 
   return { monster: moved, dropped };

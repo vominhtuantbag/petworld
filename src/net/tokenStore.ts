@@ -1,7 +1,8 @@
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
-const KEY = 'game-thu-gian.token';
+export const TOKEN_KEY = 'game-thu-gian.token';
+const KEY = TOKEN_KEY;
 
 /**
  * Native builds keep the JWT in the OS keystore via SecureStore.

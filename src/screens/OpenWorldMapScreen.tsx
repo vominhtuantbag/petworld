@@ -1,11 +1,10 @@
 import { useState } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { CharacterAvatar } from '../components/CharacterAvatar';
 import { MapHud, type MapMenuId } from '../components/map/MapHud';
 import { portraitFacesRight } from '../components/world/facing';
 import { FieldStage } from '../components/world/FieldStage';
-import { MOBILE_WORLD_ZOOM } from '../components/world/FieldView';
 import { PlayerInfoHUD } from '../components/world/PlayerInfoHUD';
 import { Minimap } from '../components/world/Minimap';
 import { getCharacter } from '../data/characters';
@@ -13,6 +12,7 @@ import { useAvatarLook } from '../state/avatarLook';
 import { useSetup } from '../state/SetupContext';
 import { useWorld } from '../state/WorldContext';
 import { theme } from '../theme/theme';
+import { worldZoom } from '../web/mobileWeb';
 import { lootFits } from '../world/items';
 import { expForNextLevel } from '../world/progression';
 import { useFieldSession } from '../world/useFieldSession';
@@ -74,7 +74,7 @@ export function OpenWorldMapScreen() {
         playerLevel={world.adventureLevel}
         stamina={world.vitals.stamina}
         testID="world-screen"
-        zoom={Platform.OS === 'web' ? 1 : MOBILE_WORLD_ZOOM}
+        zoom={worldZoom()}
         playerFacesRight={portraitFacesRight(character?.professionId, character?.gender)}
         player={
           character && setup.player ? (
@@ -141,8 +141,9 @@ function toCard(monster: MonsterActor): Encounter {
     kindId: monster.kindId,
     name: monster.name,
     level: monster.level,
-    hp: monster.maxHp,
+    hp: monster.hp,
     maxHp: monster.maxHp,
+    mp: monster.mp,
     attack: monster.attack,
     defense: monster.defense,
     speed: monster.speed,

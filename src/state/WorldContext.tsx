@@ -38,7 +38,7 @@ import {
   resolvePetLoadout,
   type HeroSkillLoadout,
 } from '../world/combat/kits';
-import type { Encounter, FieldScene, FieldState, Gear, ItemId, LootActor, Pet, ServiceId, Stack, Vec, Vitals } from '../world/types';
+import type { Encounter, FieldScene, FieldState, Gear, ItemId, LootActor, MonsterActor, Pet, ServiceId, Stack, Vec, Vitals } from '../world/types';
 
 /**
  * Exploration session for the signed-in character. Progress is written to
@@ -496,7 +496,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       squad: null,
       vitals: {
         ...patch.vitals,
-        hp: Math.max(1, Math.min(patch.vitals.maxHp, patch.vitals.hp)),
+        hp: Math.max(0, Math.min(patch.vitals.maxHp, patch.vitals.hp)),
         mana: Math.max(0, Math.min(patch.vitals.maxMana, patch.vitals.mana)),
         stamina: Math.max(0, Math.min(patch.vitals.maxStamina, patch.vitals.stamina)),
       },
@@ -549,12 +549,22 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         .map((monster) => `${monster.name} lên cấp ${monster.level}.`)
         .join(' ');
       const notice = [leveled ? `Cấp phiêu lưu ${progressed.adventureLevel}.` : '', result.notice, grown].filter(Boolean).join(' ');
+      const saved = current.fields[current.zoneId];
+      const fields =
+        saved && result.fieldMonsters && result.fieldMonsters.length > 0
+          ? { ...current.fields, [current.zoneId]: rememberFieldVitals(saved, result.fieldMonsters) }
+          : current.fields;
       return {
         ...progressed,
         scene: 'wilds',
         encounter: null,
         squad: null,
-        vitals: { ...result.vitals, hp: Math.max(1, result.vitals.hp) },
+        fields,
+        vitals: {
+          ...result.vitals,
+          hp: Math.max(0, Math.min(result.vitals.maxHp, result.vitals.hp)),
+          mana: Math.max(0, Math.min(result.vitals.maxMana, result.vitals.mana)),
+        },
         bag,
         gold: current.gold + result.gold,
         tamed: captured.length ? [...updated, ...captured] : updated,
@@ -793,9 +803,35 @@ function hungriest(tamed: TamedMonster[]): TamedMonster | null {
 }
 
 function hunger(monster: TamedMonster): number {
-  const hp = (monster.hp || monster.maxHp) / Math.max(1, monster.maxHp);
-  const mp = (monster.mp || monster.maxMp) / Math.max(1, monster.maxMp);
+  const hp = monster.maxHp > 0 ? monster.hp / monster.maxHp : 0;
+  const mp = monster.maxMp > 0 ? monster.mp / monster.maxMp : 0;
   return hp + mp;
+}
+
+/** Keep the HP and mana a fight actually left. A creature at 0 HP leaves the field. */
+function rememberFieldVitals(field: FieldState, report: { id: string; hp: number; mp: number }[]): FieldState {
+  const byId = new Map(report.map((entry) => [entry.id, entry]));
+  const apply = (monster: MonsterActor): MonsterActor | null => {
+    const next = byId.get(monster.id);
+    if (!next) return monster;
+    if (next.hp <= 0) return null;
+    return {
+      ...monster,
+      hp: Math.max(0, Math.min(monster.maxHp, next.hp)),
+      mp: Math.max(0, Math.min(monster.maxMp, next.mp)),
+    };
+  };
+  const keep = (monster: MonsterActor) => {
+    const next = apply(monster);
+    return next ? [next] : [];
+  };
+  const chunks = { ...field.chunks };
+  for (const key of Object.keys(chunks)) {
+    const bucket = chunks[key];
+    if (!bucket) continue;
+    chunks[key] = { ...bucket, monsters: bucket.monsters.flatMap(keep) };
+  }
+  return { ...field, monsters: field.monsters.flatMap(keep), chunks };
 }
 
 function readQuests(track: QuestTrack | undefined): QuestTrack {

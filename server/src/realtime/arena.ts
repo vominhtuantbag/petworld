@@ -1,5 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 
+import { acceptToken, bindSessionKick, SESSION_REPLACED_MESSAGE } from '../auth/sessions.js';
 import { readToken } from '../auth/tokens.js';
 import { isCombatAction, strike, type CombatAction } from '../combat/rules.js';
 import type { AccountStore, CharacterRecord, UserRecord } from '../domain.js';
@@ -40,6 +41,8 @@ export class Arena {
   private readonly queue: QueuedPlayer[] = [];
   private readonly rooms = new Map<string, Room>();
   private readonly userRoom = new Map<string, string>();
+  /** The one live socket for each account. A newer connection replaces it. */
+  private readonly activeSessions = new Map<string, string>();
   private readonly userSocket = new Map<string, string>();
 
   constructor(
@@ -48,20 +51,18 @@ export class Arena {
   ) {}
 
   attach() {
+    bindSessionKick((userId, sid) => this.kickReplaced(userId, sid));
+
     this.io.use((socket, next) => {
-      const token = typeof socket.handshake.auth?.token === 'string' ? socket.handshake.auth.token : '';
-      const auth = readToken(token);
-      if (!auth) {
-        next(new Error('unauthorized'));
-        return;
-      }
-      socket.data.userId = auth.sub;
-      next();
+      void this.authorize(socket).then(
+        () => next(),
+        (error: unknown) => next(error instanceof Error ? error : new Error('unauthorized')),
+      );
     });
 
     this.io.on('connection', (socket) => {
       const userId = socket.data.userId as string;
-      this.userSocket.set(userId, socket.id);
+      this.claim(socket, userId);
       // Listeners are bound before any await. A client can emit queue:join
       // in the same turn as connect, and that event would otherwise be lost.
       socket.on('queue:join', () => {
@@ -79,9 +80,9 @@ export class Arena {
         socket.emit('queue:status', { state: 'idle', position: 0 });
       });
       socket.on('disconnect', () => {
-        if (this.userSocket.get(userId) === socket.id) {
-          this.userSocket.delete(userId);
-        }
+        if (this.activeSessions.get(userId) !== socket.id) return;
+        this.activeSessions.delete(userId);
+        this.userSocket.delete(userId);
         this.leaveQueue(userId);
         const active = this.roomFor(userId);
         if (active && active.status === 'active') {
@@ -97,13 +98,54 @@ export class Arena {
     timer.unref?.();
   }
 
+  private async authorize(socket: Socket) {
+    const token = typeof socket.handshake.auth?.token === 'string' ? socket.handshake.auth.token : '';
+    const auth = readToken(token);
+    if (!auth) throw new Error('unauthorized');
+    const user = await this.store.findUserById(auth.sub);
+    if (!user) throw new Error('unauthorized');
+    if (acceptToken(user.id, token, auth.sid, user.sessionId) === 'replaced') {
+      throw new Error(`session_replaced: ${SESSION_REPLACED_MESSAGE}`);
+    }
+    socket.data.userId = auth.sub;
+    socket.data.sid = auth.sid;
+  }
+
+  /**
+   * One socket per account. A second tab or device replaces the previous socket,
+   * and that socket is told to leave before it is disconnected.
+   */
+  private claim(socket: Socket, userId: string) {
+    const previousId = this.activeSessions.get(userId);
+    if (previousId && previousId !== socket.id) this.kickSocket(previousId);
+    this.activeSessions.set(userId, socket.id);
+    this.userSocket.set(userId, socket.id);
+  }
+
+  /** Closes the socket from an older login so that device can show the kick notice. */
+  private kickReplaced(userId: string, sid: string) {
+    const currentId = this.activeSessions.get(userId);
+    if (!currentId) return;
+    const socket = this.io.sockets.sockets.get(currentId);
+    if (!socket || socket.data.sid === sid) return;
+    this.kickSocket(currentId);
+  }
+
+  private kickSocket(socketId: string) {
+    const socket = this.io.sockets.sockets.get(socketId);
+    if (!socket) return;
+    const notice = { message: SESSION_REPLACED_MESSAGE };
+    socket.emit('session:replaced', notice);
+    socket.emit('session_replaced', notice);
+    const timer = setTimeout(() => socket.disconnect(true), 150);
+    timer.unref?.();
+  }
+
   private async onConnection(socket: Socket, userId: string) {
     const user = await this.store.findUserById(userId);
-    if (!user || this.userSocket.get(userId) !== socket.id) {
-      if (!user) {
-        socket.emit('battle:error', { message: 'Phiên đăng nhập không còn hiệu lực.' });
-        socket.disconnect(true);
-      }
+    if (!user || this.activeSessions.get(userId) !== socket.id) {
+      if (!user) socket.emit('battle:error', { message: 'Phiên đăng nhập không còn hiệu lực.' });
+      this.kickSocket(socket.id);
       return;
     }
     socket.data.username = user.username;

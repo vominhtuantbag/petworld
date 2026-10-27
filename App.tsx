@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { DebugGrid } from './src/components/battle/DebugGrid';
+import { RotateToLandscape } from './src/components/RotateToLandscape';
 import { useImmersiveChrome } from './src/components/ImmersiveChrome';
 import { useLandscapeLock } from './src/hooks/useLandscapeLock';
 import { SetupFlow } from './src/game/SetupFlow';
@@ -74,6 +75,7 @@ function GameRoot() {
       {screen}
       <DebugGrid />
       {chrome.bar}
+      <RotateToLandscape />
     </View>
   );
 }

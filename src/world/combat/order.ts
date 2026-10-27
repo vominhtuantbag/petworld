@@ -20,3 +20,15 @@ export function turnOrder(units: readonly TurnUnit[], round: number): string[] {
   }
   return bySpeed.map((unit) => unit.id);
 }
+
+/**
+ * Upcoming faces, current turn first. Dead ids are left out.
+ * The rest of this round follows, then the fighters who already acted wrap behind them.
+ */
+export function upcomingQueue(order: readonly string[], turnId: string, living: ReadonlySet<string>): string[] {
+  const alive = order.filter((id) => living.has(id));
+  if (!living.has(turnId)) return alive;
+  const start = alive.indexOf(turnId);
+  if (start <= 0) return alive;
+  return [...alive.slice(start), ...alive.slice(0, start)];
+}

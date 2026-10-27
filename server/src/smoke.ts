@@ -2,6 +2,7 @@ import http from 'node:http';
 
 import { io } from 'socket.io-client';
 
+import { SESSION_REPLACED_MESSAGE } from './auth/sessions.js';
 import { strike } from './combat/rules.js';
 import { startServer } from './index.js';
 import { sampleSave } from './saves/schema.js';
@@ -60,9 +61,69 @@ async function main() {
     console.log('[smoke] auth, matchmaking, and one combat round passed');
     left.socket.close();
     right.socket.close();
+    await checkSingleSession(base, `lan_${stamp}@example.com`, lan.token);
+    console.log('[smoke] a second login kicked the previous session');
   } finally {
     await server.close();
   }
+}
+
+async function checkSingleSession(base: string, email: string, token: string) {
+  const current = connect(base, token);
+  await current.ready;
+  const kicked = new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('The previous session was not kicked.')), 4000);
+    current.socket.on('session:replaced', (payload: { message?: string }) => {
+      clearTimeout(timer);
+      resolve(payload.message ?? '');
+    });
+  });
+  const again = await login(base, email);
+  const message = await kicked;
+  if (message !== SESSION_REPLACED_MESSAGE) {
+    throw new Error(`Unexpected kick notice: ${message}`);
+  }
+  const stale = await requestJson(`${base}/api/me`, { method: 'GET', token });
+  const body = stale.json as { code?: string; error?: string };
+  if (stale.status !== 401 || body.code !== 'session_replaced' || body.error !== message) {
+    throw new Error(`Old token was still accepted: ${JSON.stringify(stale.json)}`);
+  }
+  const fresh = await requestJson(`${base}/api/me`, { method: 'GET', token: again.token });
+  if (fresh.status !== 200) throw new Error('The new login could not read the account.');
+  current.socket.close();
+  await checkSecondTab(base, again.token);
+}
+
+/** Two sockets with the same login: the older tab must be replaced. */
+async function checkSecondTab(base: string, token: string) {
+  const first = connect(base, token);
+  await first.ready;
+  const kicked = new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('A second tab with the same account was not kicked.')), 4000);
+    const finish = (payload: { message?: string }) => {
+      first.socket.io.reconnection(false);
+      clearTimeout(timer);
+      resolve(payload.message ?? '');
+    };
+    first.socket.on('session:replaced', finish);
+    first.socket.on('session_replaced', finish);
+  });
+  const second = connect(base, token);
+  await second.ready;
+  const message = await kicked;
+  if (message !== SESSION_REPLACED_MESSAGE) throw new Error(`Second tab notice was wrong: ${message}`);
+  if (!second.socket.connected) throw new Error('The newer tab was disconnected.');
+  first.socket.close();
+  second.socket.close();
+}
+
+async function login(base: string, email: string) {
+  const response = await requestJson(`${base}/api/auth/login`, {
+    method: 'POST',
+    body: { email, password: 'secret-pass' },
+  });
+  if (response.status !== 200) throw new Error(JSON.stringify(response.json));
+  return response.json as { token: string };
 }
 
 async function register(base: string, username: string, email: string) {

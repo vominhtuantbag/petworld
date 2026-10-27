@@ -1,9 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
+import { SessionReplacedModal } from '../components/SessionReplacedModal';
 import type { InitializedPlayer } from '../types/game';
-import { ApiError, fetchMe, fetchMyCharacter, loginAccount, registerAccount, saveMyCharacter } from '../net/api';
+import { ApiError, fetchMe, fetchMyCharacter, isSessionReplaced, loginAccount, registerAccount, saveMyCharacter } from '../net/api';
 import type { PublicUser, ServerCharacter } from '../net/protocol';
-import { clearToken, readToken, saveToken } from '../net/tokenStore';
+import { forgetKickedToken, kickedToken, onSessionReplaced, rememberKickedToken } from '../net/sessionKick';
+import { clearToken, readToken, saveToken, TOKEN_KEY } from '../net/tokenStore';
 import { clearSessionCache, readSessionCache, writeSessionCache } from './save/sessionCache';
 
 /**
@@ -33,8 +35,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<PublicUser | null>(null);
   const [character, setCharacter] = useState<ServerCharacter | null>(null);
+  const [kicked, setKicked] = useState(false);
+  const tokenRef = useRef<string | null>(null);
+  const holdKick = useRef(false);
 
   const applySession = useCallback(async (nextToken: string, nextUser?: PublicUser) => {
+    tokenRef.current = nextToken;
     const sessionUser = nextUser ?? (await fetchMe(nextToken));
     const saved = await fetchMyCharacter(nextToken);
     setToken(nextToken);
@@ -42,14 +48,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCharacter(saved);
   }, []);
 
+  const forceLogout = useCallback(async (staleToken: string) => {
+    if (holdKick.current) return;
+    if (tokenRef.current && tokenRef.current !== staleToken) return;
+    tokenRef.current = null;
+    rememberKickedToken(staleToken);
+    setKicked(true);
+    await clearToken();
+    await clearSessionCache();
+    setToken(null);
+    setUser(null);
+    setCharacter(null);
+  }, []);
+
+  useEffect(() => onSessionReplaced((staleToken) => {
+    void forceLogout(staleToken);
+  }), [forceLogout]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onStorage = (event: StorageEvent) => {
+      const mine = tokenRef.current;
+      if (event.key !== TOKEN_KEY || !mine || event.newValue === mine) return;
+      if (kickedToken() === mine) return;
+      void saveToken(mine);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     readToken()
       .then(async (stored) => {
         if (!stored || cancelled) return;
+        if (stored === kickedToken()) {
+          if (!cancelled) setKicked(true);
+          return;
+        }
         try {
           await applySession(stored);
         } catch (error) {
+          if (isSessionReplaced(error)) {
+            rememberKickedToken(stored);
+            if (!cancelled) setKicked(true);
+            await clearToken();
+            await clearSessionCache();
+            return;
+          }
           const status = error instanceof ApiError ? error.status : 0;
           const cached = await readSessionCache();
           if (!cancelled && cached && (status === 0 || status === 401 || status >= 500)) {
@@ -72,23 +118,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(
     async (input: { username: string; email: string; password: string }) => {
-      const result = await registerAccount(input);
-      await saveToken(result.token);
-      await applySession(result.token, result.user);
+      holdKick.current = true;
+      forgetKickedToken();
+      try {
+        const result = await registerAccount(input);
+        tokenRef.current = result.token;
+        await saveToken(result.token);
+        await applySession(result.token, result.user);
+      } finally {
+        holdKick.current = false;
+      }
     },
     [applySession],
   );
 
   const login = useCallback(
     async (input: { email: string; password: string }) => {
-      const result = await loginAccount(input);
-      await saveToken(result.token);
-      await applySession(result.token, result.user);
+      holdKick.current = true;
+      forgetKickedToken();
+      try {
+        const result = await loginAccount(input);
+        tokenRef.current = result.token;
+        await saveToken(result.token);
+        await applySession(result.token, result.user);
+      } finally {
+        holdKick.current = false;
+      }
     },
     [applySession],
   );
 
   const logout = useCallback(async () => {
+    tokenRef.current = null;
     await clearToken();
     await clearSessionCache();
     setToken(null);
@@ -127,7 +188,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [ready, token, user, character, register, login, logout, saveCharacter, refreshCharacter],
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+      <SessionReplacedModal visible={kicked} onClose={() => setKicked(false)} />
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthContextValue {

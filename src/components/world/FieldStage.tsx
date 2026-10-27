@@ -98,7 +98,8 @@ export function FieldStage({ field, onField, onEvent, canTake, paused, playerLev
       <View pointerEvents="box-none" style={styles.hud}>
         <View
           pointerEvents="box-none"
-          style={{ paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }}
+          // Status bar is hidden, so its inset would leave a band above the HUD.
+          style={{ paddingTop: 0, paddingLeft: insets.left, paddingRight: insets.right }}
         >
           {children}
         </View>

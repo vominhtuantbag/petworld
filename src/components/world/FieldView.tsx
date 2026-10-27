@@ -1,7 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { PLAINS_HORIZON } from '../../world/plainsDecor';
 import type { FieldState, Rect, Sensor } from '../../world/types';
 import { portalLayout } from '../../world/portals';
 import { portalFade } from '../../world/sim';
@@ -10,7 +9,6 @@ import { stepHorizontalFacing } from './facing';
 import { PortalGate } from './PortalGate';
 import { advanceStride, createStride, type StridePose } from './stride';
 import { MonsterToken } from './MonsterToken';
-import { PlainsBackdrop } from './PlainsBackdrop';
 import { PlainsProp } from './PlainsProp';
 import { isSwampKind, SwampMist, SwampProp } from './SwampProp';
 import { TownHouse } from './TownHouse';
@@ -25,14 +23,11 @@ type Props = {
   /**
    * 1 is the current framing: one world pixel per screen pixel, using the
    * original translate camera. A smaller value pulls the camera back.
-   * Web town and web hunting maps stay at 1.
+   * Desktop web stays at 1. Phone browsers use the native zoom.
    */
   zoom?: number;
   onSensor: (sensor: Sensor) => void;
 };
-
-/** Android and iOS town and hunting maps. Web passes 1 and keeps the original camera. */
-export const MOBILE_WORLD_ZOOM = 0.6;
 
 /**
  * Top-down camera. The map is larger than the screen; it translates so the
@@ -58,12 +53,10 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
   lastPlayer.current = { x: field.player.x, y: field.player.y };
   const scenic = field.provinceId === 'plains' && field.chunkSize > 0;
   const zoned = (field.zones?.length ?? 0) >= 5;
-  const horizon = scenic ? Math.max(120, Math.min(220, view.h * PLAINS_HORIZON)) : 0;
-  const playH = Math.max(0, view.h - horizon);
+  const playH = view.h;
   const scale = zoom > 0 && zoom < 1 ? zoom : 1;
   const focus = scale < 1 && view.w > 0 ? cameraFocus(field, view.w, playH, scale) : null;
   const camera = focus ? wideCamera(focus, view.w, playH, field, scale) : cameraOffset(field, view.w, playH);
-  const parallaxX = focus ? view.w / 2 - focus.x * scale : camera.x;
   const frame = view.w > 0 ? (focus ? wideFrame(focus, view.w, playH, scale) : worldFrame(camera, view.w, playH)) : null;
   const shown = (rect: Rect) => frame != null && overlapsFrame(rect, frame);
   const desert = field.provinceId === 'desert' && field.chunkSize > 0;
@@ -153,9 +146,8 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
         setView({ w: width, h: height });
       }}
     >
-      {/* Backdrop, then meadow. Standing trees and rocks sort with actors by foot position. */}
-      {scenic ? <PlainsBackdrop width={view.w} height={horizon} cameraX={parallaxX} /> : null}
-      <View style={[styles.pane, { top: horizon }]}>
+      {/* The meadow fills the screen. Standing trees and rocks sort with actors by foot position. */}
+      <View style={[styles.pane, { top: 0 }]}>
         <View
           style={
             focus

@@ -7,6 +7,7 @@ import type { PublicUser } from '../domain.js';
 export type AuthToken = {
   sub: string;
   username: string;
+  sid: string;
 };
 
 export async function hashPassword(password: string): Promise<string> {
@@ -17,8 +18,8 @@ export async function verifyPassword(password: string, passwordHash: string): Pr
   return bcrypt.compare(password, passwordHash);
 }
 
-export function signToken(user: PublicUser): string {
-  const payload: AuthToken = { sub: user.id, username: user.username };
+export function signToken(user: PublicUser, sid: string): string {
+  const payload: AuthToken = { sub: user.id, username: user.username, sid };
   return jwt.sign(payload, config.jwtSecret, { expiresIn: config.jwtExpiresIn as jwt.SignOptions['expiresIn'] });
 }
 
@@ -27,7 +28,8 @@ export function readToken(token: string): AuthToken | null {
     const decoded = jwt.verify(token, config.jwtSecret);
     if (typeof decoded === 'string' || typeof decoded.sub !== 'string') return null;
     const username = typeof decoded.username === 'string' ? decoded.username : '';
-    return { sub: decoded.sub, username };
+    const sid = typeof decoded.sid === 'string' ? decoded.sid : '';
+    return { sub: decoded.sub, username, sid };
   } catch {
     return null;
   }

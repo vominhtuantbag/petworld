@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { CourtFx, type Fate, type Step } from '../components/battle/CourtFx';
 import { EndGameModal, type ExpMember, type LootSlot } from '../components/battle/EndGameModal';
 import { FloatingCombatText } from '../components/battle/FloatingCombatText';
 import { TamingMiniGameModal } from '../components/battle/TamingMiniGameModal';
+import { TurnTimeline, type TimelineRole } from '../components/battle/TurnTimeline';
 import { BATTLE_GRID_POSITIONS, feetInView, overheadDrop } from '../components/battle/courtSlots';
 import { CharacterAvatar } from '../components/CharacterAvatar';
 import { portraitScaleX } from '../components/world/facing';
@@ -22,6 +24,7 @@ import {
   actBasic,
   actSkill,
   actTame,
+  cancelTame,
   applyMastery,
   battleRewards,
   battleVitals,
@@ -34,10 +37,20 @@ import {
   type BattleState,
   type Fighter,
 } from '../world/combat';
+import { upcomingQueue } from '../world/combat/order';
 import { ITEMS } from '../world/items';
 import type { Encounter, ItemId } from '../world/types';
 
 const ARENA = require('../../assets/images/sandau_2.jpg');
+
+/** Short step into a stance. The fighter does not close the gap. */
+const STANCE_PX = 32;
+const STANCE_MS = 340;
+const SLASH_MS = 500;
+const IMPACT_MS = 160;
+const TEAR_MS = 500;
+
+type Beat = 'stance' | 'ready' | 'slash' | 'impact' | 'tear' | 'hold';
 
 /**
  * Isometric arena. The hero stands large on the left border. Squad pets 1–3
@@ -106,7 +119,21 @@ export function BattleScreen() {
   const rewardsRef = useRef<BattleRewards | null>(null);
   const hpWatch = useRef<Map<string, number> | null>(null);
   const floatSerial = useRef(0);
+  const fxSerial = useRef(0);
+  const battleRef = useRef<BattleState | null>(null);
+  const prevBattle = useRef<BattleState | null>(null);
+  const [steps, setSteps] = useState<Record<string, Step>>({});
+  const [slashes, setSlashes] = useState<Record<string, number>>({});
+  const [shakes, setShakes] = useState<Record<string, number>>({});
+  const [fates, setFates] = useState<Record<string, Fate>>({});
+  const [beat, setBeat] = useState<Beat>('stance');
+  const beatRef = useRef<Beat>('stance');
+  const strikeGen = useRef(0);
+  const clocks = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const beginStrikeRef = useRef<(before: BattleState, next: BattleState) => void>(() => {});
+  const queueRef = useRef<string[]>([]);
   autoRef.current = auto;
+  battleRef.current = battle;
   if (battle?.over && !rewardsRef.current) rewardsRef.current = battleRewards(battle);
 
   const turnToken = battle && !battle.over && !paused ? battle.turnId : null;
@@ -117,19 +144,28 @@ export function BattleScreen() {
     setActionId('basic');
   }, [battle?.turnId]);
   useEffect(() => {
-    if (!turnToken || tameId) return;
+    if (beat !== 'stance' || !turnToken) return;
+    const timer = setTimeout(() => {
+      if (beatRef.current !== 'stance') return;
+      beatRef.current = 'ready';
+      setBeat('ready');
+    }, STANCE_MS);
+    return () => clearTimeout(timer);
+  }, [beat, turnToken]);
+  useEffect(() => {
+    if (beat !== 'ready' || !turnToken || tameId) return;
     if (handsOff && !auto) return;
     const timer = setTimeout(() => {
-      setBattle((current) => {
-        if (!current || current.over || current.turnId !== turnToken) return current;
-        if (turnToken === 'player') return autoRef.current ? actAutoPlayer(current, focusRef.current) : current;
-        const allyTurn = current.allies.some((ally) => ally.id === turnToken);
-        if (allyTurn && !autoRef.current) return current;
-        return actAuto(current, allyTurn && autoRef.current);
-      });
-    }, 480);
+      const current = battleRef.current;
+      if (!current || current.over || current.turnId !== turnToken || beatRef.current !== 'ready') return;
+      const next = current.turnId === 'player'
+        ? autoRef.current ? actAutoPlayer(current, focusRef.current) : current
+        : actAuto(current, current.allies.some((ally) => ally.id === turnToken) && autoRef.current);
+      if (next === current) return;
+      beginStrikeRef.current(current, next);
+    }, 40);
     return () => clearTimeout(timer);
-  }, [turnToken, tameId, auto, handsOff]);
+  }, [beat, turnToken, tameId, auto, handsOff]);
   useEffect(() => {
     if (!battle) {
       hpWatch.current = null;
@@ -155,12 +191,159 @@ export function BattleScreen() {
     if (born.length === 0) return;
     setFloats((current) => [...current, ...born].slice(-24));
   }, [battle]);
+  useEffect(() => {
+    const previous = prevBattle.current;
+    prevBattle.current = battle;
+    if (!battle || !previous || previous === battle) return;
+    const captured = battle.tamed.filter((monster) => !previous.tamed.some((entry) => entry.id === monster.id));
+    if (captured.length === 0) return;
+    const fallen: Record<string, Fate> = {};
+    for (const monster of captured) {
+      fxSerial.current += 1;
+      fallen[monster.id] = { key: fxSerial.current, kind: 'heart' };
+    }
+    setFates((current) => ({ ...current, ...fallen }));
+  }, [battle]);
+  useEffect(() => {
+    if (beat !== 'stance' && beat !== 'ready') return;
+    if (!battle || battle.over || screen.w <= 0) return;
+    const actor = fighterById(battle, battle.turnId);
+    const targetId = actor && actor.hp > 0 ? approachTarget(battle, focusId) : null;
+    const place = (id: string) => {
+      const cell = battleCell(id, battle);
+      return cell ? feetInView(cell, screen.w, screen.h, insets.left + stageBox.x, insets.top + stageBox.y) : null;
+    };
+    setSteps((current) => {
+      const next = { ...current };
+      const ids = [battle.player.id, ...battle.allies.map((entry) => entry.id), ...battle.foes.map((entry) => entry.id)];
+      let changed = false;
+      for (const id of ids) {
+        if (id === actor?.id && targetId) continue;
+        const fighter = fighterById(battle, id);
+        if (fighter && fighter.hp <= 0) continue;
+        const pose = next[id];
+        if (!pose || (pose.x === 0 && pose.y === 0)) continue;
+        fxSerial.current += 1;
+        next[id] = { key: fxSerial.current, x: 0, y: 0 };
+        changed = true;
+      }
+      if (actor && targetId) {
+        const from = place(actor.id);
+        const to = place(targetId);
+        if (from && to) {
+          const dx = to.x - from.x;
+          const dy = to.y - from.y;
+          const span = Math.hypot(dx, dy);
+          const hold = Math.min(STANCE_PX, span * 0.35);
+          const x = span < 8 ? 0 : (dx / span) * hold;
+          const y = span < 8 ? 0 : (dy / span) * hold;
+          const pose = next[actor.id];
+          if (!pose || Math.abs(pose.x - x) > 2 || Math.abs(pose.y - y) > 2) {
+            fxSerial.current += 1;
+            next[actor.id] = { key: fxSerial.current, x, y };
+            changed = true;
+          }
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [battle, beat, focusId, insets.left, insets.top, screen.h, screen.w, stageBox.x, stageBox.y]);
 
   useEffect(() => {
     return () => {
       if (toastTimer.current) clearTimeout(toastTimer.current);
+      clocks.current.forEach(clearTimeout);
     };
   }, []);
+
+  beginStrikeRef.current = (before, next) => {
+    if (next === before) return;
+    const hits = lostHp(before, next);
+    const captured = new Set(next.tamed.map((monster) => monster.id).filter((id) => !before.tamed.some((monster) => monster.id === id)));
+    const struck = hits.filter((hit) => !captured.has(hit.id));
+    const lethal = struck.some((hit) => hit.hp <= 0);
+    const release = (gen: number, finalState: BattleState) => {
+      if (strikeGen.current !== gen) return;
+      setBattle(finalState);
+      if (finalState.over) {
+        beatRef.current = 'ready';
+        setBeat('ready');
+        return;
+      }
+      beatRef.current = 'stance';
+      setBeat('stance');
+    };
+    const later = (ms: number, fn: () => void) => {
+      const timer = setTimeout(() => {
+        clocks.current = clocks.current.filter((entry) => entry !== timer);
+        fn();
+      }, ms);
+      clocks.current.push(timer);
+    };
+    if (struck.length === 0) {
+      if (captured.size > 0 && next.turnId !== before.turnId) {
+        const gen = ++strikeGen.current;
+        setBattle(next);
+        beatRef.current = 'hold';
+        setBeat('hold');
+        later(TEAR_MS, () => release(gen, next));
+        return;
+      }
+      setBattle(next);
+      if (next.turnId !== before.turnId && !next.over) {
+        beatRef.current = 'stance';
+        setBeat('stance');
+      }
+      return;
+    }
+    const marks: Record<string, number> = {};
+    for (const hit of struck) {
+      fxSerial.current += 1;
+      marks[hit.id] = fxSerial.current;
+    }
+    setSlashes((current) => ({ ...current, ...marks }));
+    const gen = ++strikeGen.current;
+    beatRef.current = 'slash';
+    setBeat('slash');
+    later(SLASH_MS, () => {
+      if (strikeGen.current !== gen) return;
+      setBattle({ ...next, turnId: before.turnId, over: null });
+      const impact: Record<string, number> = {};
+      for (const hit of struck) {
+        fxSerial.current += 1;
+        impact[hit.id] = fxSerial.current;
+      }
+      setShakes((current) => ({ ...current, ...impact }));
+      beatRef.current = 'impact';
+      setBeat('impact');
+      later(IMPACT_MS, () => {
+        if (strikeGen.current !== gen) return;
+        if (!lethal) {
+          release(gen, next);
+          return;
+        }
+        const fallen: Record<string, Fate> = {};
+        for (const hit of struck) {
+          if (hit.hp > 0) continue;
+          fxSerial.current += 1;
+          fallen[hit.id] = { key: fxSerial.current, kind: 'tear' };
+        }
+        if (Object.keys(fallen).length > 0) setFates((current) => ({ ...current, ...fallen }));
+        beatRef.current = 'tear';
+        setBeat('tear');
+        later(TEAR_MS, () => release(gen, next));
+      });
+    });
+  };
+
+  const liveQueue = useMemo(() => {
+    if (!battle) return [] as string[];
+    const living = new Set([battle.player, ...battle.allies, ...battle.foes].filter((fighter) => fighter.hp > 0).map((fighter) => fighter.id));
+    return upcomingQueue(battle.order, battle.turnId, living);
+  }, [battle]);
+  const queueHeld = beat === 'slash' || beat === 'impact' || beat === 'tear' || beat === 'hold';
+  if (!queueHeld) queueRef.current = liveQueue;
+  const turnQueue = queueHeld ? queueRef.current : liveQueue;
 
   if (!encounter || !setup.player) {
     return (
@@ -203,8 +386,9 @@ export function BattleScreen() {
   const nets = countNets(battle?.bag ?? world.bag);
   const rewards = battle?.over ? rewardsRef.current : null;
   const actingAlly = battle?.allies.find((ally) => ally.id === battle.turnId && ally.hp > 0) ?? null;
-  const playerTurn = Boolean(battle && !battle.over && !paused && battle.turnId === 'player' && !tameId);
-  const commandTurn = playerTurn || Boolean(actingAlly && !auto && !paused && !tameId && battle && !battle.over);
+  const queued = beat === 'ready';
+  const playerTurn = Boolean(battle && !battle.over && !paused && queued && battle.turnId === 'player' && !tameId);
+  const commandTurn = playerTurn || Boolean(actingAlly && !auto && !paused && queued && !tameId && battle && !battle.over);
   const lineup = battle ? [battle.player, ...battle.allies, ...battle.foes] : [];
   const player = battle?.player ?? playerPreview;
   const shownAllies = battle
@@ -234,6 +418,7 @@ export function BattleScreen() {
       victory: payout.victory,
       petExp: payout.pets.map(({ id, exp, hp, mp }) => ({ id, exp, hp, mp })),
       drops: payout.drops,
+      fieldMonsters: battle.foes.map((foe) => ({ id: foe.id, hp: foe.hp, mp: foe.mp })),
     });
   };
 
@@ -245,7 +430,7 @@ export function BattleScreen() {
 
   const openTame = () => {
     try {
-      if (!battle || battle.over || paused || battle.turnId !== 'player' || tameId) return;
+      if (!battle || battle.over || paused || beatRef.current !== 'ready' || battle.turnId !== 'player' || tameId) return;
       const available = countNets(battle.bag);
       if (!(available > 0)) {
         showToast('Hết lưới bắt quái!');
@@ -270,15 +455,13 @@ export function BattleScreen() {
       const rolls = Array.isArray(bonuses) ? bonuses.filter((bonus) => Number.isFinite(bonus)) : [];
       setTameId(null);
       if (!id) return;
-      setBattle((current) => {
-        if (!current) return current;
-        try {
-          return actTame(current, id, rolls, Math.random());
-        } catch (error) {
-          console.warn('[Game Thư Giãn] Taming could not resolve.', error);
-          return current;
-        }
-      });
+      const current = battleRef.current;
+      if (!current) return;
+      try {
+        beginStrikeRef.current(current, actTame(current, id, rolls, Math.random()));
+      } catch (error) {
+        console.warn('[Game Thư Giãn] Taming could not resolve.', error);
+      }
     } catch (error) {
       console.warn('[Game Thư Giãn] Taming could not resolve.', error);
       setTameId(null);
@@ -286,31 +469,33 @@ export function BattleScreen() {
   };
 
   const confirmAttack = () => {
-    setBattle((current) => {
-      if (!current || current.over) return current;
-      const ally = current.allies.find((entry) => entry.id === current.turnId && entry.hp > 0) ?? null;
-      if (current.turnId !== 'player' && !ally) return current;
-      const picked = [...current.foes, ...current.allies].find((fighter) => fighter.id === focusId && fighter.hp > 0) ?? null;
-      const foe = picked?.side === 'wild' ? picked : picked ? null : current.foes.find((fighter) => fighter.hp > 0) ?? null;
-      if (ally) {
-        if (actionId !== 'basic') {
-          const skill = ally.skills.find((entry) => entry.id === actionId);
-          if (skill && skill.power <= 0) return actAlly(current, null, skill.id);
-        }
-        if (!foe) return { ...current, log: 'Hãy chọn một quái còn sống.' };
-        return actAlly(current, foe.id, actionId === 'basic' ? null : actionId);
-      }
-      if (current.turnId !== 'player') return current;
+    const current = battleRef.current;
+    if (!current || current.over || beatRef.current !== 'ready') return;
+    const ally = current.allies.find((entry) => entry.id === current.turnId && entry.hp > 0) ?? null;
+    if (current.turnId !== 'player' && !ally) return;
+    const picked = [...current.foes, ...current.allies].find((fighter) => fighter.id === focusId && fighter.hp > 0) ?? null;
+    const foe = picked?.side === 'wild' ? picked : picked ? null : current.foes.find((fighter) => fighter.hp > 0) ?? null;
+    let next = current;
+    if (ally) {
+      if (actionId !== 'basic') {
+        const skill = ally.skills.find((entry) => entry.id === actionId);
+        if (skill && skill.power <= 0) next = actAlly(current, null, skill.id);
+        else if (!foe) next = { ...current, log: 'Hãy chọn một quái còn sống.' };
+        else next = actAlly(current, foe.id, actionId);
+      } else if (!foe) next = { ...current, log: 'Hãy chọn một quái còn sống.' };
+      else next = actAlly(current, foe.id, null);
+    } else if (current.turnId === 'player') {
       if (actionId === 'basic') {
-        if (!foe) return { ...current, log: 'Hãy chọn một quái còn sống.' };
-        return actBasic(current, foe.id);
+        next = foe ? actBasic(current, foe.id) : { ...current, log: 'Hãy chọn một quái còn sống.' };
+      } else {
+        const skill = current.player.skills.find((entry) => entry.id === actionId);
+        if (!skill) return;
+        if (skill.power <= 0) next = actSkill(current, null, skill.id);
+        else next = foe ? actSkill(current, foe.id, skill.id) : { ...current, log: 'Hãy chọn một quái còn sống.' };
       }
-      const skill = current.player.skills.find((entry) => entry.id === actionId);
-      if (!skill) return current;
-      if (skill.power <= 0) return actSkill(current, null, skill.id);
-      if (!foe) return { ...current, log: 'Hãy chọn một quái còn sống.' };
-      return actSkill(current, foe.id, skill.id);
-    });
+    }
+    if (next === current) return;
+    beginStrikeRef.current(current, next);
   };
 
   const begin = () => {
@@ -330,6 +515,14 @@ export function BattleScreen() {
       world.vitals.maxStamina,
     );
     setFocusId(next.foes[0]?.id ?? null);
+    strikeGen.current += 1;
+    beatRef.current = 'stance';
+    setBeat('stance');
+    setSteps({});
+    setSlashes({});
+    setShakes({});
+    setFates({});
+    prevBattle.current = null;
     setBattle(next);
   };
 
@@ -350,6 +543,7 @@ export function BattleScreen() {
     if (list.includes(id)) set(list.filter((entry) => entry !== id));
     else if (list.length < max) set([...list, id]);
   };
+  const faceSize = timelineFaceSize(screen.w, insets.left, insets.right, turnQueue.length, s(30), s(72) + s(78) + 36);
 
   return (
     <View
@@ -367,25 +561,26 @@ export function BattleScreen() {
           <RoundButton label={paused ? '▶' : 'Dừng'} hint="Tạm dừng" disabled={!battle || Boolean(battle.over)} hot={paused} onPress={() => setPaused((value) => !value)} testID="battle-pause" size={s(36)} width={s(72)} font={font(12)} />
           <RoundButton label={auto ? 'Tự: Bật' : 'Tự: Tắt'} hint={auto ? 'Tắt tự động đánh' : 'Bật tự động đánh'} disabled={!battle || Boolean(battle.over)} hot={auto} onPress={() => setAuto((value) => !value)} testID="battle-auto" size={s(36)} width={s(78)} font={font(11)} />
         </View>
-        <View style={styles.timeline}>
-          {battle
-            ? battle.order.map((id) => {
-                const fighter = lineup.find((entry) => entry.id === id);
-                if (!fighter) return null;
-                return (
-                  <TimelineFace
-                    key={id}
-                    fighter={fighter}
-                    active={battle.turnId === id && !battle.over}
-                    size={s(30)}
-                    character={fighter.side === 'player' ? character : null}
-                    hairColor={setup.player?.hairColor}
-                    outfitColor={setup.player?.outfitColor}
-                  />
-                );
-              })
-            : null}
-        </View>
+        <TurnTimeline
+          ids={turnQueue}
+          activeId={battle && !battle.over ? battle.turnId : null}
+          size={faceSize}
+          renderFace={(id, role) => {
+            const fighter = lineup.find((entry) => entry.id === id);
+            if (!fighter) return null;
+            return (
+              <TimelineFace
+                fighter={fighter}
+                active={role === 'now'}
+                role={role}
+                size={faceSize}
+                character={fighter.side === 'player' ? character : null}
+                hairColor={setup.player?.hairColor}
+                outfitColor={setup.player?.outfitColor}
+              />
+            );
+          }}
+        />
       </View>
 
       <View
@@ -403,6 +598,10 @@ export function BattleScreen() {
           size={s(118)}
           statFont={font(10)}
           barWidth={s(104)}
+          step={steps[player.id] ?? null}
+          slashKey={slashes[player.id] ?? 0}
+          shakeKey={shakes[player.id] ?? 0}
+          fate={fates[player.id] ?? null}
           testID="court-player"
           character={character}
           hairColor={setup.player.hairColor}
@@ -418,6 +617,10 @@ export function BattleScreen() {
             size={Math.round(s(64) * 0.8)}
             statFont={font(10)}
             barWidth={s(86)}
+            step={steps[fighter.id] ?? null}
+            slashKey={slashes[fighter.id] ?? 0}
+            shakeKey={shakes[fighter.id] ?? 0}
+            fate={fates[fighter.id] ?? null}
             testID={`court-ally-${index}`}
             onPress={battle ? undefined : () => toggleId(allyIds, rawId(fighter.id), 3, setPickedAllies)}
           />
@@ -433,8 +636,12 @@ export function BattleScreen() {
             size={Math.round((boarPack ? s(56) : s(64)) * 0.8)}
             statFont={font(10)}
             barWidth={boarPack ? s(72) : s(86)}
-            front={foeCells[index] === BATTLE_GRID_POSITIONS.enemy3}
-            testID={`court-foe-${index}`}
+          front={foeCells[index] === BATTLE_GRID_POSITIONS.enemy3}
+          step={steps[fighter.id] ?? null}
+          slashKey={slashes[fighter.id] ?? 0}
+          shakeKey={shakes[fighter.id] ?? 0}
+          fate={fates[fighter.id] ?? null}
+          testID={`court-foe-${index}`}
             onPress={
               battle
                 ? fighter.hp > 0
@@ -637,7 +844,12 @@ export function BattleScreen() {
           key={tameFoe.id}
           monsterName={tameFoe.name || 'Quái'}
           lowHp={tameFoe.maxHp > 0 && tameFoe.hp / tameFoe.maxHp <= 0.05}
-          onClose={() => setTameId(null)}
+          onClose={(turnsPlayed) => {
+            setTameId(null);
+            if (turnsPlayed < 3) return;
+            const current = battleRef.current;
+            if (current && current.turnId === 'player' && !current.over) beginStrikeRef.current(current, cancelTame(current));
+          }}
           onFinish={finishTame}
         />
       ) : null}
@@ -761,6 +973,14 @@ function roster(encounter: Encounter): Encounter[] {
   return cards.slice(0, 6);
 }
 
+function timelineFaceSize(screenW: number, insetL: number, insetR: number, count: number, preferred: number, reserved: number): number {
+  const seats = Math.max(count, 1);
+  if (screenW <= 0) return preferred;
+  const room = screenW - insetL - insetR - reserved;
+  const fitted = Math.floor((room - 6 * (seats - 1)) / seats);
+  return Math.max(20, Math.min(preferred, fitted));
+}
+
 function rawId(id: string): string {
   return id.replace(/^ally-/, '');
 }
@@ -783,6 +1003,10 @@ function CourtUnit({
   statFont,
   barWidth,
   front,
+  step,
+  slashKey,
+  shakeKey,
+  fate,
   testID,
   character,
   hairColor,
@@ -799,6 +1023,10 @@ function CourtUnit({
   barWidth: number;
   /** Paint this unit above neighbors so a high cell keeps its HUD. */
   front?: boolean;
+  step?: Step | null;
+  slashKey?: number;
+  shakeKey?: number;
+  fate?: Fate | null;
   testID?: string;
   character?: CharacterDefinition | null;
   hairColor?: string;
@@ -828,9 +1056,9 @@ function CourtUnit({
           zIndex: (front ? 56 : 8 + Math.min(40, Math.round(slot.y / 8))) + (active ? 4 : 0),
           transform: [{ translateX: -(boxW / 2) }, { translateY: -size }],
         },
-        fighter.hp <= 0 && styles.fainted,
       ]}
     >
+      <CourtFx step={step ?? null} slashKey={slashKey ?? 0} shakeKey={shakeKey ?? 0} fate={fate ?? null}>
       <View pointerEvents="none" style={[styles.hud, { top: -chrome + drop, width: labelWidth, marginLeft: (boxW - labelWidth) / 2 }]}>
         <Text style={[styles.statLine, { fontSize: statFont, width: labelWidth }]} numberOfLines={1}>
           ATK {attack} / DEF {defense}
@@ -851,8 +1079,61 @@ function CourtUnit({
           <View pointerEvents="none" style={[styles.redRing, { width: size * 1.05, height: size * 0.72, borderRadius: size }]} />
         ) : null}
       </View>
+      </CourtFx>
     </Pressable>
   );
+}
+
+function approachTarget(state: BattleState, focusId: string | null): string | null {
+  const actor = fighterById(state, state.turnId);
+  if (!actor || actor.hp <= 0) return null;
+  if (actor.side === 'wild') {
+    const friends = [state.player, ...state.allies].filter((fighter) => fighter.hp > 0);
+    friends.sort((a, b) => a.hp / Math.max(1, a.maxHp) - b.hp / Math.max(1, b.maxHp) || a.id.localeCompare(b.id));
+    return friends[0]?.id ?? null;
+  }
+  const marked = state.foes.find((fighter) => fighter.id === focusId && fighter.hp > 0);
+  return marked?.id ?? state.foes.find((fighter) => fighter.hp > 0)?.id ?? null;
+}
+
+function fighterById(state: BattleState, id: string): Fighter | undefined {
+  if (state.player.id === id) return state.player;
+  return state.allies.find((entry) => entry.id === id) ?? state.foes.find((entry) => entry.id === id);
+}
+
+function lostHp(before: BattleState, after: BattleState): { id: string; hp: number }[] {
+  const hits: { id: string; hp: number }[] = [];
+  const watch = (prev: Fighter | undefined, next: Fighter) => {
+    if (!prev || next.hp >= prev.hp) return;
+    hits.push({ id: next.id, hp: next.hp });
+  };
+  watch(before.player, after.player);
+  for (const ally of after.allies) watch(before.allies.find((entry) => entry.id === ally.id), ally);
+  for (const foe of after.foes) watch(before.foes.find((entry) => entry.id === foe.id), foe);
+  return hits;
+}
+
+function battleCell(id: string, state: BattleState): string | null {
+  if (id === state.player.id) return BATTLE_GRID_POSITIONS.player;
+  const allyIndex = state.allies.findIndex((entry) => entry.id === id);
+  if (allyIndex >= 0) {
+    const cells = [BATTLE_GRID_POSITIONS.pet1, BATTLE_GRID_POSITIONS.pet2, BATTLE_GRID_POSITIONS.pet3];
+    return cells[allyIndex] ?? cells[0];
+  }
+  const foeIndex = state.foes.findIndex((entry) => entry.id === id);
+  if (foeIndex < 0) return null;
+  const cells =
+    state.foes.length > 3
+      ? [
+          BATTLE_GRID_POSITIONS.boar1,
+          BATTLE_GRID_POSITIONS.boar2,
+          BATTLE_GRID_POSITIONS.boar3,
+          BATTLE_GRID_POSITIONS.boar4,
+          BATTLE_GRID_POSITIONS.boar5,
+          BATTLE_GRID_POSITIONS.boar6,
+        ]
+      : [BATTLE_GRID_POSITIONS.enemy1, BATTLE_GRID_POSITIONS.enemy2, BATTLE_GRID_POSITIONS.enemy3];
+  return cells[foeIndex] ?? cells[0];
 }
 
 function FloatBar({ value, max, tint, width }: { value: number; max: number; tint: string; width: number }) {
@@ -897,6 +1178,7 @@ function FaceArt({
 function TimelineFace({
   fighter,
   active,
+  role,
   size,
   character,
   hairColor,
@@ -904,6 +1186,7 @@ function TimelineFace({
 }: {
   fighter: Fighter;
   active: boolean;
+  role: TimelineRole;
   size: number;
   character?: CharacterDefinition | null;
   hairColor?: string;
@@ -919,6 +1202,7 @@ function TimelineFace({
           borderRadius: size / 2,
           borderWidth: active ? 5 : 4,
           borderColor: fighter.side === 'wild' ? 'red' : 'green',
+          opacity: role === 'later' ? 0.78 : 1,
         },
         fighter.hp <= 0 && styles.fainted,
       ]}
@@ -997,9 +1281,8 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#1a1612', overflow: 'hidden' },
   arena: { position: 'absolute', left: 0, top: 0, width: '100%', height: '100%' },
   frame: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 44, zIndex: 4, paddingHorizontal: 8 },
-  headerLeft: { flexDirection: 'row', gap: 8 },
-  timeline: { flex: 1, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 5, minWidth: 0 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 44, zIndex: 4, paddingHorizontal: 8, paddingTop: 4 },
+  headerLeft: { flexDirection: 'row', gap: 8, flexShrink: 0 },
   timeFace: { overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: '#d7d2c8' },
   stage: { flex: 1, minHeight: 0, overflow: 'hidden' },
   unit: { position: 'absolute', alignItems: 'center' },

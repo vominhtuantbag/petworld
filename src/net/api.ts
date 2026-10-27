@@ -1,13 +1,28 @@
 import { API_URL } from '../config/env';
 import type { PublicUser, ServerCharacter } from './protocol';
+import { reportSessionReplaced } from './sessionKick';
 
 export class ApiError extends Error {
   status: number;
+  code?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
+}
+
+export function isSessionReplaced(error: unknown): boolean {
+  return error instanceof ApiError && error.code === 'session_replaced';
+}
+
+type ErrorBody = { error?: string; code?: string };
+
+export function raiseApiError(payload: ErrorBody, status: number, token?: string): never {
+  const code = typeof payload.code === 'string' ? payload.code : undefined;
+  if (code === 'session_replaced' && token) reportSessionReplaced(token);
+  throw new ApiError(payload.error ?? 'Yêu cầu không thành công.', status, code);
 }
 
 type AuthResponse = { token: string; user: PublicUser };
@@ -73,9 +88,7 @@ async function request<T>(path: string, options: { method?: string; token?: stri
     throw new ApiError('Không kết nối được máy chủ. Hãy chạy server trước.', 0);
   }
 
-  const payload = (await response.json().catch(() => ({}))) as { error?: string };
-  if (!response.ok) {
-    throw new ApiError(payload.error ?? 'Yêu cầu không thành công.', response.status);
-  }
+  const payload = (await response.json().catch(() => ({}))) as ErrorBody;
+  if (!response.ok) raiseApiError(payload, response.status, options.token);
   return payload as T;
 }

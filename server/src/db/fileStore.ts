@@ -34,6 +34,7 @@ export class FileAccountStore implements AccountStore {
         email: input.email,
         passwordHash: input.passwordHash,
         createdAt: new Date().toISOString(),
+        sessionId: '',
       };
       db.users.push(user);
       return user;
@@ -50,6 +51,13 @@ export class FileAccountStore implements AccountStore {
 
   findUserById(id: string): Promise<UserRecord | null> {
     return this.read((db) => db.users.find((user) => user.id === id) ?? null);
+  }
+
+  setSession(userId: string, sessionId: string): Promise<void> {
+    return this.update((db) => {
+      const user = db.users.find((entry) => entry.id === userId);
+      if (user) user.sessionId = sessionId;
+    });
   }
 
   findCharacterByUserId(userId: string): Promise<CharacterRecord | null> {

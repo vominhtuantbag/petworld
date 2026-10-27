@@ -14,6 +14,7 @@ const userSchema = new Schema(
     username: { type: String, required: true, unique: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     passwordHash: { type: String, required: true, select: false },
+    sessionId: { type: String, default: '' },
     createdAt: { type: Date, default: Date.now },
   },
   { versionKey: false },
@@ -63,6 +64,7 @@ function asUser(doc: UserDoc & { passwordHash?: string }): UserRecord {
     email: doc.email,
     passwordHash: doc.passwordHash ?? '',
     createdAt: new Date(doc.createdAt ?? Date.now()).toISOString(),
+    sessionId: doc.sessionId ?? '',
   };
 }
 
@@ -104,6 +106,11 @@ export class MongoAccountStore implements AccountStore {
     if (!mongoose.isValidObjectId(id)) return null;
     const doc = await UserModel.findById(id).lean();
     return doc ? asUser(doc as unknown as UserDoc) : null;
+  }
+
+  async setSession(userId: string, sessionId: string): Promise<void> {
+    if (!mongoose.isValidObjectId(userId)) return;
+    await UserModel.updateOne({ _id: userId }, { sessionId });
   }
 
   async findCharacterByUserId(userId: string): Promise<CharacterRecord | null> {

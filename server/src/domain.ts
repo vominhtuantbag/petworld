@@ -12,6 +12,8 @@ export type UserRecord = {
   email: string;
   passwordHash: string;
   createdAt: string;
+  /** Latest login. An older token for this account is no longer valid. */
+  sessionId?: string;
 };
 
 export type PublicUser = {
@@ -70,6 +72,7 @@ export interface AccountStore {
   findUserByEmail(email: string): Promise<UserRecord | null>;
   findUserByUsername(username: string): Promise<UserRecord | null>;
   findUserById(id: string): Promise<UserRecord | null>;
+  setSession(userId: string, sessionId: string): Promise<void>;
   findCharacterByUserId(userId: string): Promise<CharacterRecord | null>;
   upsertCharacter(userId: string, input: CharacterInput): Promise<CharacterRecord>;
   recordResult(userId: string, outcome: 'win' | 'loss' | 'draw'): Promise<void>;

@@ -3,7 +3,8 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import helmet from 'helmet';
 import { z } from 'zod';
 
-import { hashPassword, readToken, signToken, verifyPassword } from '../auth/tokens.js';
+import { acceptToken, issueSession, SESSION_REPLACED_CODE, SESSION_REPLACED_MESSAGE } from '../auth/sessions.js';
+import { hashPassword, readToken, verifyPassword } from '../auth/tokens.js';
 import { AVATAR_IDS, REGION_IDS } from '../catalog.js';
 import { config } from '../config.js';
 import type { AccountStore } from '../domain.js';
@@ -102,7 +103,7 @@ export function createApp(store: AccountStore, board = new TournamentBoard()) {
         passwordHash: await hashPassword(parsed.data.password),
       });
       const publicUser = toPublicUser(user);
-      response.status(201).json({ token: signToken(publicUser), user: publicUser });
+      response.status(201).json({ token: await issueSession(store, publicUser), user: publicUser });
     }),
   );
 
@@ -122,18 +123,15 @@ export function createApp(store: AccountStore, board = new TournamentBoard()) {
         return;
       }
       const publicUser = toPublicUser(user);
-      response.json({ token: signToken(publicUser), user: publicUser });
+      response.json({ token: await issueSession(store, publicUser), user: publicUser });
     }),
   );
 
   app.get(
     '/api/me',
     asyncRoute(async (request, response) => {
-      const user = await userFromRequest(store, request);
-      if (!user) {
-        response.status(401).json({ error: 'Phiên đăng nhập không còn hiệu lực.' });
-        return;
-      }
+      const user = await userFromRequest(store, request, response);
+      if (!user) return;
       response.json({ user: toPublicUser(user) });
     }),
   );
@@ -141,11 +139,8 @@ export function createApp(store: AccountStore, board = new TournamentBoard()) {
   app.get(
     '/api/characters/me',
     asyncRoute(async (request, response) => {
-      const user = await userFromRequest(store, request);
-      if (!user) {
-        response.status(401).json({ error: 'Phiên đăng nhập không còn hiệu lực.' });
-        return;
-      }
+      const user = await userFromRequest(store, request, response);
+      if (!user) return;
       const character = await store.findCharacterByUserId(user.id);
       response.json({ character });
     }),
@@ -154,11 +149,8 @@ export function createApp(store: AccountStore, board = new TournamentBoard()) {
   app.put(
     '/api/characters/me',
     asyncRoute(async (request, response) => {
-      const user = await userFromRequest(store, request);
-      if (!user) {
-        response.status(401).json({ error: 'Phiên đăng nhập không còn hiệu lực.' });
-        return;
-      }
+      const user = await userFromRequest(store, request, response);
+      if (!user) return;
       const parsed = characterSchema.safeParse(request.body);
       if (!parsed.success) {
         response.status(400).json({ error: 'Thông tin nhân vật chưa hợp lệ.' });
@@ -172,11 +164,8 @@ export function createApp(store: AccountStore, board = new TournamentBoard()) {
   app.get(
     '/api/saves/me',
     asyncRoute(async (request, response) => {
-      const user = await userFromRequest(store, request);
-      if (!user) {
-        response.status(401).json({ error: 'Phiên đăng nhập không còn hiệu lực.' });
-        return;
-      }
+      const user = await userFromRequest(store, request, response);
+      if (!user) return;
       response.json({ save: await store.findAdventure(user.id) });
     }),
   );
@@ -184,11 +173,8 @@ export function createApp(store: AccountStore, board = new TournamentBoard()) {
   app.put(
     '/api/saves/me',
     asyncRoute(async (request, response) => {
-      const user = await userFromRequest(store, request);
-      if (!user) {
-        response.status(401).json({ error: 'Phiên đăng nhập không còn hiệu lực.' });
-        return;
-      }
+      const user = await userFromRequest(store, request, response);
+      if (!user) return;
       const parsed = saveSchema.safeParse(coerceSaveInput(request.body));
       if (!parsed.success) {
         response.status(400).json({ error: saveIssue(parsed.error) });
@@ -219,11 +205,8 @@ export function createApp(store: AccountStore, board = new TournamentBoard()) {
   app.post(
     '/api/tournaments/:id/enter',
     asyncRoute(async (request, response) => {
-      const user = await userFromRequest(store, request);
-      if (!user) {
-        response.status(401).json({ error: 'Phiên đăng nhập không còn hiệu lực.' });
-        return;
-      }
+      const user = await userFromRequest(store, request, response);
+      if (!user) return;
       const character = await store.findCharacterByUserId(user.id);
       if (!character) {
         response.status(400).json({ error: 'Hãy tạo nhân vật trước khi ghi danh.' });
@@ -245,11 +228,8 @@ export function createApp(store: AccountStore, board = new TournamentBoard()) {
   app.post(
     '/api/tournaments/:id/simulate',
     asyncRoute(async (request, response) => {
-      const user = await userFromRequest(store, request);
-      if (!user) {
-        response.status(401).json({ error: 'Phiên đăng nhập không còn hiệu lực.' });
-        return;
-      }
+      const user = await userFromRequest(store, request, response);
+      if (!user) return;
       const preview = board.simulate(request.params.id, user.username);
       if (!preview) {
         response.status(404).json({ error: 'Không tìm thấy giải.' });
@@ -283,10 +263,18 @@ function toPublicCup(cup: Cup) {
   };
 }
 
-async function userFromRequest(store: AccountStore, request: Request) {
+async function userFromRequest(store: AccountStore, request: Request, response: Response) {
   const header = request.header('authorization') ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   const auth = token ? readToken(token) : null;
-  if (!auth) return null;
-  return store.findUserById(auth.sub);
+  const user = auth ? await store.findUserById(auth.sub) : null;
+  if (!auth || !user) {
+    response.status(401).json({ error: 'Phiên đăng nhập không còn hiệu lực.' });
+    return null;
+  }
+  if (acceptToken(user.id, token, auth.sid, user.sessionId) === 'replaced') {
+    response.status(401).json({ error: SESSION_REPLACED_MESSAGE, code: SESSION_REPLACED_CODE });
+    return null;
+  }
+  return user;
 }

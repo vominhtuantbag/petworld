@@ -91,6 +91,8 @@ export type BattleResult = {
   victory: boolean;
   petExp: { id: string; exp: number; hp: number; mp: number }[];
   drops: BattleDrop[];
+  /** Wild fighters left on the map. HP 0 means that creature is gone. */
+  fieldMonsters?: { id: string; hp: number; mp: number }[];
 };
 
 /** Four equal zones. Each stop adds its bonus. Three green stops are +30%. */
@@ -244,9 +246,9 @@ export function makeWild(card: Encounter): Fighter {
     level: card.level,
     tint: card.tint,
     elite: Boolean(card.elite),
-    hp: card.maxHp,
+    hp: Math.max(0, Math.min(card.maxHp, Number.isFinite(card.hp) ? card.hp : card.maxHp)),
     maxHp: card.maxHp,
-    mp: maxMp,
+    mp: Math.max(0, Math.min(maxMp, card.mp == null || !Number.isFinite(card.mp) ? maxMp : card.mp)),
     maxMp,
     attack: card.attack,
     defense: card.defense,
@@ -283,9 +285,9 @@ export function makeAlly(monster: TamedMonster): Fighter {
     level,
     tint: monster.tint,
     elite: false,
-    hp: monster.hp || maxHp,
+    hp: Number.isFinite(monster.hp) ? Math.max(0, Math.min(maxHp, monster.hp)) : maxHp,
     maxHp,
-    mp: monster.mp || maxMp,
+    mp: Number.isFinite(monster.mp) ? Math.max(0, Math.min(maxMp, monster.mp)) : maxMp,
     maxMp,
     attack: monster.attack || 6 + level,
     defense: monster.defense || 1,
@@ -426,6 +428,15 @@ export function actTame(state: BattleState, foeId: string, bonuses: number[], ro
     'player',
     `Đã thu phục ${foe.name} (${chance}%).`,
   );
+}
+
+/** Drops the capture after all three tries. One net is spent and the turn ends. */
+export function cancelTame(state: BattleState): BattleState {
+  if (!state || !isPlayerTurn(state)) return state;
+  const bag = removeOne(state.bag, 'net');
+  if (!bag) return { ...state, log: 'Hết lưới.' };
+  const player = tickCooldowns(state.player);
+  return after({ ...state, player, bag }, 'player', 'Huỷ thu phục. Mất 1 lưới.');
 }
 
 /**

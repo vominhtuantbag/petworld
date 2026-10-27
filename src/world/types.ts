@@ -272,6 +272,8 @@ export type Encounter = {
   level: number;
   hp: number;
   maxHp: number;
+  /** Mana left on this creature. Omitted cards start a fight at full mana. */
+  mp?: number;
   attack: number;
   defense: number;
   tint: string;

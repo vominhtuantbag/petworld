@@ -9,7 +9,8 @@ type Props = {
   monsterName: string;
   /** At 5% health or less the live total starts with that 5% and still caps at 35. */
   lowHp: boolean;
-  onClose: () => void;
+  /** Turns already stopped. Three means Huỷ spends a net and skips the turn. */
+  onClose: (turnsPlayed: number) => void;
   /** One bonus per stop. The battle adds the low-HP 5% and caps the total at 35. */
   onFinish: (bonuses: number[]) => void;
 };
@@ -185,7 +186,7 @@ export function TamingMiniGameModal({ monsterName, lowHp, onClose, onFinish }: P
     } catch (error) {
       console.warn('[Game Thư Giãn] Taming could not continue.', error);
       doneRef.current = true;
-      onCloseRef.current();
+      onCloseRef.current(0);
     }
   };
 
@@ -221,7 +222,7 @@ export function TamingMiniGameModal({ monsterName, lowHp, onClose, onFinish }: P
     try {
       runningRef.current = false;
       progress.stopAnimation();
-      onCloseRef.current();
+      onCloseRef.current(bonusesRef.current.length);
     } catch (error) {
       console.warn('[Game Thư Giãn] Taming could not close.', error);
     }

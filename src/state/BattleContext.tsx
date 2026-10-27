@@ -3,6 +3,7 @@ import { io, type Socket } from 'socket.io-client';
 
 import { SOCKET_URL } from '../config/env';
 import type { BattleView, CombatAction, QueueView } from '../net/protocol';
+import { reportSessionReplaced } from '../net/sessionKick';
 import { useAuth } from './AuthContext';
 
 type Connection = 'offline' | 'connecting' | 'online';
@@ -44,6 +45,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     }
 
     setConnection('connecting');
+    const token = auth.token;
     const socket = io(SOCKET_URL, {
       auth: { token: auth.token },
       transports: ['websocket', 'polling'],
@@ -59,7 +61,22 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       setNotice(null);
     });
     socket.on('disconnect', () => setConnection('connecting'));
-    socket.on('connect_error', () => setConnection('connecting'));
+    const onReplaced = () => {
+      socket.io.reconnection(false);
+      socket.disconnect();
+      reportSessionReplaced(token);
+    };
+    socket.on('session:replaced', onReplaced);
+    socket.on('session_replaced', onReplaced);
+    socket.on('connect_error', (error: Error) => {
+      if (error.message.includes('session_replaced')) {
+        socket.io.reconnection(false);
+        socket.close();
+        reportSessionReplaced(token);
+        return;
+      }
+      setConnection('connecting');
+    });
     socket.on('queue:status', (next: QueueView) => setQueue(next));
     socket.on('battle:update', (next: BattleView) => {
       setBattle(next);

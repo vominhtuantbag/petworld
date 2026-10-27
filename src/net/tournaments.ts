@@ -1,5 +1,5 @@
 import { API_URL } from '../config/env';
-import { ApiError } from './api';
+import { ApiError, raiseApiError } from './api';
 
 /**
  * Tournament HTTP client. `request` in api.ts stays private to account
@@ -75,7 +75,7 @@ async function request<T>(path: string, options: { method?: string; token?: stri
   } catch {
     throw new ApiError('Không kết nối được máy chủ. Hãy chạy server trước.', 0);
   }
-  const payload = (await response.json().catch(() => ({}))) as { error?: string };
-  if (!response.ok) throw new ApiError(payload.error ?? 'Yêu cầu không thành công.', response.status);
+  const payload = (await response.json().catch(() => ({}))) as { error?: string; code?: string };
+  if (!response.ok) raiseApiError(payload, response.status, options.token);
   return payload as T;
 }
