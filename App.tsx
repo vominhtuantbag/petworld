@@ -80,7 +80,7 @@ function GameRoot() {
   return (
     <View style={styles.root} {...chrome.panHandlers}>
       {screen}
-      <DebugGrid />
+      {battle.battle || world.scene === 'encounter' ? null : <DebugGrid />}
       {chrome.bar}
       <RotateToLandscape />
     </View>

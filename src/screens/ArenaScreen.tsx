@@ -8,27 +8,22 @@ import { BATTLE_GRID_POSITIONS, feetInView } from '../components/battle/courtSlo
 import { CharacterAvatar } from '../components/CharacterAvatar';
 import { CourtUnit, FaceArt, RoundButton, TimelineFace, styles as court, timelineFaceSize, type CourtActor } from '../components/battle/courtChrome';
 import { getCharacter } from '../data/characters';
-import type { CombatAction, DuelPet, FighterView } from '../net/protocol';
+import type { DuelUnitView } from '../net/protocol';
 import { useBattle } from '../state/BattleContext';
 import { theme } from '../theme/theme';
 import { useLayout } from '../theme/useLayout';
 
 const ARENA = require('../../assets/images/sandau_2.jpg');
 
-const ACTIONS: { id: CombatAction; label: string }[] = [
-  { id: 'attack', label: 'Đánh thường' },
-  { id: 'skill', label: 'Kỹ năng' },
-  { id: 'defend', label: 'Phòng thủ' },
-];
-
 const PET_CELLS = [BATTLE_GRID_POSITIONS.pet1, BATTLE_GRID_POSITIONS.pet2, BATTLE_GRID_POSITIONS.pet3];
-const FOE_PET_CELLS = [BATTLE_GRID_POSITIONS.enemy2, BATTLE_GRID_POSITIONS.enemy3, BATTLE_GRID_POSITIONS.boar1];
+const FOE_PET_CELLS = ['J21', 'H23', 'G19'];
 const PET_TINTS = ['#c4a574', '#7aa2c4', '#8fbf7a'];
 
+type Pick = 'attack' | 0 | 1;
+
 /**
- * The same court as a wild encounter. You stand on the hero cell, your pets
- * hold the squad cells, and the opponent stands on the lead foe cell.
- * The server still resolves both locked actions after 30 seconds.
+ * Same court as a wild fight. Each hero and pet acts on its own speed turn.
+ * Confirm resolves that turn immediately. At 0 the server swings a basic attack.
  */
 export function ArenaScreen() {
   const battle = useBattle();
@@ -38,10 +33,12 @@ export function ArenaScreen() {
   const [screen, setScreen] = useState({ w: 0, h: 0 });
   const [stageBox, setStageBox] = useState({ x: 0, y: 0 });
   const [now, setNow] = useState(Date.now());
-  const [picked, setPicked] = useState<CombatAction>('attack');
+  const [picked, setPicked] = useState<Pick>('attack');
+  const [focusId, setFocusId] = useState<string | null>(null);
   const [floats, setFloats] = useState<{ id: number; fighterId: string; amount: number }[]>([]);
   const hpWatch = useRef<Map<string, number> | null>(null);
   const floatSerial = useRef(0);
+  const hpKey = (snapshot?.units ?? []).map((unit) => `${unit.id}:${unit.hp}`).join('|');
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 200);
@@ -50,65 +47,76 @@ export function ArenaScreen() {
 
   useEffect(() => {
     setPicked('attack');
-  }, [snapshot?.round]);
+  }, [snapshot?.turnId]);
 
-  const you = snapshot ? personActor('you', snapshot.you, 'player') : null;
-  const foe = snapshot ? personActor('foe', snapshot.opponent, 'wild') : null;
-  const yourPets = snapshot ? (snapshot.you.pets ?? []).slice(0, 3).map((pet, index) => petActor('ally', pet, index, 'ally')) : [];
-  const foePets = snapshot ? (snapshot.opponent.pets ?? []).slice(0, 3).map((pet, index) => petActor('wild', pet, index, 'wild')) : [];
-  const cast = you && foe ? [you, ...yourPets, foe, ...foePets] : [];
+  const units = snapshot?.units ?? [];
+  const youHero = units.find((unit) => unit.side === 'you' && unit.kind === 'hero') ?? null;
+  const foeHero = units.find((unit) => unit.side === 'opponent' && unit.kind === 'hero') ?? null;
+  const yourPets = units.filter((unit) => unit.side === 'you' && unit.kind === 'pet').slice(0, 3);
+  const foePets = units.filter((unit) => unit.side === 'opponent' && unit.kind === 'pet').slice(0, 3);
+  const cast = units.map(toCourt);
+  const foes = units.filter((unit) => unit.side === 'opponent' && unit.hp > 0);
+  const focus = foes.find((unit) => unit.id === focusId) ?? foes[0] ?? null;
 
   useEffect(() => {
-    if (!you || !foe) {
+    if (!snapshot) {
       hpWatch.current = null;
       setFloats((current) => (current.length === 0 ? current : []));
       return;
     }
     const previous = hpWatch.current;
-    const next = new Map(cast.map((fighter) => [fighter.id, fighter.hp]));
+    const next = new Map(snapshot.units.map((unit) => [unit.id, unit.hp]));
     hpWatch.current = next;
     if (!previous) return;
     const born: { id: number; fighterId: string; amount: number }[] = [];
-    for (const fighter of cast) {
-      if (!previous.has(fighter.id)) continue;
-      const delta = fighter.hp - (previous.get(fighter.id) ?? fighter.hp);
+    for (const unit of snapshot.units) {
+      if (!previous.has(unit.id)) continue;
+      const delta = unit.hp - (previous.get(unit.id) ?? unit.hp);
       if (!Number.isFinite(delta) || delta === 0) continue;
       floatSerial.current += 1;
-      born.push({ id: floatSerial.current, fighterId: fighter.id, amount: delta });
+      born.push({ id: floatSerial.current, fighterId: unit.id, amount: delta });
     }
     if (born.length > 0) setFloats((current) => [...current, ...born].slice(-24));
-  }, [snapshot?.you.hp, snapshot?.opponent.hp, snapshot?.round, snapshot?.status]);
+  }, [hpKey, snapshot]);
 
-  if (!snapshot || !you || !foe) return null;
+  if (!snapshot || !youHero || !foeHero) return null;
 
   const finished = snapshot.status === 'finished';
-  const locked = finished || snapshot.you.ready;
+  const yourTurn = snapshot.yourTurn && !finished;
   const youWon = snapshot.winnerId === snapshot.you.userId;
   const draw = finished && snapshot.winnerId === null;
   const resultTitle = draw ? 'Hòa' : youWon ? 'Chiến thắng' : 'Thất bại';
   const seconds = Math.max(0, Math.ceil((snapshot.deadline - now) / 1000));
-  const activeId = finished ? null : snapshot.you.ready ? foe.id : you.id;
-  const living = cast.filter((fighter) => fighter.hp > 0).map((fighter) => fighter.id);
-  const start = activeId ? living.indexOf(activeId) : 0;
-  const turnQueue = start > 0 ? [...living.slice(start), ...living.slice(0, start)] : living;
+  const actor = units.find((unit) => unit.id === snapshot.turnId) ?? null;
+  const queued = snapshot.queue ?? [];
+  const turnQueue = queued.length > 0 ? queued : cast.filter((unit) => unit.hp > 0).map((unit) => unit.id);
   const faceSize = timelineFaceSize(screen.w, insets.left, insets.right, turnQueue.length, s(30), s(72) + s(78) + 36);
   const foot = (cell: string) => feetInView(cell, screen.w, screen.h, insets.left + stageBox.x, insets.top + stageBox.y);
   const heroSize = s(118);
   const petSize = Math.round(s(64) * 0.8);
+  const foeHeroSize = Math.round(petSize * 1.5);
   const youCharacter = getCharacter(snapshot.you.baseAvatarId);
   const foeCharacter = getCharacter(snapshot.opponent.baseAvatarId);
-  const pickedLabel = ACTIONS.find((action) => action.id === picked)?.label ?? 'Đánh thường';
+  const skill1 = snapshot.skills?.[0]?.name ?? 'Kỹ năng 1';
+  const skill2 = snapshot.skills?.[1]?.name ?? 'Kỹ năng 2';
+  const pickedLabel = picked === 0 ? skill1 : picked === 1 ? skill2 : 'Đánh thường';
   const lastLine = snapshot.log[snapshot.log.length - 1] ?? '';
   const log = finished
     ? `${resultTitle}. ${lastLine}`
-    : snapshot.you.ready
-      ? `Đã khóa đòn. Đang chờ đối thủ. ${lastLine}`
-      : `${seconds}s. Hết giờ sẽ tự tấn công. ${lastLine}`;
+    : yourTurn
+      ? `${seconds}s. ${actor?.name ?? 'Bạn'} đang ra đòn. ${lastLine}`
+      : `Đợi ${actor?.name ?? 'đối thủ'}. ${lastLine}`;
 
   const portrait = (id: string) => {
-    if (id === you.id) return { character: youCharacter, hairColor: snapshot.you.hairColor, outfitColor: snapshot.you.outfitColor };
-    if (id === foe.id) return { character: foeCharacter, hairColor: snapshot.opponent.hairColor, outfitColor: snapshot.opponent.outfitColor };
+    if (id === youHero.id) return { character: youCharacter, hairColor: snapshot.you.hairColor, outfitColor: snapshot.you.outfitColor };
+    if (id === foeHero.id) return { character: foeCharacter, hairColor: snapshot.opponent.hairColor, outfitColor: snapshot.opponent.outfitColor };
     return { character: null, hairColor: undefined, outfitColor: undefined };
+  };
+
+  const confirm = () => {
+    if (!yourTurn || !focus) return;
+    if (picked === 'attack') battle.sendAction('attack', focus.id);
+    else battle.sendAction('skill', focus.id, picked);
   };
 
   return (
@@ -124,12 +132,12 @@ export function ArenaScreen() {
       <SafeAreaView style={court.frame} edges={['top', 'bottom', 'left', 'right']}>
         <View style={court.header}>
           <View style={court.headerLeft}>
-            <RoundButton label={finished ? 'Hết' : `${seconds}s`} hint="Thời gian hiệp" onPress={() => undefined} size={s(36)} width={s(72)} font={font(12)} />
+            <RoundButton label={finished ? 'Hết' : `${seconds}s`} hint="Thời gian lượt" onPress={() => undefined} size={s(36)} width={s(72)} font={font(12)} />
             <RoundButton label={`Hiệp ${snapshot.round}`} hint="Hiệp đấu" onPress={() => undefined} size={s(36)} width={s(78)} font={font(11)} />
           </View>
           <TurnTimeline
             ids={turnQueue}
-            activeId={activeId}
+            activeId={finished ? null : snapshot.turnId}
             size={faceSize}
             renderFace={(id, role) => {
               const fighter = cast.find((entry) => entry.id === id);
@@ -158,9 +166,9 @@ export function ArenaScreen() {
           }}
         >
           <CourtUnit
-            fighter={you}
+            fighter={toCourt(youHero)}
             slot={foot(BATTLE_GRID_POSITIONS.player)}
-            active={activeId === you.id}
+            active={snapshot.turnId === youHero.id}
             face="right"
             size={heroSize}
             statFont={font(10)}
@@ -170,12 +178,12 @@ export function ArenaScreen() {
             hairColor={snapshot.you.hairColor}
             outfitColor={snapshot.you.outfitColor}
           />
-          {yourPets.map((fighter, index) => (
+          {yourPets.map((unit, index) => (
             <CourtUnit
-              key={fighter.id}
-              fighter={fighter}
+              key={unit.id}
+              fighter={toCourt(unit)}
               slot={foot(PET_CELLS[index] ?? PET_CELLS[0])}
-              active={activeId === fighter.id}
+              active={snapshot.turnId === unit.id}
               face="right"
               size={petSize}
               statFont={font(10)}
@@ -184,35 +192,38 @@ export function ArenaScreen() {
             />
           ))}
           <CourtUnit
-            fighter={foe}
-            slot={foot(BATTLE_GRID_POSITIONS.enemy1)}
-            active={activeId === foe.id}
-            targeted={!finished && foe.hp > 0}
+            fighter={toCourt(foeHero)}
+            slot={foot('G28')}
+            active={snapshot.turnId === foeHero.id}
+            targeted={focus?.id === foeHero.id && foeHero.hp > 0}
             face="left"
-            size={petSize}
+            size={foeHeroSize}
             statFont={font(10)}
-            barWidth={s(86)}
+            barWidth={s(96)}
             testID="arena-opponent"
             character={foeCharacter}
             hairColor={snapshot.opponent.hairColor}
             outfitColor={snapshot.opponent.outfitColor}
+            onPress={foeHero.hp > 0 ? () => setFocusId(foeHero.id) : undefined}
           />
-          {foePets.map((fighter, index) => (
+          {foePets.map((unit, index) => (
             <CourtUnit
-              key={fighter.id}
-              fighter={fighter}
+              key={unit.id}
+              fighter={toCourt(unit)}
               slot={foot(FOE_PET_CELLS[index] ?? FOE_PET_CELLS[0])}
-              active={activeId === fighter.id}
+              active={snapshot.turnId === unit.id}
+              targeted={focus?.id === unit.id && unit.hp > 0}
               face="left"
               size={petSize}
               statFont={font(10)}
               barWidth={s(86)}
-              front={FOE_PET_CELLS[index] === BATTLE_GRID_POSITIONS.enemy3}
+              front={FOE_PET_CELLS[index] === 'G19'}
               testID={`court-foe-${index}`}
+              onPress={unit.hp > 0 ? () => setFocusId(unit.id) : undefined}
             />
           ))}
           {floats.map((note) => {
-            const anchor = floatAnchor(note.fighterId, foot, yourPets, foePets, heroSize, petSize, s);
+            const anchor = floatAnchor(note.fighterId, youHero.id, foeHero.id, yourPets, foePets, foot, heroSize, petSize, foeHeroSize, s);
             if (!anchor) return null;
             const stack = floats.filter((entry) => entry.fighterId === note.fighterId);
             const index = stack.findIndex((entry) => entry.id === note.id);
@@ -234,58 +245,79 @@ export function ArenaScreen() {
         <View style={court.dock}>
           <View style={court.targets}>
             <Text style={[court.dockLabel, { fontSize: font(10) }]} numberOfLines={1}>
-              {foe.name}: {pickedLabel}
+              {focus ? `${focus.name}: ${pickedLabel}` : 'Mục tiêu'}
             </Text>
             <View style={court.targetRow}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Mục tiêu 1 ${foe.name}`}
-                testID="target-1"
-                disabled
-                style={[court.square, { width: s(44), height: s(44) }, court.targetOn, foe.hp <= 0 && court.fainted]}
-              >
-                <Text style={court.slotIndex}>1</Text>
-                {foeCharacter ? (
-                  <CharacterAvatar character={foeCharacter} hairColor={snapshot.opponent.hairColor} outfitColor={snapshot.opponent.outfitColor} size={s(26)} />
-                ) : (
-                  <FaceArt tint={foe.tint} name={foe.name} size={s(26)} facing="left" />
-                )}
-              </Pressable>
-              {foePets.map((fighter, index) => (
-                <View key={fighter.id} style={[court.square, { width: s(44), height: s(44) }, fighter.hp <= 0 && court.fainted]}>
-                  <Text style={court.slotIndex}>{index + 2}</Text>
-                  <FaceArt tint={fighter.tint} name={fighter.name} size={s(26)} facing="left" />
-                </View>
-              ))}
+              {[foeHero, ...foePets].map((unit, index) => {
+                const on = focus?.id === unit.id;
+                return (
+                  <Pressable
+                    key={unit.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Mục tiêu ${index + 1} ${unit.name}`}
+                    testID={`target-${index + 1}`}
+                    disabled={unit.hp <= 0 || finished}
+                    onPress={() => setFocusId(unit.id)}
+                    style={[court.square, { width: s(44), height: s(44) }, on && court.targetOn, unit.hp <= 0 && court.fainted]}
+                  >
+                    <Text style={court.slotIndex}>{index + 1}</Text>
+                    {unit.kind === 'hero' && foeCharacter ? (
+                      <CharacterAvatar character={foeCharacter} hairColor={snapshot.opponent.hairColor} outfitColor={snapshot.opponent.outfitColor} size={s(26)} />
+                    ) : (
+                      <FaceArt tint={PET_TINTS[index] ?? foeTint(unit)} name={unit.name} size={s(26)} facing="left" />
+                    )}
+                  </Pressable>
+                );
+              })}
             </View>
           </View>
           <View style={court.commands}>
             {finished ? null : (
               <>
-                {ACTIONS.map((action) => (
-                  <RoundButton
-                    key={action.id}
-                    label={action.label}
-                    hint={action.label}
-                    square
-                    picked={picked === action.id}
-                    disabled={locked}
-                    testID={`action-${action.id}`}
-                    onPress={() => setPicked(action.id)}
-                    size={s(48)}
-                    font={font(10)}
-                    tint={action.id === 'skill' ? '#7fd0c4' : undefined}
-                  />
-                ))}
+                <RoundButton
+                  label="Đánh thường"
+                  hint="Đòn đánh thường"
+                  square
+                  picked={picked === 'attack'}
+                  disabled={!yourTurn}
+                  testID="action-attack"
+                  onPress={() => setPicked('attack')}
+                  size={s(48)}
+                  font={font(10)}
+                />
+                <RoundButton
+                  label={skill1}
+                  hint="Chiêu 1"
+                  square
+                  tint="#7fd0c4"
+                  picked={picked === 0}
+                  disabled={!yourTurn}
+                  testID="action-skill-1"
+                  onPress={() => setPicked(0)}
+                  size={s(48)}
+                  font={font(10)}
+                />
+                <RoundButton
+                  label={skill2}
+                  hint="Chiêu 2"
+                  square
+                  tint="#7fd0c4"
+                  picked={picked === 1}
+                  disabled={!yourTurn}
+                  testID="action-skill-2"
+                  onPress={() => setPicked(1)}
+                  size={s(48)}
+                  font={font(10)}
+                />
                 <RoundButton
                   label="Xác nhận"
                   hint="Xác nhận đòn"
                   square
                   tint="#e23a22"
                   hot
-                  disabled={locked}
+                  disabled={!yourTurn || !focus}
                   testID="battle-confirm"
-                  onPress={() => battle.sendAction(picked)}
+                  onPress={confirm}
                   size={s(48)}
                   font={font(10)}
                 />
@@ -309,55 +341,46 @@ export function ArenaScreen() {
   );
 }
 
-function personActor(id: string, fighter: FighterView, side: CourtActor['side']): CourtActor {
-  const maxMp = Math.max(10, fighter.level * 8);
+function toCourt(unit: DuelUnitView): CourtActor {
   return {
-    id,
-    name: fighter.name,
-    side,
-    tint: side === 'wild' ? '#d9897a' : '#e4c27a',
-    hp: fighter.hp,
-    maxHp: fighter.maxHp,
-    mp: fighter.hp > 0 ? maxMp : 0,
-    maxMp,
-    attack: fighter.attack,
-    defense: fighter.defense,
+    id: unit.id,
+    name: unit.name,
+    side: unit.side === 'you' ? (unit.kind === 'hero' ? 'player' : 'ally') : 'wild',
+    tint: unit.side === 'you' ? '#e4c27a' : foeTint(unit),
+    hp: unit.hp,
+    maxHp: unit.maxHp,
+    mp: unit.mp,
+    maxMp: unit.maxMp,
+    attack: unit.attack,
+    defense: unit.defense,
   };
 }
 
-function petActor(prefix: string, pet: DuelPet, index: number, side: CourtActor['side']): CourtActor {
-  const level = Math.max(1, pet.level);
-  const maxMp = Math.max(10, level * 8);
-  return {
-    id: `${prefix}-${index}`,
-    name: pet.name,
-    side,
-    tint: PET_TINTS[index] ?? PET_TINTS[0],
-    hp: pet.hp,
-    maxHp: Math.max(1, pet.maxHp),
-    mp: pet.hp > 0 ? maxMp : 0,
-    maxMp,
-    attack: 6 + level * 2,
-    defense: 3 + level,
-  };
+function foeTint(unit: DuelUnitView): string {
+  if (unit.kind === 'hero') return '#d9897a';
+  const index = Number(unit.id.split(':').pop());
+  return PET_TINTS[index] ?? PET_TINTS[0];
 }
 
 function floatAnchor(
   fighterId: string,
-  foot: (cell: string) => { x: number; y: number },
+  youId: string,
+  foeId: string,
   allies: { id: string }[],
   foes: { id: string }[],
+  foot: (cell: string) => { x: number; y: number },
   heroSize: number,
   petSize: number,
+  foeHeroSize: number,
   s: (value: number) => number,
 ): { x: number; y: number } | null {
-  if (fighterId === 'you') {
+  if (fighterId === youId) {
     const slot = foot(BATTLE_GRID_POSITIONS.player);
     return { x: slot.x, y: slot.y - heroSize - s(36) };
   }
-  if (fighterId === 'foe') {
-    const slot = foot(BATTLE_GRID_POSITIONS.enemy1);
-    return { x: slot.x, y: slot.y - petSize - s(32) };
+  if (fighterId === foeId) {
+    const slot = foot('G28');
+    return { x: slot.x, y: slot.y - foeHeroSize - s(32) };
   }
   const allyIndex = allies.findIndex((fighter) => fighter.id === fighterId);
   if (allyIndex >= 0) {

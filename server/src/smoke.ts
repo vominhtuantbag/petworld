@@ -46,15 +46,27 @@ async function main() {
       throw new Error('Matchmaking paired the wrong fighters.');
     }
 
-    left.socket.emit('battle:action', { action: 'attack' });
-    right.socket.emit('battle:action', { action: 'attack' });
-    // The server also emits when a fighter locks an action, before damage.
-    let finishedRound = await left.nextBattle();
-    const started = Date.now();
-    while (finishedRound.you.hp >= finishedRound.you.maxHp && Date.now() - started < 4000) {
-      finishedRound = await left.nextBattle();
+    if (leftBattle.yourTurn === rightBattle.yourTurn) {
+      throw new Error('Both sides were given the same turn.');
     }
-    if (finishedRound.you.hp >= finishedRound.you.maxHp) {
+    if (!leftBattle.queue?.length || leftBattle.queue[0] !== leftBattle.turnId) {
+      throw new Error('The timeline did not lead with the acting unit.');
+    }
+    let leftSnap = leftBattle;
+    let rightSnap = rightBattle;
+    const started = Date.now();
+    while (leftSnap.you.hp >= leftSnap.you.maxHp && Date.now() - started < 4000) {
+      if (!leftSnap.yourTurn && !rightSnap.yourTurn) throw new Error('The duel stopped with nobody to act.');
+      if (leftSnap.yourTurn) left.socket.emit('battle:action', { action: 'attack' });
+      if (rightSnap.yourTurn) right.socket.emit('battle:action', { action: 'attack' });
+      const [nextLeft, nextRight] = await Promise.all([left.nextBattle(), right.nextBattle()]);
+      if (nextLeft.turnId === leftSnap.turnId && nextLeft.yourTurn) {
+        throw new Error('Confirming a turn did not advance the queue.');
+      }
+      leftSnap = nextLeft;
+      rightSnap = nextRight;
+    }
+    if (leftSnap.you.hp >= leftSnap.you.maxHp) {
       throw new Error('Attack did not reduce hit points.');
     }
 
@@ -482,7 +494,13 @@ function requestJson(
   });
 }
 
-type SmokeBattle = { you: { name: string; hp: number; maxHp: number } };
+type SmokeBattle = {
+  you: { name: string; hp: number; maxHp: number };
+  yourTurn?: boolean;
+  turnId?: string;
+  queue?: string[];
+  status?: string;
+};
 
 function connect(base: string, token: string) {
   const socket = io(base, { auth: { token }, transports: ['websocket', 'polling'] });

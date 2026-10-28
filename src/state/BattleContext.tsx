@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { io, type Socket } from 'socket.io-client';
 
 import { SOCKET_URL } from '../config/env';
-import type { BattleView, CombatAction, DuelPet, QueueView } from '../net/protocol';
+import type { BattleView, DuelPet, QueueView } from '../net/protocol';
 import { reportSessionReplaced } from '../net/sessionKick';
 import { useAuth } from './AuthContext';
 import { holdPresence } from './presenceHold';
@@ -39,7 +39,7 @@ type BattleContextValue = {
   prep: PvpPrep | null;
   findMatch: () => void;
   cancelMatch: () => void;
-  sendAction: (action: CombatAction) => void;
+  sendAction: (action: 'attack' | 'skill', targetId: string, skill?: 0 | 1) => void;
   leaveBattle: () => void;
   sendChallenge: (toUserId: string) => void;
   acceptChallenge: (challengeId: string) => void;
@@ -180,8 +180,8 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     socketRef.current?.emit('queue:leave');
   }, []);
 
-  const sendAction = useCallback((action: CombatAction) => {
-    socketRef.current?.emit('battle:action', { action });
+  const sendAction = useCallback((action: 'attack' | 'skill', targetId: string, skill?: 0 | 1) => {
+    socketRef.current?.emit('battle:action', { action, targetId, skill: skill ?? 0 });
   }, []);
 
   const leaveBattle = useCallback(() => {

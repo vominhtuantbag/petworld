@@ -14,6 +14,28 @@ export type DuelPet = {
   maxHp: number;
 };
 
+export type DuelSkillView = {
+  index: 0 | 1;
+  name: string;
+};
+
+/** One hero or pet in the shared turn queue. `side` is relative to the viewer. */
+export type DuelUnitView = {
+  id: string;
+  ownerId: string;
+  name: string;
+  kind: 'hero' | 'pet';
+  level: number;
+  hp: number;
+  maxHp: number;
+  mp: number;
+  maxMp: number;
+  attack: number;
+  defense: number;
+  speed: number;
+  side: 'you' | 'opponent';
+};
+
 export type FighterView = {
   userId: string;
   username: string;
@@ -36,12 +58,21 @@ export type FighterView = {
 export type BattleView = {
   roomId: string;
   round: number;
+  /** Epoch milliseconds. The acting unit has until this moment. */
   deadline: number;
   status: 'active' | 'finished';
   winnerId: string | null;
   log: string[];
   you: FighterView;
   opponent: FighterView;
+  /** Unit that must act now. */
+  turnId: string;
+  /** Living units from the current actor through the rest of the round, then those who already went. */
+  queue: string[];
+  units: DuelUnitView[];
+  /** The two skill buttons for the viewer's side. */
+  skills: DuelSkillView[];
+  yourTurn: boolean;
 };
 
 export type QueueView = {

@@ -2,10 +2,9 @@ import type { Server, Socket } from 'socket.io';
 
 import { acceptToken, bindSessionKick, SESSION_REPLACED_MESSAGE } from '../auth/sessions.js';
 import { readToken } from '../auth/tokens.js';
-import { isCombatAction, strike, type CombatAction } from '../combat/rules.js';
 import type { AccountStore, CharacterRecord, UserRecord } from '../domain.js';
 import type { RegionId } from '../catalog.js';
-import type { BattleView, DuelPet, FighterView, QueueView } from './protocol.js';
+import type { BattleView, DuelPet, DuelSkillView, DuelUnitView, FighterView, QueueView } from './protocol.js';
 
 export type DuelHint = {
   username: string;
@@ -18,10 +17,29 @@ export type DuelHint = {
   maxHp: number;
 };
 
-const ROUND_MS = 30_000;
+const TURN_MS = 30_000;
 const DISCONNECT_GRACE_MS = 12_000;
 
 type Fighter = Omit<FighterView, 'hp' | 'ready'> & { attack: number; defense: number };
+
+type SkillCard = { name: string; power: number };
+
+type CombatUnit = {
+  id: string;
+  ownerId: string;
+  name: string;
+  kind: 'hero' | 'pet';
+  level: number;
+  hp: number;
+  maxHp: number;
+  mp: number;
+  maxMp: number;
+  attack: number;
+  defense: number;
+  speed: number;
+  initiative: boolean;
+  skills: [SkillCard, SkillCard];
+};
 
 type Room = {
   id: string;
@@ -32,8 +50,9 @@ type Room = {
   winnerId: string | null;
   log: string[];
   fighters: [Fighter, Fighter];
-  hp: Record<string, number>;
-  submitted: Record<string, CombatAction | undefined>;
+  units: CombatUnit[];
+  order: string[];
+  turnId: string;
   disconnectedAt: Record<string, number | undefined>;
 };
 
@@ -45,9 +64,9 @@ type QueuedPlayer = {
 /**
  * Matchmaking queue and in-memory duel rooms.
  *
- * Rooms are not written to the database. Wins and losses are. To add a mode
- * (ranked, best of three, a region modifier), branch inside `resolveRound`
- * and keep `BattleView` as the only payload the client needs.
+ * Rooms are not written to the database. Wins and losses are. Heroes and pets
+ * share one speed queue. The acting unit has 30 seconds; a confirm resolves
+ * that turn immediately, and a timeout swings a basic attack.
  */
 export class Arena {
   private readonly queue: QueuedPlayer[] = [];
@@ -300,17 +319,22 @@ export class Arena {
   }
 
   private openRoom(left: Fighter, right: Fighter) {
+    const units = [...unitsFor(left), ...unitsFor(right)];
+    const order = duelOrder(units, 1);
+    const turnId = order[0] ?? left.userId;
+    const actor = units.find((unit) => unit.id === turnId);
     const room: Room = {
       id: `duel-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
       round: 1,
-      deadline: Date.now() + ROUND_MS,
+      deadline: Date.now() + TURN_MS,
       status: 'active',
       resolving: false,
       winnerId: null,
-      log: [`${left.name} gặp ${right.name}. Chọn đòn trong ${ROUND_MS / 1000} giây.`],
+      log: [`${left.name} gặp ${right.name}.`, `Tới lượt ${actor?.name ?? left.name}.`],
       fighters: [left, right],
-      hp: { [left.userId]: left.maxHp, [right.userId]: right.maxHp },
-      submitted: {},
+      units,
+      order,
+      turnId,
       disconnectedAt: {},
     };
     this.rooms.set(room.id, room);
@@ -331,16 +355,18 @@ export class Arena {
       socket.emit('battle:error', { message: 'Không có trận đấu đang mở.' });
       return;
     }
-    if (!isCombatAction(action)) {
+    if (action !== 'attack' && action !== 'skill') {
       socket.emit('battle:error', { message: 'Đòn đánh không hợp lệ.' });
       return;
     }
-    if (room.submitted[userId]) return;
-    room.submitted[userId] = action;
-    this.emitRoom(room);
-    if (room.fighters.every((fighter) => room.submitted[fighter.userId])) {
-      await this.resolveRound(room);
+    const actor = room.units.find((unit) => unit.id === room.turnId);
+    if (!actor || actor.ownerId !== userId) {
+      socket.emit('battle:error', { message: 'Chưa tới lượt của bạn.' });
+      return;
     }
+    const skill = payload && typeof payload === 'object' && 'skill' in payload && payload.skill === 1 ? 1 : 0;
+    const targetId = payload && typeof payload === 'object' && 'targetId' in payload && typeof payload.targetId === 'string' ? payload.targetId : undefined;
+    await this.playTurn(room, action, skill, targetId);
   }
 
   private async tick() {
@@ -362,46 +388,67 @@ export class Arena {
         await this.finish(room, winner?.userId ?? null);
         continue;
       }
-      if (now >= room.deadline) {
-        for (const fighter of room.fighters) {
-          if (!room.submitted[fighter.userId]) {
-            room.submitted[fighter.userId] = 'attack';
-            room.log.push(`${fighter.name} hết giờ và tự tấn công.`);
-          }
-        }
-        await this.resolveRound(room);
+      if (now >= room.deadline && !room.resolving) {
+        const actor = room.units.find((unit) => unit.id === room.turnId);
+        room.log.push(`${actor?.name ?? 'Người chơi'} hết giờ và tự tấn công.`);
+        await this.playTurn(room, 'attack', 0, undefined);
       }
     }
   }
 
-  private async resolveRound(room: Room) {
+  /** Resolves the acting unit now. A confirm and a timeout both come through here. */
+  private async playTurn(room: Room, action: 'attack' | 'skill', skillIndex: 0 | 1, targetId: string | undefined) {
     if (room.status !== 'active' || room.resolving) return;
     room.resolving = true;
-    const [left, right] = room.fighters;
-    const leftAction = room.submitted[left.userId] ?? 'defend';
-    const rightAction = room.submitted[right.userId] ?? 'defend';
-    const leftHit = strike(left, right, leftAction, rightAction);
-    const rightHit = strike(right, left, rightAction, leftAction);
-    room.hp[right.userId] = Math.max(0, room.hp[right.userId] - leftHit.damage);
-    room.hp[left.userId] = Math.max(0, room.hp[left.userId] - rightHit.damage);
-    room.log.push(leftHit.text, rightHit.text);
-    room.submitted = {};
-
-    const leftDown = room.hp[left.userId] <= 0;
-    const rightDown = room.hp[right.userId] <= 0;
-    if (leftDown || rightDown) {
-      let winnerId: string | null = null;
-      if (leftDown && !rightDown) winnerId = right.userId;
-      if (rightDown && !leftDown) winnerId = left.userId;
-      await this.finish(room, winnerId);
+    const actor = room.units.find((unit) => unit.id === room.turnId && unit.hp > 0);
+    if (!actor) {
+      this.advance(room);
+      room.resolving = false;
+      this.emitRoom(room);
       return;
     }
+    const foes = room.units.filter((unit) => unit.ownerId !== actor.ownerId && unit.hp > 0);
+    const target = foes.find((unit) => unit.id === targetId) ?? foes[0];
+    if (!target) {
+      await this.finish(room, actor.ownerId);
+      return;
+    }
+    const skill = action === 'skill' ? actor.skills[skillIndex] ?? actor.skills[0] : null;
+    const power = skill ? skill.power : 1;
+    const pierced = skill ? Math.floor(target.defense / 3) : Math.floor(target.defense / 2);
+    const damage = Math.max(1, Math.round(actor.attack * power) - pierced);
+    target.hp = Math.max(0, target.hp - damage);
+    const verb = skill ? `dùng ${skill.name} vào` : 'tấn công';
+    room.log.push(`${actor.name} ${verb} ${target.name}, gây ${damage} sát thương.`);
 
-    room.round += 1;
-    room.deadline = Date.now() + ROUND_MS;
+    const owners = [...new Set(room.units.map((unit) => unit.ownerId))];
+    const livingOwners = owners.filter((id) => room.units.some((unit) => unit.ownerId === id && unit.hp > 0));
+    if (livingOwners.length < 2) {
+      await this.finish(room, livingOwners[0] ?? null);
+      return;
+    }
+    this.advance(room);
     room.resolving = false;
-    room.log.push(`Hiệp ${room.round}.`);
     this.emitRoom(room);
+  }
+
+  /** Next living unit in this round, or a fresh speed order when the round ends. */
+  private advance(room: Room) {
+    const start = room.order.indexOf(room.turnId);
+    for (let step = start + 1; step < room.order.length; step += 1) {
+      const unit = room.units.find((entry) => entry.id === room.order[step]);
+      if (!unit || unit.hp <= 0) continue;
+      room.turnId = unit.id;
+      room.deadline = Date.now() + TURN_MS;
+      room.log.push(`Tới lượt ${unit.name}.`);
+      return;
+    }
+    room.round += 1;
+    room.order = duelOrder(room.units, room.round);
+    room.turnId = room.order[0] ?? room.turnId;
+    room.deadline = Date.now() + TURN_MS;
+    const actor = room.units.find((unit) => unit.id === room.turnId);
+    room.log.push(`Hiệp ${room.round}. Tới lượt ${actor?.name ?? 'người chơi'}.`);
   }
 
   private async finish(room: Room, winnerId: string | null) {
@@ -433,6 +480,9 @@ export class Arena {
   private view(room: Room, userId: string): BattleView {
     const you = room.fighters.find((fighter) => fighter.userId === userId) ?? room.fighters[0];
     const opponent = room.fighters.find((fighter) => fighter.userId !== you.userId) ?? room.fighters[1];
+    const actor = room.units.find((unit) => unit.id === room.turnId);
+    const yourTurn = room.status === 'active' && actor?.ownerId === userId;
+    const skillSource = (yourTurn ? actor : room.units.find((unit) => unit.id === you.userId)) ?? actor;
     return {
       roomId: room.id,
       round: room.round,
@@ -442,6 +492,11 @@ export class Arena {
       log: room.log.slice(-12),
       you: present(you, room),
       opponent: present(opponent, room),
+      turnId: room.turnId,
+      queue: upcoming(room.order, room.turnId, room.units),
+      units: room.units.map((unit) => toUnitView(unit, userId)),
+      skills: skillButtons(skillSource),
+      yourTurn,
     };
   }
 
@@ -530,10 +585,115 @@ function clampStat(value: number, low: number, high: number): number {
 }
 
 function present(fighter: Fighter, room: Room): FighterView {
+  const hero = room.units.find((unit) => unit.id === fighter.userId);
+  const pets = room.units
+    .filter((unit) => unit.ownerId === fighter.userId && unit.kind === 'pet')
+    .map((unit) => ({ name: unit.name, level: unit.level, hp: unit.hp, maxHp: unit.maxHp }));
   return {
     ...fighter,
-    hp: room.hp[fighter.userId] ?? 0,
-    pets: fighter.pets ?? [],
-    ready: Boolean(room.submitted[fighter.userId]),
+    hp: hero?.hp ?? 0,
+    pets,
+    ready: false,
   };
+}
+
+function unitsFor(fighter: Fighter): CombatUnit[] {
+  const level = fighter.level;
+  const maxMp = Math.max(10, level * 8);
+  const hero: CombatUnit = {
+    id: fighter.userId,
+    ownerId: fighter.userId,
+    name: fighter.name,
+    kind: 'hero',
+    level,
+    hp: fighter.maxHp,
+    maxHp: fighter.maxHp,
+    mp: maxMp,
+    maxMp,
+    attack: fighter.attack,
+    defense: fighter.defense,
+    speed: 90 + Math.max(0, level - 1),
+    initiative: true,
+    skills: [
+      { name: 'Kỹ năng 1', power: 1.55 },
+      { name: 'Kỹ năng 2', power: 1.85 },
+    ],
+  };
+  const pets = (fighter.pets ?? []).slice(0, 3).flatMap((pet, index) => {
+    const petLevel = clampStat(pet.level, 1, 200);
+    const petMax = clampStat(pet.maxHp, 1, 99999);
+    const hp = clampStat(Math.min(pet.hp, petMax), 0, petMax);
+    if (hp <= 0) return [];
+    const petMp = Math.max(8, petLevel * 4);
+    const card: CombatUnit = {
+      id: `${fighter.userId}:pet:${index}`,
+      ownerId: fighter.userId,
+      name: pet.name || `Thú ${index + 1}`,
+      kind: 'pet',
+      level: petLevel,
+      hp,
+      maxHp: petMax,
+      mp: petMp,
+      maxMp: petMp,
+      attack: 6 + petLevel * 2,
+      defense: 3 + petLevel,
+      speed: 48 + petLevel,
+      initiative: false,
+      skills: [
+        { name: 'Kỹ năng 1', power: 1.35 },
+        { name: 'Kỹ năng 2', power: 1.6 },
+      ],
+    };
+    return [card];
+  });
+  return [hero, ...pets];
+}
+
+/** Round 1 pulls the fastest hero forward. Later rounds follow speed alone. */
+function duelOrder(units: readonly CombatUnit[], round: number): string[] {
+  const living = units.filter((unit) => unit.hp > 0);
+  const bySpeed = [...living].sort((a, b) => b.speed - a.speed || a.id.localeCompare(b.id));
+  if (round <= 1) {
+    const hero = bySpeed.find((unit) => unit.kind === 'hero' && unit.initiative);
+    if (hero) return [hero.id, ...bySpeed.filter((unit) => unit.id !== hero.id).map((unit) => unit.id)];
+  }
+  return bySpeed.map((unit) => unit.id);
+}
+
+function upcoming(order: readonly string[], turnId: string, units: readonly CombatUnit[]): string[] {
+  const living = new Set(units.filter((unit) => unit.hp > 0).map((unit) => unit.id));
+  const alive = order.filter((id) => living.has(id));
+  if (!living.has(turnId)) return alive;
+  const start = alive.indexOf(turnId);
+  if (start <= 0) return alive;
+  return [...alive.slice(start), ...alive.slice(0, start)];
+}
+
+function toUnitView(unit: CombatUnit, viewerId: string): DuelUnitView {
+  return {
+    id: unit.id,
+    ownerId: unit.ownerId,
+    name: unit.name,
+    kind: unit.kind,
+    level: unit.level,
+    hp: unit.hp,
+    maxHp: unit.maxHp,
+    mp: unit.mp,
+    maxMp: unit.maxMp,
+    attack: unit.attack,
+    defense: unit.defense,
+    speed: unit.speed,
+    side: unit.ownerId === viewerId ? 'you' : 'opponent',
+  };
+}
+
+function skillButtons(unit: CombatUnit | undefined): DuelSkillView[] {
+  const skills = unit?.skills ?? [
+    { name: 'Kỹ năng 1', power: 1 },
+    { name: 'Kỹ năng 2', power: 1 },
+  ];
+  return [
+    { index: 0, name: skills[0].name },
+    { index: 1, name: skills[1].name },
+  ];
 }
