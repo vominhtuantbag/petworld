@@ -23,6 +23,8 @@ const REGION_IDS = [
   'dark',
   'chaos',
   'outer-space',
+  'heaven',
+  'hell',
 ] as const;
 
 const ITEM_IDS = [

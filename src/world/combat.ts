@@ -479,8 +479,6 @@ export function actAutoPlayer(state: BattleState, foeId: string | null): BattleS
 }
 
 const PET_FOOD: ItemId[] = ['berry', 'mana-fruit', 'hearty-fruit'];
-/** Share of a lost fight's experience handed back to the party. */
-const CONSOLATION = 0.35;
 
 function rollIndex(rng: () => number, length: number): number {
   const raw = rng();
@@ -508,21 +506,34 @@ function collectionId(id: string): string {
 /**
  * Win: the player and every surviving pet earn the fight's experience, plus
  * gold and at least one item from thuốc máu, thuốc mana, or thức ăn quái.
- * Loss: the player and every pet that entered earn a smaller consolation.
+ * Loss: the party receives nothing — no experience, gold, or items.
  */
 export function battleRewards(state: BattleState, rng: () => number = Math.random): BattleRewards {
   const victory = state.over === 'win';
+  if (!victory) {
+    return {
+      victory: false,
+      exp: 0,
+      gold: 0,
+      drops: [],
+      pets: state.allies.map((ally) => ({
+        id: collectionId(ally.id),
+        name: ally.name,
+        exp: 0,
+        hp: Math.max(0, ally.hp),
+        mp: Math.max(0, ally.mp),
+      })),
+    };
+  }
   const defeated = foeReward(state, true);
-  const field = foeReward(state, false);
-  const exp = victory ? Math.max(1, defeated.exp) : Math.max(1, Math.round(field.exp * CONSOLATION));
+  const exp = Math.max(1, defeated.exp);
   const pets = state.allies.map((ally) => ({
     id: collectionId(ally.id),
     name: ally.name,
-    exp: victory && ally.hp <= 0 ? 0 : exp,
+    exp: ally.hp <= 0 ? 0 : exp,
     hp: Math.max(0, ally.hp),
     mp: Math.max(0, ally.mp),
   }));
-  if (!victory) return { victory: false, exp, gold: 0, drops: [], pets };
   const food = PET_FOOD[rollIndex(rng, PET_FOOD.length)];
   const pool: ItemId[] = ['hp-potion', 'mana-potion', food];
   const first = pool[rollIndex(rng, pool.length)];

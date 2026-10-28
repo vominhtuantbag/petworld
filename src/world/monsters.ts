@@ -138,12 +138,14 @@ export const MAP1_ROSTER: Record<string, readonly Pair[]> = {
   ],
 };
 
-/** Bóng tối, hỗn mang, ánh sáng, vũ trụ, hư không. Not part of the ten-town roster. */
+/** Bóng tối, hỗn mang, ánh sáng, vũ trụ, thiên đường, địa ngục, hư không. Not part of the ten-town roster. */
 const EXPANSION: Record<string, MonsterSpecies> = {
   dark: { id: 'shade', name: 'Bóng ma', deepName: 'Bóng ma già', tint: '#9b8cff', hp: 70, attack: 22, defense: 8, agro: 160, speed: 80 },
   chaos: { id: 'chaos', name: 'Hỗn thú', deepName: 'Hỗn thú lớn', tint: '#ff7aa2', hp: 84, attack: 26, defense: 10, agro: 170, speed: 84 },
   light: { id: 'warden', name: 'Thần hộ', deepName: 'Thần hộ sáng', tint: '#f3e7a1', hp: 96, attack: 30, defense: 12, agro: 180, speed: 76 },
   space: { id: 'shard', name: 'Tinh thể', deepName: 'Tinh thể già', tint: '#c9d6ff', hp: 110, attack: 34, defense: 14, agro: 190, speed: 70 },
+  heaven: { id: 'seraph', name: 'Thiên sứ', deepName: 'Thiên sứ già', tint: '#ffe7a1', hp: 150, attack: 44, defense: 18, agro: 200, speed: 78 },
+  hell: { id: 'fiend', name: 'Quỷ hỏa', deepName: 'Quỷ hỏa cổ', tint: '#ff6a3c', hp: 168, attack: 48, defense: 20, agro: 210, speed: 74 },
   void: { id: 'void', name: 'Hư không', deepName: 'Hư không cổ', tint: '#d7c4ff', hp: 140, attack: 42, defense: 18, agro: 210, speed: 88 },
 };
 

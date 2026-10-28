@@ -12,6 +12,7 @@ import { CharacterAvatar } from '../components/CharacterAvatar';
 import { portraitScaleX } from '../components/world/facing';
 import { monsterPortrait } from '../components/world/MonsterToken';
 import { getCharacter, type CharacterDefinition } from '../data/characters';
+import { useSocket } from '../state/BattleContext';
 import { useSetup } from '../state/SetupContext';
 import { useWorld } from '../state/WorldContext';
 import { theme } from '../theme/theme';
@@ -60,6 +61,7 @@ type Beat = 'stance' | 'ready' | 'slash' | 'impact' | 'tear' | 'hold';
 export function BattleScreen() {
   const world = useWorld();
   const setup = useSetup();
+  const socket = useSocket();
   const { s, font } = useLayout();
   const insets = useSafeAreaInsets();
   const [screen, setScreen] = useState({ w: 0, h: 0 });
@@ -77,7 +79,7 @@ export function BattleScreen() {
     if (!squad || !world.encounter || !player) return null;
     const lead = masteryOf(character?.professionId);
     const allies = world.tamed
-      .filter((monster) => squad.allyIds.includes(monster.id))
+      .filter((monster) => squad.allyIds.includes(monster.id) && monster.hp > 0)
       .slice(0, 3)
       .map((monster) => applyMastery(makeAlly(monster), lead));
     const foes = fieldFoes(world.encounter).map(makeWild);
@@ -356,11 +358,12 @@ export function BattleScreen() {
   const cards = roster(encounter);
   const consumables = world.bag.filter((stack) => COMBAT_ITEMS.includes(stack.itemId));
   const captured = world.tamed;
-  const capturedIds = new Set(captured.map((monster) => monster.id));
+  const readyPets = captured.filter((monster) => monster.hp > 0);
+  const readyIds = new Set(readyPets.map((monster) => monster.id));
   const foeIds = pickedFoes ?? cards.slice(0, 3).map((card) => card.id);
-  const allyIds = (pickedAllies ?? captured.slice(0, 3).map((monster) => monster.id)).filter((id) => capturedIds.has(id));
+  const allyIds = (pickedAllies ?? readyPets.slice(0, 3).map((monster) => monster.id)).filter((id) => readyIds.has(id));
   const itemIds = pickedItems ?? consumables.slice(0, 1).map((stack) => stack.itemId);
-  const allyNeed = Math.min(3, captured.length);
+  const allyNeed = Math.min(3, readyPets.length);
   const itemNeed = Math.min(1, consumables.length);
   const ready = foeIds.length === 3 && allyIds.length === allyNeed && itemIds.length === itemNeed;
   const playerPreview = makePlayer({
@@ -407,7 +410,13 @@ export function BattleScreen() {
     const itemText = payout.drops.map((drop) => `${ITEMS[drop.itemId].nameVi} ×${drop.qty}`).join(', ');
     const notice = payout.victory
       ? `Thắng trận. +${payout.exp} kinh nghiệm, +${payout.gold} vàng${itemText ? `, ${itemText}` : ''}.`
-      : `Thua trận. +${payout.exp} kinh nghiệm.`;
+      : 'Thua trận. Không nhận thưởng. Máu còn 1. Thú tham chiến hết máu, mana giữ nguyên.';
+    socket?.emit('battle:settle', {
+      victory: payout.victory,
+      exp: payout.exp,
+      gold: payout.gold,
+      drops: payout.drops,
+    });
     world.resolveBattle({
       vitals: battleVitals(battle, world.vitals.maxHp, world.vitals.maxMana),
       bag: battle.bag,
@@ -502,7 +511,7 @@ export function BattleScreen() {
     if (!ready) return;
     const lead = masteryOf(character?.professionId);
     const allies = captured
-      .filter((monster) => allyIds.includes(monster.id))
+      .filter((monster) => allyIds.includes(monster.id) && monster.hp > 0)
       .slice(0, 3)
       .map((monster) => applyMastery(makeAlly(monster), lead));
     const foes = (cards[0] && isBoar(cards[0]) ? fieldFoes(encounter) : cards.filter((card) => foeIds.includes(card.id))).map(makeWild);
@@ -686,14 +695,17 @@ export function BattleScreen() {
               </Text>
               <View style={[styles.targetRow, styles.rosterRow]}>
                 {captured.map((monster) => {
+                  const downed = monster.hp <= 0;
                   const on = allyIds.includes(monster.id);
                   return (
                     <Pressable
                       key={monster.id}
                       accessibilityRole="button"
-                      accessibilityLabel={`${monster.name} Đã thu phục`}
+                      accessibilityState={{ disabled: downed }}
+                      accessibilityLabel={`${monster.name} ${downed ? 'Hết máu' : 'Đã thu phục'}`}
+                      disabled={downed}
                       onPress={() => toggleId(allyIds, monster.id, 3, setPickedAllies)}
-                      style={[styles.target, { width: s(32), height: s(32), borderRadius: s(16) }, on && styles.targetOn]}
+                      style={[styles.target, { width: s(32), height: s(32), borderRadius: s(16) }, on && styles.targetOn, downed && styles.fainted]}
                     >
                       <FaceArt kindId={monster.kindId} tint={monster.tint} name={monster.name} size={s(32)} facing="right" />
                     </Pressable>

@@ -199,6 +199,30 @@ export const REGION_CATALOG = {
     accent: '#c9d6ff',
     ink: '#f5f7ff',
   },
+  heaven: {
+    name: 'Heaven',
+    nameVi: 'Thiên đường',
+    description: 'Cổng trời còn đóng.',
+    status: 'locked',
+    catalog: 'expansion',
+    motif: 'heaven',
+    sky: ['#fff8e8', '#f0d78a'],
+    ground: '#f6e7b4',
+    accent: '#fff6d4',
+    ink: '#5a4316',
+  },
+  hell: {
+    name: 'Hell',
+    nameVi: 'Địa ngục',
+    description: 'Vực lửa còn đóng.',
+    status: 'locked',
+    catalog: 'expansion',
+    motif: 'hell',
+    sky: ['#6a1a16', '#1a0808'],
+    ground: '#3a1214',
+    accent: '#ffb089',
+    ink: '#fff1e8',
+  },
 } as const satisfies Record<RegionId, RegionConfig>;
 
 const REGION_ORDER = Object.keys(REGION_CATALOG) as RegionId[];

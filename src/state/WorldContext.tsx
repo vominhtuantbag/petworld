@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Alert } from 'react-native';
 
 import { getCharacter } from '../data/characters';
 import { getRegion } from '../data/regions';
@@ -7,10 +8,10 @@ import { HAZARD_HP_PER_TICK, HAZARD_STAMINA_PER_TICK } from '../world/hazards';
 import { emptyQuests, findQuest, normalizeQuests, type QuestTrack } from '../world/quests';
 import type { RegionId } from '../types/game';
 import { useSetup } from './SetupContext';
-import { entryBlock, parseSector, parseTier, resolveZoneId } from '../world/atlas';
+import { entryBlock, isSpecialRegion, LOCKED_LAND, parseSector, parseTier, resolveZoneId, specialRegionOpen } from '../world/atlas';
 import { createField, fieldNeedsRebuild, monsterStats, nextRegion, townZoneId } from '../world/catalog';
 import { speciesById } from '../world/monsters';
-import { grantFleePeace } from '../world/sim';
+import { grantFleePeace, rejectPortal } from '../world/sim';
 import { ADVENTURE_LEVEL_CAP, expForNextLevel, MARCH_REGEN_PER_SEC, MARCH_STAMINA_PER_PX } from '../world/progression';
 import {
   BAG_SLOTS,
@@ -161,6 +162,8 @@ const WorldContext = createContext<WorldContextValue | null>(null);
 export function WorldProvider({ children }: { children: ReactNode }) {
   const setup = useSetup();
   const [state, setState] = useState<WorldState>(EMPTY);
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const professionRef = useRef<string | undefined>(undefined);
   const nameRef = useRef('');
   professionRef.current = getCharacter(setup.player?.baseCharacterId)?.professionId;
@@ -210,17 +213,31 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const travelTo = useCallback((toZone: string, arrive?: Vec, unlock?: RegionId) => {
+    const snapshot = stateRef.current;
+    const zoneId = resolveZoneId(toZone);
+    const blocked = entryBlock(snapshot.adventureLevel, zoneId, snapshot.homeRegion);
+    if (blocked) {
+      rejectPortal();
+      Alert.alert(blocked === LOCKED_LAND ? 'Vùng đất' : 'Không vào được', blocked);
+      setState((current) => ({ ...current, notice: blocked }));
+      return;
+    }
     setState((current) => {
-      const zoneId = resolveZoneId(toZone);
-      const blocked = entryBlock(current.adventureLevel, zoneId, current.homeRegion);
-      if (blocked) return { ...current, notice: blocked };
+      const denied = entryBlock(current.adventureLevel, zoneId, current.homeRegion);
+      if (denied) return { ...current, notice: denied };
       const tierMap = parseTier(zoneId);
       const sector = parseSector(zoneId);
       const regionId = zoneId.startsWith('town:')
         ? (zoneId.slice(5) as RegionId)
         : (tierMap?.province.regionId ?? sector?.province.regionId ?? current.regionId);
       const opened = unlock && unlock !== current.homeRegion ? unlock : null;
-      const unlocked = opened && !current.unlocked.includes(opened) ? [...current.unlocked, opened] : current.unlocked;
+      let unlocked = current.unlocked;
+      if (opened && !unlocked.includes(opened) && (!isSpecialRegion(opened) || specialRegionOpen(opened, current.adventureLevel))) {
+        unlocked = [...unlocked, opened];
+      }
+      if (isSpecialRegion(regionId) && specialRegionOpen(regionId, current.adventureLevel) && !unlocked.includes(regionId)) {
+        unlocked = [...unlocked, regionId];
+      }
       const scene: FieldScene = zoneId.startsWith('town:') ? 'town' : 'wilds';
       const region = opened ? getRegion(opened) : null;
       return {
@@ -242,16 +259,32 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const fastTravel = useCallback((regionId: RegionId) => {
+    const snapshot = stateRef.current;
+    if (isSpecialRegion(regionId) && !specialRegionOpen(regionId, snapshot.adventureLevel)) {
+      Alert.alert('Vùng đất', LOCKED_LAND);
+      setState((current) => ({ ...current, notice: LOCKED_LAND }));
+      return;
+    }
+    const townZone = townZoneId(regionId);
+    const blocked = entryBlock(snapshot.adventureLevel, townZone, snapshot.homeRegion);
+    if (blocked) {
+      Alert.alert(blocked === LOCKED_LAND ? 'Vùng đất' : 'Không vào được', blocked);
+      setState((current) => ({ ...current, notice: blocked }));
+      return;
+    }
     setState((current) => {
       if (regionId === current.regionId && current.scene === 'town') return { ...current, notice: 'Bạn đang ở thị trấn này.' };
-      // Every town is open, and its first hunting ground counts as home,
-      // so the exit gate is not level-locked while monsters are being checked.
+      const denied = entryBlock(current.adventureLevel, townZone, current.homeRegion);
+      if (denied) return { ...current, notice: denied };
+      const unlocked =
+        isSpecialRegion(regionId) && !current.unlocked.includes(regionId) ? [...current.unlocked, regionId] : current.unlocked;
       return {
         ...current,
         scene: 'town',
         regionId,
-        homeRegion: regionId,
-        zoneId: townZoneId(regionId),
+        homeRegion: isSpecialRegion(regionId) ? current.homeRegion : regionId,
+        zoneId: townZone,
+        unlocked,
         arrival: null,
         notice: `Đã tới thị trấn ${getRegion(regionId)?.nameVi ?? regionId}.`,
       };
@@ -403,7 +436,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         innReadyAt: Date.now() + INN_COOLDOWN_MS,
         vitals: fullRestore(current.vitals),
         pet: { ...current.pet, hp: current.pet.maxHp, mana: current.pet.maxMana, stamina: current.pet.maxStamina },
-        notice: 'Bạn và thú đồng hành đã hồi phục.',
+        tamed: current.tamed.map((monster) => ({ ...monster, hp: monster.maxHp, mp: monster.maxMp })),
+        notice: 'Bạn và mọi thú đã hồi đầy máu, mana và thể lực.',
       };
     });
   }, []);
@@ -481,11 +515,16 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const confirmSquad = useCallback((allyIds: string[], itemIds: ItemId[], basicId: string) => {
-    setState((current) => ({
-      ...current,
-      scene: 'encounter',
-      squad: { allyIds: allyIds.slice(0, 3), itemIds: itemIds.slice(0, 3), basicId },
-    }));
+    setState((current) => {
+      const living = new Set(current.tamed.filter((monster) => monster.hp > 0).map((monster) => monster.id));
+      const ready = allyIds.filter((id) => living.has(id));
+      return {
+        ...current,
+        scene: 'encounter',
+        squad: { allyIds: ready.slice(0, 3), itemIds: itemIds.slice(0, 3), basicId },
+        notice: ready.length < allyIds.length ? 'Thú hết máu không thể ra trận.' : current.notice,
+      };
+    });
   }, []);
 
   const returnToSquad = useCallback((patch: { vitals: Vitals; bag: Stack[]; pets: { id: string; hp: number; mp: number }[] }) => {
@@ -519,20 +558,30 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   const resolveBattle = useCallback((result: BattleResult) => {
     setState((current) => {
-      const progressed = applyExp(current, result.exp, professionRef.current);
+      const reward = result.victory
+        ? result
+        : {
+            ...result,
+            exp: 0,
+            gold: 0,
+            drops: [],
+            petExp: (result.petExp ?? []).map((entry) => ({ ...entry, exp: 0 })),
+          };
+      const progressed = applyExp(current, reward.exp, professionRef.current);
       const leveled = progressed.adventureLevel > current.adventureLevel;
       const quests = readQuests(current.quests);
-      const gains = new Map((result.petExp ?? []).map((entry) => [entry.id, entry]));
+      const gains = new Map((reward.petExp ?? []).map((entry) => [entry.id, entry]));
       const updated = current.tamed.map((monster) => {
         const gain = gains.get(monster.id);
         if (!gain) return monster;
-        return growTamed(monster, gain.exp, gain.hp, gain.mp);
+        const hp = result.victory ? gain.hp : 0;
+        return growTamed(monster, gain.exp, hp, gain.mp);
       });
       const captured = result.tamed.filter((monster) => !updated.some((entry) => entry.id === monster.id));
       let discovered = current.encounter ? rememberSpecies(current.discovered, current.encounter.kindId ?? current.encounter.id) : current.discovered;
       for (const monster of captured) discovered = rememberSpecies(discovered, monster.kindId);
       let bag = result.bag;
-      for (const drop of result.drops ?? []) {
+      for (const drop of reward.drops ?? []) {
         const next = addStack(bag, drop.itemId, drop.qty);
         if (next) bag = next;
       }
@@ -557,11 +606,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         fields,
         vitals: {
           ...result.vitals,
-          hp: Math.max(0, Math.min(result.vitals.maxHp, result.vitals.hp)),
+          hp: result.victory ? Math.max(0, Math.min(result.vitals.maxHp, result.vitals.hp)) : 1,
           mana: Math.max(0, Math.min(result.vitals.maxMana, result.vitals.mana)),
         },
         bag,
-        gold: current.gold + result.gold,
+        gold: current.gold + reward.gold,
         tamed: captured.length ? [...updated, ...captured] : updated,
         discovered,
         quests: result.victory ? { ...quests, winsToday: quests.winsToday + 1, totalWins: quests.totalWins + 1 } : quests,

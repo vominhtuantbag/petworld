@@ -37,7 +37,7 @@ type Progress = {
 
 /**
  * Victory claims loot and returns to the map. Defeat offers another try
- * or a return that still keeps the consolation experience.
+ * or a return, and the party keeps none of the fight's rewards.
  */
 export function EndGameModal({ victory, members, slots, onConfirm, onRetry }: Props) {
   const { s, font, width } = useLayout();
@@ -54,7 +54,7 @@ export function EndGameModal({ victory, members, slots, onConfirm, onRetry }: Pr
           <Text style={[styles.bannerTitle, { fontSize: font(26) }]}>{banner.title}</Text>
         </LinearGradient>
         <ScrollView style={styles.scroll} contentContainerStyle={{ padding: s(14), gap: s(10) }}>
-          <Text style={[styles.section, { fontSize: font(12) }]}>{victory ? 'Kinh nghiệm' : 'Kinh nghiệm an ủi'}</Text>
+          <Text style={[styles.section, { fontSize: font(12) }]}>Kinh nghiệm</Text>
           {members.map((member) => (
             <ExpLine key={member.id} member={member} font={font} barHeight={s(10)} />
           ))}
@@ -74,7 +74,7 @@ export function EndGameModal({ victory, members, slots, onConfirm, onRetry }: Pr
               </View>
             </>
           ) : (
-            <Text style={[styles.note, { fontSize: font(12) }]}>Bạn và thú đồng hành vẫn nhận một ít kinh nghiệm.</Text>
+            <Text style={[styles.note, { fontSize: font(12) }]}>Thua trận không nhận kinh nghiệm, vàng hay vật phẩm.</Text>
           )}
         </ScrollView>
         <View style={[styles.actions, { padding: s(12), gap: s(8) }]}>

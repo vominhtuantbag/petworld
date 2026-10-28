@@ -1,5 +1,8 @@
 import type { Server, Socket } from 'socket.io';
 
+import { readPayout, settlePayout } from '../combat/rewards.js';
+import { entryDenial } from './access.js';
+
 /**
  * One Socket.io room per open-world zone. Everyone standing on that map
  * receives joins, moves, leaves, and map chat. A second zone is a different
@@ -59,6 +62,10 @@ export class WorldPresence {
       socket.on('world:who', () => this.replyWho(socket));
       socket.on('player_move', (payload: unknown) => this.move(socket, payload));
       socket.on('map_chat', (payload: unknown) => this.chat(socket, payload));
+      socket.on('whisper', (payload: unknown) => this.whisper(socket, payload));
+      socket.on('battle:settle', (payload: unknown) => {
+        socket.emit('battle:settled', settlePayout(readPayout(payload)));
+      });
       socket.on('world:leave', () => this.leave(socket));
       socket.on('player_disconnect', () => this.leave(socket));
       socket.on('disconnect', () => this.leave(socket));
@@ -78,6 +85,13 @@ export class WorldPresence {
     const zoneId = canonicalZone(readZone(payload) ?? '');
     if (!avatar || !zoneId) {
       console.warn(`[world] enter rejected for ${username}`, payload);
+      return;
+    }
+
+    const denial = entryDenial(avatar.level, zoneId);
+    if (denial) {
+      socket.emit('world:error', { message: denial });
+      console.warn(`[world] ${username} blocked from ${zoneId}: ${denial}`);
       return;
     }
 
@@ -159,6 +173,17 @@ export class WorldPresence {
     if (!text) return;
     const now = Date.now();
     if (now - person.lastChatAt < CHAT_GAP_MS) return;
+    if (/^\/(?:whisper|w)\b/i.test(text)) {
+      const command = /^\/(?:whisper|w)\s+(\S+)\s+([\s\S]+)$/i.exec(text);
+      const body = command?.[2].trim() ?? '';
+      if (!command || !body) {
+        socket.emit('world:error', { message: 'Thì thầm: /whisper tên nội dung' });
+        return;
+      }
+      person.lastChatAt = now;
+      this.deliverWhisper(socket, person, { toUsername: command[1], text: body }, now);
+      return;
+    }
     person.lastChatAt = now;
     this.io.to(zoneRoom(person.zoneId)).emit('map_chat', {
       userId: person.userId,
@@ -166,6 +191,55 @@ export class WorldPresence {
       text,
       at: now,
     });
+  }
+
+  private whisper(socket: Socket, payload: unknown) {
+    const userId = socket.data.userId as string | undefined;
+    if (!userId) return;
+    const person = this.people.get(userId);
+    if (!person || person.socketId !== socket.id) return;
+    const hint = readWhisper(payload);
+    if (!hint) return;
+    const now = Date.now();
+    if (now - person.lastChatAt < CHAT_GAP_MS) return;
+    person.lastChatAt = now;
+    this.deliverWhisper(socket, person, hint, now);
+  }
+
+  private deliverWhisper(socket: Socket, person: Presence, hint: { toUserId?: string; toUsername?: string; text: string }, now: number) {
+    const target = this.findPerson(hint);
+    if (!target) {
+      socket.emit('world:error', { message: 'Không thấy người chơi này.' });
+      return;
+    }
+    if (target.userId === person.userId) {
+      socket.emit('world:error', { message: 'Không thể thì thầm với chính mình.' });
+      return;
+    }
+    const packet = {
+      userId: person.userId,
+      username: person.username,
+      toUserId: target.userId,
+      toUsername: target.username,
+      text: hint.text,
+      at: now,
+      private: true,
+    };
+    this.io.sockets.sockets.get(target.socketId)?.emit('whisper', packet);
+    socket.emit('whisper', packet);
+  }
+
+  private findPerson(hint: { toUserId?: string; toUsername?: string }): Presence | null {
+    if (hint.toUserId) {
+      const byId = this.people.get(hint.toUserId);
+      if (byId) return byId;
+    }
+    const name = hint.toUsername?.trim().toLowerCase();
+    if (!name) return null;
+    for (const person of this.people.values()) {
+      if (person.username.toLowerCase() === name) return person;
+    }
+    return null;
   }
 
   private leave(socket: Socket) {
@@ -339,6 +413,18 @@ function readPoint(x: unknown, y: unknown): { x: number; y: number } | null {
     x: Math.max(-COORD_LIMIT, Math.min(COORD_LIMIT, x)),
     y: Math.max(-COORD_LIMIT, Math.min(COORD_LIMIT, y)),
   };
+}
+
+function readWhisper(payload: unknown): { toUserId?: string; toUsername?: string; text: string } | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const body = payload as { toUserId?: unknown; toUsername?: unknown; text?: unknown };
+  if (typeof body.text !== 'string') return null;
+  const text = body.text.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, CHAT_MAX);
+  if (!text) return null;
+  const toUserId = typeof body.toUserId === 'string' && body.toUserId.trim() ? body.toUserId.trim().slice(0, 80) : undefined;
+  const toUsername = typeof body.toUsername === 'string' ? body.toUsername.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 24) : '';
+  if (!toUserId && !toUsername) return null;
+  return { toUserId, toUsername: toUsername || undefined, text };
 }
 
 function readChat(payload: unknown): string | null {

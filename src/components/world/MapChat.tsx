@@ -7,14 +7,16 @@ import { theme } from '../../theme/theme';
 type Props = {
   messages: MapChatMessage[];
   online: number;
+  selfUserId?: string | null;
   onSend: (text: string) => void;
   onFocusChange: (focused: boolean) => void;
 };
 
-/** Shared map chat for everyone standing in the same zone. */
-export function MapChat({ messages, online, onSend, onFocusChange }: Props) {
+/** Shared map chat. A tap on a name starts a private /whisper to that player. */
+export function MapChat({ messages, online, selfUserId, onSend, onFocusChange }: Props) {
   const [text, setText] = useState('');
   const visible = messages.slice(-6);
+  const whispering = /^\/(?:whisper|w)\s+\S+/i.test(text);
 
   const send = () => {
     const next = text.trim();
@@ -23,17 +25,39 @@ export function MapChat({ messages, online, onSend, onFocusChange }: Props) {
     setText('');
   };
 
+  const pick = (message: MapChatMessage) => {
+    if (!message.userId || message.userId === selfUserId) return;
+    if (message.username === 'Hệ thống') return;
+    setText(`/whisper ${message.username} `);
+    onFocusChange(true);
+  };
+
   return (
     <View style={styles.dock} testID="map-chat" pointerEvents="auto">
       <Text style={styles.online} testID="map-online">{online > 0 ? `${online} người chơi khác trên map` : 'Chưa thấy người chơi khác'}</Text>
       {visible.length > 0 ? (
         <View style={styles.log}>
-          {visible.map((message) => (
-            <Text key={message.id} style={styles.line} numberOfLines={2}>
-              <Text style={styles.who}>{message.username}: </Text>
-              {message.text}
-            </Text>
-          ))}
+          {visible.map((message) => {
+            const who = message.whisper
+              ? message.userId === selfUserId
+                ? `Bạn → ${message.toUsername ?? message.username}`
+                : message.username
+              : message.username;
+            return (
+              <Text key={message.id} style={message.whisper ? styles.whisper : styles.line} numberOfLines={2}>
+                <Text
+                  style={styles.who}
+                  onPress={() => pick(message)}
+                  suppressHighlighting
+                  accessibilityRole="button"
+                  accessibilityLabel={`Thì thầm với ${message.username}`}
+                >
+                  {who}
+                </Text>
+                {message.whisper ? ` thì thầm: ${message.text}` : `: ${message.text}`}
+              </Text>
+            );
+          })}
         </View>
       ) : null}
       <View style={styles.row}>
@@ -43,12 +67,12 @@ export function MapChat({ messages, online, onSend, onFocusChange }: Props) {
           onFocus={() => onFocusChange(true)}
           onBlur={() => onFocusChange(false)}
           onSubmitEditing={send}
-          placeholder="Nhắn trên bản đồ..."
+          placeholder={whispering ? 'Nội dung thì thầm...' : 'Nhắn trên bản đồ...'}
           placeholderTextColor={theme.dim}
           maxLength={120}
           style={styles.input}
           testID="map-chat-input"
-          accessibilityLabel="Nhắn trên bản đồ"
+          accessibilityLabel={whispering ? 'Thì thầm' : 'Nhắn trên bản đồ'}
         />
         <Pressable accessibilityRole="button" accessibilityLabel="Gửi" testID="map-chat-send" onPress={send} style={styles.send}>
           <Text style={styles.sendLabel}>Gửi</Text>
@@ -77,6 +101,7 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   line: { color: theme.ink, fontSize: 12 },
+  whisper: { color: '#d7c4ff', fontSize: 12 },
   who: { color: theme.gold, fontWeight: '800' },
   row: { flexDirection: 'row', gap: 6, alignItems: 'center' },
   input: {

@@ -160,6 +160,21 @@ function MotifShape({ motif, accent }: { motif: RegionMotifId; accent: string })
           <Circle cx={40} cy={36} r={1.5} fill={accent} />
         </>
       );
+    case 'heaven':
+      return (
+        <>
+          <Path fill={accent} d="M24 8 L28 18 H38 L30 24 L33 34 L24 28 L15 34 L18 24 L10 18 H20 Z" />
+          <Path d="M8 40 H40" stroke={ink} strokeWidth={2} strokeLinecap="round" />
+        </>
+      );
+    case 'hell':
+      return (
+        <>
+          <Path fill={accent} d="M16 40 L20 22 L24 32 L28 16 L32 40 Z" />
+          <Path fill={ink} d="M12 40 L18 26 L22 40 Z" />
+          <Circle cx={30} cy={14} r={2} fill={accent} />
+        </>
+      );
     default:
       return assertNever(motif);
   }

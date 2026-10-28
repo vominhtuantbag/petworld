@@ -11,7 +11,7 @@ const PLAYER_SPEED = 230;
 const LOOT_CAP = 12;
 const PICKUP_R = 24;
 /** How long the map stays safe after the player runs from a fight. */
-export const FLEE_PEACE_SEC = 1.5;
+export const FLEE_PEACE_SEC = 3;
 
 export type FieldAxes = { x: number; y: number };
 
@@ -163,6 +163,14 @@ export function portalFade(): number {
 
 export function resetPortal() {
   portalChannel = null;
+}
+
+/** The gate refused the step. Stay visible, and do not ask again until the player walks off. */
+export function rejectPortal() {
+  if (!portalChannel) return;
+  portalChannel.fired = true;
+  portalChannel.t = 0;
+  portalChannel.pinned = false;
 }
 
 /** Drop partial hazard seconds. Called when the open map changes. */
@@ -319,7 +327,7 @@ function pointInRect(x: number, y: number, rect: Rect): boolean {
   return x >= rect.x && y >= rect.y && x <= rect.x + rect.w && y <= rect.y + rect.h;
 }
 
-/** Keep the player where they stand, and stop every monster from chasing for 1.5s. */
+/** Keep the player where they stand, and stop every monster from chasing for 3s. */
 export function grantFleePeace(field: FieldState): FieldState {
   const settle = (monster: MonsterActor) => ({ ...monster, calm: 0 });
   const chunks = { ...field.chunks };

@@ -1,6 +1,6 @@
 import type { RegionId } from '../types/game';
 import { SECTOR_CHUNKS } from './grid';
-import { MAP_TIERS, tierRange, tierZoneId } from './tiers';
+import { MAP_TIERS, TIER_LEVELS, tierRange, tierZoneId } from './tiers';
 
 /**
  * Two maps live side by side.
@@ -58,6 +58,8 @@ export const PROVINCES: ProvinceDef[] = [
   { id: 'light', regionId: 'light', nameVi: 'Ánh sáng', fauna: 'light', levelMin: 86, levelMax: 100, endgame: true, ground: '#f7e7b8' },
   { id: 'outer-space', regionId: 'outer-space', nameVi: 'Vũ trụ', fauna: 'space', levelMin: 101, levelMax: 120, endgame: true, ground: '#16132a' },
   { id: 'void', regionId: 'dark', nameVi: 'Hư không', fauna: 'void', levelMin: 121, levelMax: 140, endgame: true, ground: '#120818' },
+  { id: 'heaven', regionId: 'heaven', nameVi: 'Thiên đường', fauna: 'heaven', levelMin: 141, levelMax: 160, endgame: true, ground: '#f6e7b4' },
+  { id: 'hell', regionId: 'hell', nameVi: 'Địa ngục', fauna: 'hell', levelMin: 161, levelMax: 180, endgame: true, ground: '#3a1214' },
 ];
 
 /** Circular road. Index 0 meets index 1 and index 9 at the same map tier. */
@@ -176,24 +178,66 @@ export function provinceCount(): number {
   return TOWN_RING.length * MAP_TIERS + expansion * SECTOR_COLS * SECTOR_ROWS;
 }
 
+/** Shown when a special region has not reached its unlock level yet. */
+export const LOCKED_LAND = 'vùng đất chưa mở';
+
 /**
- * Home town, tier 1, is the training yard. Every other hunting map asks
- * you to be within `slack` levels of its easiest monster. Expansion
- * sectors keep the old corner-sector rule.
+ * The six endgame lands. They stay shut until the adventurer reaches the
+ * province's lowest level. Teleport and gates both use this list.
+ */
+export const SPECIAL_REGION_IDS = ['dark', 'light', 'heaven', 'hell', 'chaos', 'outer-space'] as const;
+
+export type SpecialRegionId = (typeof SPECIAL_REGION_IDS)[number];
+
+export function isSpecialRegion(id: string): id is SpecialRegionId {
+  return (SPECIAL_REGION_IDS as readonly string[]).includes(id);
+}
+
+/** Level band 1 (levels 1–10) may enter maps 1 and 2. Band 2 may enter maps 2 and 3. */
+export function tierWindow(level: number): { low: number; high: number } {
+  const band = Math.max(1, Math.min(MAP_TIERS, Math.ceil(Math.max(1, level) / TIER_LEVELS)));
+  return { low: band, high: Math.min(MAP_TIERS, band + 1) };
+}
+
+export function specialUnlockLevel(id: string): number | null {
+  if (!isSpecialRegion(id)) return null;
+  return BY_ID.get(id)?.levelMin ?? null;
+}
+
+/** A special region opens once adventure level reaches its lowest monster. */
+export function specialRegionOpen(id: string, adventureLevel: number): boolean {
+  const need = specialUnlockLevel(id);
+  if (need == null) return true;
+  return adventureLevel >= need;
+}
+
+function zoneProvinceId(zoneId: string): string {
+  if (zoneId.startsWith('town:')) return zoneId.slice(5);
+  return zoneId.split(':')[0] ?? '';
+}
+
+/**
+ * Hunting maps use a sliding pair: levels 1–10 may enter map 1 and map 2,
+ * levels 11–20 may enter map 2 and map 3, and so on. Special regions stay
+ * shut until their unlock level, and then the gate says so with `LOCKED_LAND`.
  */
 export function entryBlock(adventureLevel: number, zoneId: string, homeProvince: string): string | null {
-  const tier = parseTier(zoneId);
+  const resolved = resolveZoneId(zoneId);
+  const provinceId = zoneProvinceId(resolved);
+  if (isSpecialRegion(provinceId) && !specialRegionOpen(provinceId, adventureLevel)) return LOCKED_LAND;
+
+  const tier = parseTier(resolved);
   if (tier) {
-    const training = tier.tier === 1 && tier.province.id === homeProvince;
-    if (training) return null;
-    const slack = 4;
-    if (adventureLevel + slack < tier.levelMin) {
-      return `${tier.province.nameVi} bản đồ ${tier.tier} là cấp ${tier.levelMin}. Hãy đạt cấp ${Math.max(1, tier.levelMin - slack)} trước.`;
-    }
-    return null;
+    const window = tierWindow(adventureLevel);
+    if (tier.tier >= window.low && tier.tier <= window.high) return null;
+    const place = `${tier.province.nameVi} bản đồ ${tier.tier}`;
+    if (adventureLevel < tier.levelMin) return `Cấp của bạn chưa đủ để vào ${place}.`;
+    const allowed = window.low === window.high ? `bản đồ ${window.low}` : `bản đồ ${window.low} và ${window.high}`;
+    return `Cấp của bạn không vào được ${place}. Bạn chỉ vào được ${allowed}.`;
   }
-  const sector = parseSector(zoneId);
-  if (!sector) return null;
+
+  const sector = parseSector(resolved);
+  if (!sector || isSpecialRegion(sector.province.id)) return null;
   const training = sector.province.id === homeProvince && sector.col + sector.row <= 1;
   if (training) return null;
   const slack = 4;

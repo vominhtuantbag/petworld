@@ -67,7 +67,9 @@ export type RegionId =
   | 'light'
   | 'dark'
   | 'chaos'
-  | 'outer-space';
+  | 'outer-space'
+  | 'heaven'
+  | 'hell';
 
 export type RegionMotifId =
   | 'forest'
@@ -83,7 +85,9 @@ export type RegionMotifId =
   | 'light'
   | 'dark'
   | 'chaos'
-  | 'space';
+  | 'space'
+  | 'heaven'
+  | 'hell';
 
 /**
  * Frozen snapshot emitted when Start Game is pressed.

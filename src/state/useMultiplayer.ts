@@ -171,7 +171,27 @@ export function useMultiplayer(presence: PresenceInput | null) {
     live.on('player_left', onLeft);
     live.on('player_disconnect', onLeft);
     live.on('world:self', onSelf);
+    const onWhisper = (payload: { userId?: string; username?: string; toUsername?: string; text?: string; at?: number }) => {
+      if (!payload.userId || !payload.username || !payload.text) return;
+      const at = typeof payload.at === 'number' ? payload.at : Date.now();
+      setMessages((current) =>
+        [
+          ...current,
+          {
+            id: `whisper-${payload.userId}-${at}`,
+            userId: payload.userId!,
+            username: payload.username!,
+            toUsername: payload.toUsername,
+            text: payload.text!,
+            at,
+            whisper: true,
+          },
+        ].slice(-30),
+      );
+    };
+
     live.on('map_chat', onChat);
+    live.on('whisper', onWhisper);
     live.on('world:error', onError);
     let lastPacketLog = 0;
     const onAny = (event: string, payload: unknown) => {
@@ -231,6 +251,7 @@ export function useMultiplayer(presence: PresenceInput | null) {
       live.off('player_disconnect', onLeft);
       live.off('world:self', onSelf);
       live.off('map_chat', onChat);
+      live.off('whisper', onWhisper);
       live.off('world:error', onError);
       const leaving = token;
       setTimeout(() => {
@@ -270,10 +291,17 @@ export function useMultiplayer(presence: PresenceInput | null) {
   const sendChat = useCallback((text: string) => {
     const trimmed = text.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 120);
     if (!trimmed || !socket) return;
+    if (/^\/(?:whisper|w)\b/i.test(trimmed)) {
+      const whisper = /^\/(?:whisper|w)\s+(\S+)\s+([\s\S]+)$/i.exec(trimmed);
+      const body = whisper?.[2].trim().slice(0, 120) ?? '';
+      if (!whisper || !body) return;
+      socket.emit('whisper', { toUsername: whisper[1], text: body });
+      return;
+    }
     socket.emit('map_chat', { text: trimmed });
   }, [socket]);
 
-  return { players, messages, sendChat };
+  return { players, messages, sendChat, selfUserId: selfId };
 }
 
 function avatarId(avatar: { userId?: string; username?: string; id?: string } | null | undefined): string | null {

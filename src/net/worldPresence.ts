@@ -32,6 +32,8 @@ export type MapChatMessage = {
   username: string;
   text: string;
   at: number;
+  whisper?: boolean;
+  toUsername?: string;
 };
 
 export type WorldEnter = {

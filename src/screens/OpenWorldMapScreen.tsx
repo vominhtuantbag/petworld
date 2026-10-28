@@ -136,7 +136,7 @@ export function OpenWorldMapScreen() {
           <Minimap field={field} />
         </View>
       </FieldStage>
-      <MapChat messages={others.messages} online={others.players.length} onSend={others.sendChat} onFocusChange={setChatFocused} />
+      <MapChat messages={others.messages} online={others.players.length} selfUserId={others.selfUserId} onSend={others.sendChat} onFocusChange={setChatFocused} />
       <MapHud menu={menu} onOpen={setMenu} onClose={() => setMenu(null)} />
     </View>
   );

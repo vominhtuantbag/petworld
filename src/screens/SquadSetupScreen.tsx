@@ -34,6 +34,8 @@ export function SquadSetupScreen() {
   const chosen = slots.filter((id): id is string => id != null);
 
   const assign = (id: string) => {
+    const pet = captured.find((monster) => monster.id === id);
+    if (!pet || pet.hp <= 0) return;
     setSlots((current) => {
       const existing = current.indexOf(id);
       if (existing >= 0) {
@@ -85,7 +87,11 @@ export function SquadSetupScreen() {
           onPress={() => {
             const chosenBasic = basicId || basics[0]?.id || '';
             world.equipHeroBasic(chosenBasic);
-            world.confirmSquad(chosen, items, chosenBasic);
+            world.confirmSquad(
+              chosen.filter((id) => captured.some((monster) => monster.id === id && monster.hp > 0)),
+              items,
+              chosenBasic,
+            );
           }}
           style={[styles.confirm, { minHeight: s(72) }]}
         >
@@ -108,27 +114,34 @@ export function SquadSetupScreen() {
             <ScrollView contentContainerStyle={styles.list}>
               {captured.map((monster) => {
                 const on = slots.includes(monster.id);
+                const downed = monster.hp <= 0;
                 const book = monsterCatalog(monster.kindId);
                 const petLoadout = resolvePetLoadout(monster);
                 const basic = book.basics.find((skill) => skill.id === petLoadout.basicId) ?? book.basics[0];
                 const skills = petLoadout.skillIds
                   .map((id) => book.skills.find((skill) => skill.id === id))
                   .filter((skill) => skill != null);
+                const mark = downed ? 'Hết máu' : on ? 'Đã chọn' : 'Đã thu phục';
                 return (
                   <Pressable
                     key={monster.id}
                     accessibilityRole="button"
-                    accessibilityLabel={`${monster.name} Đã thu phục`}
+                    accessibilityState={{ disabled: downed, selected: on }}
+                    accessibilityLabel={`${monster.name} ${mark}`}
+                    disabled={downed}
                     onPress={() => assign(monster.id)}
-                    style={[styles.card, on && styles.cardOn]}
+                    style={[styles.card, on && styles.cardOn, downed && styles.cardDown]}
                   >
                     <PetFace kindId={monster.kindId} name={monster.name} tint={monster.tint} />
                     <View style={styles.cardBody}>
-                      <Text style={[styles.cardName, { fontSize: font(13) }]} numberOfLines={1}>
-                        {monster.name} · {on ? 'Đã chọn' : 'Đã thu phục'}
+                      <Text style={[styles.cardName, { fontSize: font(13) }, downed && styles.downedText]} numberOfLines={1}>
+                        {monster.name} · {mark}
                       </Text>
                       <Text style={[styles.copy, { fontSize: font(11) }]} numberOfLines={1}>
-                        Cấp {monster.level} · EXP {monster.exp} · Máu {monster.hp || monster.maxHp}/{monster.maxHp} · Mana {monster.mp || monster.maxMp}/{monster.maxMp}
+                        Cấp {monster.level} · Công {monster.attack} · Thủ {monster.defense} · Tốc {monster.speed}
+                      </Text>
+                      <Text style={[styles.copy, { fontSize: font(11) }]} numberOfLines={1}>
+                        HP {Math.max(0, monster.hp)}/{monster.maxHp} · MP {Math.max(0, monster.mp)}/{monster.maxMp} · EXP {monster.exp}
                       </Text>
                       <Text style={[styles.copy, { fontSize: font(11) }]} numberOfLines={1}>
                         {basic.name} · {skills.map((skill) => skill.name).join(' · ')}
@@ -303,6 +316,8 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   cardOn: { borderColor: theme.gold },
+  cardDown: { opacity: 0.4 },
+  downedText: { color: theme.muted },
   cardBody: { flex: 1, minWidth: 0 },
   use: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, backgroundColor: '#e25b2a' },
   useLabel: { color: '#1b140c', fontWeight: '800' },

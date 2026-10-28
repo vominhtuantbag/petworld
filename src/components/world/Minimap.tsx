@@ -1,6 +1,6 @@
 import { Image, StyleSheet, Text, View } from 'react-native';
 
-import { zoneIndexAt } from '../../world/tiers';
+import { getRegion } from '../../data/regions';
 import type { FieldState, MonsterActor } from '../../world/types';
 
 const PORTAL = require('../../../assets/images/gate111.png');
@@ -30,15 +30,13 @@ const SAMPLE_ROWS = 8;
 const CELL = 8;
 
 function ZoneMap({ field }: { field: FieldState }) {
-  const here = zoneIndexAt(field.player.x, field.player.y, field.zones);
-  const zone = field.zones[here];
   const boardW = SAMPLE_COLS * (CELL + 1);
   const boardH = SAMPLE_ROWS * (CELL + 1);
 
   return (
     <View testID="minimap" style={styles.board} pointerEvents="none">
-      <Text style={styles.caption}>
-        Bản đồ {field.tier}/10 · cấp {zone?.levelMin ?? field.levelMin}–{zone?.levelMax ?? field.levelMax}
+      <Text style={styles.caption} numberOfLines={2}>
+        {mapLabel(field)}
       </Text>
       <View style={[styles.plate, { width: boardW, height: boardH, backgroundColor: field.ground }]}>
         <MapMarkers field={field} width={boardW} height={boardH} player={6} monster={4} portal={14} />
@@ -53,6 +51,9 @@ function SectorMap({ field }: { field: FieldState }) {
 
   return (
     <View testID="minimap" style={styles.board} pointerEvents="none">
+      <Text style={styles.caption} numberOfLines={2}>
+        {mapLabel(field)}
+      </Text>
       {Array.from({ length: rows }, (_, row) => (
         <View key={row} style={styles.row}>
           {Array.from({ length: cols }, (_, col) => {
@@ -125,6 +126,13 @@ function MapMarkers({
   );
 }
 
+/** "Đồng bằng, Map-1" on a hunting map. Other lands keep the region name. */
+function mapLabel(field: FieldState): string {
+  const name = getRegion(field.regionId)?.nameVi ?? field.title;
+  if (field.tier >= 1) return `${name}, Map-${field.tier}`;
+  return name;
+}
+
 function knownMonsters(field: FieldState): MonsterActor[] {
   const byId = new Map<string, MonsterActor>();
   if (field.chunkSize > 0) {
@@ -181,6 +189,6 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  caption: { color: '#f6f1e7', fontSize: 9, fontWeight: '700', marginBottom: 3 },
+  caption: { color: '#f6f1e7', fontSize: 11, fontWeight: '800', marginBottom: 3, maxWidth: 168 },
   plate: { borderRadius: 4, overflow: 'hidden' },
 });

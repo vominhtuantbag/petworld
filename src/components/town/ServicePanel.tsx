@@ -3,7 +3,10 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useWorld } from '../../state/WorldContext';
 import { theme } from '../../theme/theme';
 import { useLayout } from '../../theme/useLayout';
-import { getRegion, REGIONS } from '../../data/regions';
+import { getRegion, listStarterRegions } from '../../data/regions';
+import { isRingTown, LOCKED_LAND, SPECIAL_REGION_IDS, specialRegionOpen, tierWindow } from '../../world/atlas';
+import { TIER_MAP_H, TIER_MAP_W } from '../../world/grid';
+import { entrancePad, MAP_TIERS, tierRange, tierZoneId } from '../../world/tiers';
 import {
   INN_COST,
   ITEMS,
@@ -171,18 +174,53 @@ function StorageRows() {
 
 function TravelRows() {
   const world = useWorld();
+  const window = tierWindow(world.adventureLevel);
+  const allowed = window.low === window.high ? `bản đồ ${window.low}` : `bản đồ ${window.low} và ${window.high}`;
+  const here = world.regionId;
   return (
     <>
-      <Text style={styles.copy}>Mọi thị trấn đang mở để kiểm tra quái. Cổng ra ngoài vào khu săn của thị trấn đó.</Text>
-      {REGIONS.map((region) => (
+      <Text style={styles.copy}>Cấp {world.adventureLevel} vào được {allowed}. Cổng và dịch chuyển đều kiểm tra cấp.</Text>
+      {listStarterRegions().map((region) => (
         <Row
           key={region.id}
           title={`${region.nameVi} · ${region.name}`}
-          detail={region.id === world.regionId ? 'Thị trấn hiện tại' : 'Đi ngay'}
+          detail={region.id === here ? 'Thị trấn hiện tại' : 'Đi tới thị trấn'}
           action="Đi"
           onPress={() => world.fastTravel(region.id)}
         />
       ))}
+      {isRingTown(here) ? (
+        <>
+          <Text style={styles.copy}>Bản đồ săn của {getRegion(here)?.nameVi ?? here}</Text>
+          {Array.from({ length: MAP_TIERS }, (_, index) => index + 1).map((tier) => {
+            const band = tierRange(tier);
+            const open = tier >= window.low && tier <= window.high;
+            return (
+              <Row
+                key={`map-${tier}`}
+                title={`Bản đồ ${tier}`}
+                detail={open ? `Cấp ${band.levelMin}–${band.levelMax}` : 'Chưa đúng cấp'}
+                action="Đến"
+                onPress={() => world.travelTo(tierZoneId(here, tier), entrancePad(TIER_MAP_W, TIER_MAP_H))}
+              />
+            );
+          })}
+        </>
+      ) : null}
+      <Text style={styles.copy}>Vùng đặc biệt</Text>
+      {SPECIAL_REGION_IDS.map((id) => {
+        const region = getRegion(id);
+        const open = specialRegionOpen(id, world.adventureLevel);
+        return (
+          <Row
+            key={id}
+            title={region?.nameVi ?? id}
+            detail={open ? 'Đã mở' : LOCKED_LAND}
+            action="Đến"
+            onPress={() => world.fastTravel(id)}
+          />
+        );
+      })}
     </>
   );
 }
@@ -192,7 +230,7 @@ function InnRows() {
   return (
     <>
       <Text style={styles.copy}>
-        Hồi đầy máu, mana và thể lực cho bạn và {world.pet.name}. Tốn {INN_COST} vàng, rồi nhà nghỉ nghỉ một lát.
+        Hồi đầy máu, mana và thể lực cho bạn và mọi thú đã thu phục. Tốn {INN_COST} vàng, rồi nhà nghỉ nghỉ một lát.
       </Text>
       <Text style={styles.copy}>
         {world.pet.name}: máu {world.pet.hp}/{world.pet.maxHp} · mana {world.pet.mana}/{world.pet.maxMana} · thể lực {world.pet.stamina}/
