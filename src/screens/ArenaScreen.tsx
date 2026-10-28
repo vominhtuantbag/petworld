@@ -96,6 +96,7 @@ export function ArenaScreen() {
           </View>
         ))}
       </View>
+      {!finished ? <Text style={styles.waiting}>Mỗi lượt 30 giây. Hết giờ sẽ tự tấn công.</Text> : null}
       {snapshot.you.ready && !finished ? <Text style={styles.waiting}>Đã khóa đòn. Đang chờ đối thủ.</Text> : null}
       {finished ? (
         <View style={styles.overlay}>
@@ -134,8 +135,9 @@ function ArenaFighter({
   const ratio = fighter.maxHp <= 0 ? 0 : Math.max(0, Math.min(1, fighter.hp / fighter.maxHp));
   const attack = Math.round(fighter.attack);
   const defense = Math.round(fighter.defense);
+  const pets = fighter.pets ?? [];
   const body = Math.round(portrait * 1.22);
-  const chrome = 46;
+  const chrome = pets.length > 0 ? 64 : 46;
   const labelWidth = Math.max(barWidth, Math.round(statFont * 13));
   const drop = overheadDrop(slot.y, body, chrome);
   return (
@@ -155,8 +157,13 @@ function ArenaFighter({
     >
       <View pointerEvents="none" style={{ position: 'absolute', top: -chrome + drop, width: labelWidth, alignSelf: 'center' }}>
         <Text style={[styles.statLine, { fontSize: statFont, width: labelWidth }]} numberOfLines={1}>
-          ATK {attack} / DEF {defense}
+          Cấp {fighter.level} · ATK {attack} / DEF {defense}
         </Text>
+        {pets.length > 0 ? (
+          <Text style={[styles.statLine, { fontSize: statFont, width: labelWidth }]} numberOfLines={1}>
+            {pets.map((pet) => `${pet.name} ${pet.hp}/${pet.maxHp}`).join(' · ')}
+          </Text>
+        ) : null}
         <View style={[styles.track, { width: barWidth, alignSelf: 'center' }]}>
           <View style={[styles.fill, { width: `${ratio * 100}%`, backgroundColor: face === 'right' ? theme.gold : '#d9897a' }]} />
           <Text style={styles.hpText}>

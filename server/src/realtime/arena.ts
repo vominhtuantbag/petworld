@@ -4,9 +4,9 @@ import { acceptToken, bindSessionKick, SESSION_REPLACED_MESSAGE } from '../auth/
 import { readToken } from '../auth/tokens.js';
 import { isCombatAction, strike, type CombatAction } from '../combat/rules.js';
 import type { AccountStore, CharacterRecord, UserRecord } from '../domain.js';
-import type { BattleView, FighterView, QueueView } from './protocol.js';
+import type { BattleView, DuelPet, FighterView, QueueView } from './protocol.js';
 
-const ROUND_MS = 12_000;
+const ROUND_MS = 30_000;
 const DISCONNECT_GRACE_MS = 12_000;
 
 type Fighter = Omit<FighterView, 'hp' | 'ready'> & { attack: number; defense: number };
@@ -166,6 +166,29 @@ export class Arena {
     socket.emit('queue:status', this.queueView(userId));
   }
 
+  /** True while this account is inside a live duel. */
+  busy(userId: string): boolean {
+    return this.roomFor(userId)?.status === 'active';
+  }
+
+  /**
+   * Opens a duel from a proximity challenge. The queue is left untouched
+   * for everyone else. Pets are the squad each side locked in.
+   */
+  async startDuel(leftId: string, rightId: string, pets: ReadonlyMap<string, DuelPet[]>): Promise<boolean> {
+    if (leftId === rightId) return false;
+    if (this.busy(leftId) || this.busy(rightId)) return false;
+    this.leaveQueue(leftId);
+    this.leaveQueue(rightId);
+    const left = await this.fighterFromId(leftId);
+    const right = await this.fighterFromId(rightId);
+    if (!left || !right) return false;
+    left.pets = pets.get(leftId) ?? [];
+    right.pets = pets.get(rightId) ?? [];
+    this.openRoom(left, right);
+    return true;
+  }
+
   private async joinQueue(socket: Socket) {
     const user = await this.store.findUserById(socket.data.userId as string);
     if (!user) {
@@ -217,6 +240,13 @@ export class Arena {
       }
       this.openRoom(left, right);
     }
+  }
+
+  private async fighterFromId(userId: string): Promise<Fighter | null> {
+    const user = await this.store.findUserById(userId);
+    const character = await this.store.findCharacterByUserId(userId);
+    if (!user || !character) return null;
+    return toFighter(user, character);
   }
 
   private async fighterFromQueue(entry: QueuedPlayer): Promise<Fighter | null> {
@@ -293,8 +323,8 @@ export class Arena {
       if (now >= room.deadline) {
         for (const fighter of room.fighters) {
           if (!room.submitted[fighter.userId]) {
-            room.submitted[fighter.userId] = 'defend';
-            room.log.push(`${fighter.name} hết giờ và chuyển sang phòng thủ.`);
+            room.submitted[fighter.userId] = 'attack';
+            room.log.push(`${fighter.name} hết giờ và tự tấn công.`);
           }
         }
         await this.resolveRound(room);
@@ -426,6 +456,7 @@ function toFighter(user: UserRecord, character: CharacterRecord): Fighter {
     attack: character.stats.attack,
     defense: character.stats.defense,
     maxHp: character.stats.hp,
+    pets: [],
   };
 }
 
@@ -433,6 +464,7 @@ function present(fighter: Fighter, room: Room): FighterView {
   return {
     ...fighter,
     hp: room.hp[fighter.userId] ?? 0,
+    pets: fighter.pets ?? [],
     ready: Boolean(room.submitted[fighter.userId]),
   };
 }

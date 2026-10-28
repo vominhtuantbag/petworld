@@ -2,11 +2,30 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { io, type Socket } from 'socket.io-client';
 
 import { SOCKET_URL } from '../config/env';
-import type { BattleView, CombatAction, QueueView } from '../net/protocol';
+import type { BattleView, CombatAction, DuelPet, QueueView } from '../net/protocol';
 import { reportSessionReplaced } from '../net/sessionKick';
 import { useAuth } from './AuthContext';
 
 type Connection = 'offline' | 'connecting' | 'online';
+
+export type PvpInvite = {
+  challengeId: string;
+  fromUserId: string;
+  fromUsername: string;
+};
+
+export type PvpOutgoing = {
+  challengeId: string;
+  toUserId: string;
+  toUsername: string;
+};
+
+export type PvpPrep = {
+  matchId: string;
+  deadline: number;
+  opponentUserId: string;
+  opponentUsername: string;
+};
 
 type BattleContextValue = {
   connection: Connection;
@@ -14,10 +33,17 @@ type BattleContextValue = {
   queue: QueueView;
   battle: BattleView | null;
   notice: string | null;
+  pvpIncoming: PvpInvite | null;
+  pvpOutgoing: PvpOutgoing | null;
+  prep: PvpPrep | null;
   findMatch: () => void;
   cancelMatch: () => void;
   sendAction: (action: CombatAction) => void;
   leaveBattle: () => void;
+  sendChallenge: (toUserId: string) => void;
+  acceptChallenge: (challengeId: string) => void;
+  declineChallenge: (challengeId: string) => void;
+  readyDuel: (pets: DuelPet[]) => void;
 };
 
 const BattleContext = createContext<BattleContextValue | null>(null);
@@ -35,6 +61,11 @@ export function BattleProvider({ children }: { children: ReactNode }) {
   const [queue, setQueue] = useState<QueueView>({ state: 'idle', position: 0 });
   const [battle, setBattle] = useState<BattleView | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pvpIncoming, setPvpIncoming] = useState<PvpInvite | null>(null);
+  const [pvpOutgoing, setPvpOutgoing] = useState<PvpOutgoing | null>(null);
+  const [prep, setPrep] = useState<PvpPrep | null>(null);
+  const prepRef = useRef<PvpPrep | null>(null);
+  prepRef.current = prep;
 
   useEffect(() => {
     if (!auth.token) {
@@ -44,6 +75,9 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       setConnection('offline');
       setQueue({ state: 'idle', position: 0 });
       setBattle(null);
+      setPvpIncoming(null);
+      setPvpOutgoing(null);
+      setPrep(null);
       return;
     }
 
@@ -86,6 +120,9 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     socket.on('queue:status', (next: QueueView) => setQueue(next));
     socket.on('battle:update', (next: BattleView) => {
       setBattle(next);
+      setPrep(null);
+      setPvpIncoming(null);
+      setPvpOutgoing(null);
       setQueue({ state: 'idle', position: 0 });
       if (next.status === 'finished') {
         void auth.refreshCharacter();
@@ -93,6 +130,31 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     });
     socket.on('battle:error', (payload: { message?: string }) => {
       setNotice(payload.message ?? 'Không thực hiện được thao tác.');
+    });
+    socket.on('pvp_challenge', (next: PvpInvite) => {
+      if (!next?.challengeId || !next.fromUserId) return;
+      setPvpIncoming(next);
+      setNotice(null);
+    });
+    socket.on('pvp_outgoing', (next: PvpOutgoing) => {
+      if (!next?.challengeId) return;
+      setPvpOutgoing(next);
+      setNotice(null);
+    });
+    socket.on('pvp_challenge_closed', (payload: { message?: string }) => {
+      setPvpIncoming(null);
+      setPvpOutgoing(null);
+      if (payload?.message) setNotice(payload.message);
+    });
+    socket.on('pvp_prep', (next: PvpPrep) => {
+      if (!next?.matchId || typeof next.deadline !== 'number') return;
+      setPrep(next);
+      setPvpIncoming(null);
+      setPvpOutgoing(null);
+      setNotice(null);
+    });
+    socket.on('pvp_error', (payload: { message?: string }) => {
+      setNotice(payload.message ?? 'Không khiêu chiến được.');
     });
 
     return () => {
@@ -120,9 +182,65 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     setBattle(null);
   }, []);
 
+  const sendChallenge = useCallback((toUserId: string) => {
+    setNotice(null);
+    socketRef.current?.emit('send_pvp_challenge', { toUserId });
+  }, []);
+
+  const acceptChallenge = useCallback((challengeId: string) => {
+    setNotice(null);
+    socketRef.current?.emit('accept_pvp_challenge', { challengeId });
+  }, []);
+
+  const declineChallenge = useCallback((challengeId: string) => {
+    socketRef.current?.emit('decline_pvp_challenge', { challengeId });
+    setPvpIncoming(null);
+    setPvpOutgoing(null);
+  }, []);
+
+  const readyDuel = useCallback((pets: DuelPet[]) => {
+    const matchId = prepRef.current?.matchId;
+    if (!matchId) return;
+    socketRef.current?.emit('pvp_squad_ready', { matchId, pets });
+  }, []);
+
   const value = useMemo<BattleContextValue>(
-    () => ({ connection, socket, queue, battle, notice, findMatch, cancelMatch, sendAction, leaveBattle }),
-    [connection, socket, queue, battle, notice, findMatch, cancelMatch, sendAction, leaveBattle],
+    () => ({
+      connection,
+      socket,
+      queue,
+      battle,
+      notice,
+      pvpIncoming,
+      pvpOutgoing,
+      prep,
+      findMatch,
+      cancelMatch,
+      sendAction,
+      leaveBattle,
+      sendChallenge,
+      acceptChallenge,
+      declineChallenge,
+      readyDuel,
+    }),
+    [
+      connection,
+      socket,
+      queue,
+      battle,
+      notice,
+      pvpIncoming,
+      pvpOutgoing,
+      prep,
+      findMatch,
+      cancelMatch,
+      sendAction,
+      leaveBattle,
+      sendChallenge,
+      acceptChallenge,
+      declineChallenge,
+      readyDuel,
+    ],
   );
 
   return <BattleContext.Provider value={value}>{children}</BattleContext.Provider>;

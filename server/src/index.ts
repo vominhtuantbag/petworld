@@ -9,6 +9,7 @@ import { connectMongo, MongoAccountStore } from './db/mongoStore.js';
 import type { AccountStore } from './domain.js';
 import { createApp } from './http/app.js';
 import { Arena } from './realtime/arena.js';
+import { ProximityDuels } from './realtime/pvp.js';
 import { WorldPresence } from './realtime/world.js';
 import { TournamentBoard } from './tournament/board.js';
 import { startTournamentClock } from './tournament/dispatcher.js';
@@ -32,8 +33,11 @@ export async function startServer(port = config.port) {
       origin: config.corsOrigin === '*' ? true : config.corsOrigin.split(',').map((item: string) => item.trim()),
     },
   });
-  new Arena(io, store).attach();
-  new WorldPresence(io).attach();
+  const arena = new Arena(io, store);
+  arena.attach();
+  const world = new WorldPresence(io);
+  world.attach();
+  new ProximityDuels(io, world, arena).attach();
   const stopClock = startTournamentClock(board, io);
 
   await new Promise<void>((resolve, reject) => {

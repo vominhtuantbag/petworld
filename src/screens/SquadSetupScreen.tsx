@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { monsterPortrait } from '../components/world/MonsterToken';
 import { getCharacter } from '../data/characters';
+import type { DuelPet } from '../net/protocol';
+import { useBattle } from '../state/BattleContext';
 import { useSetup } from '../state/SetupContext';
 import { useWorld } from '../state/WorldContext';
 import { theme } from '../theme/theme';
@@ -21,8 +23,13 @@ const SLOTS = [1, 2, 3] as const;
  */
 export function SquadSetupScreen() {
   const world = useWorld();
+  const battle = useBattle();
   const setup = useSetup();
   const { s, font } = useLayout();
+  const prep = battle.prep;
+  const [now, setNow] = useState(() => Date.now());
+  const sent = useRef(false);
+  const slotsRef = useRef<(string | null)[]>([null, null, null]);
   const professionId = getCharacter(setup.player?.baseCharacterId)?.professionId;
   const basics = classBasics(professionId);
   const savedBasic = world.heroSkills?.professionId === (professionId ?? 'wanderer') ? world.heroSkills.basicId : '';
@@ -32,6 +39,31 @@ export function SquadSetupScreen() {
   const captured = world.tamed;
   const supplies = world.bag.filter((stack) => SQUAD_ITEMS.includes(stack.itemId));
   const chosen = slots.filter((id): id is string => id != null);
+  slotsRef.current = slots;
+  const secondsLeft = prep ? Math.max(0, Math.ceil((prep.deadline - now) / 1000)) : null;
+
+  const duelPets = (): DuelPet[] =>
+    slotsRef.current.flatMap((id) => {
+      const pet = captured.find((monster) => monster.id === id && monster.hp > 0);
+      if (!pet) return [];
+      return [{ name: pet.name, level: pet.level, hp: pet.hp, maxHp: pet.maxHp }];
+    });
+
+  useEffect(() => {
+    sent.current = false;
+  }, [prep?.matchId]);
+
+  useEffect(() => {
+    if (!prep) return;
+    const timer = setInterval(() => setNow(Date.now()), 200);
+    return () => clearInterval(timer);
+  }, [prep]);
+
+  useEffect(() => {
+    if (!prep || secondsLeft !== 0 || sent.current) return;
+    sent.current = true;
+    battle.readyDuel(duelPets());
+  }, [prep, secondsLeft, battle]);
 
   const assign = (id: string) => {
     const pet = captured.find((monster) => monster.id === id);
@@ -87,6 +119,12 @@ export function SquadSetupScreen() {
           onPress={() => {
             const chosenBasic = basicId || basics[0]?.id || '';
             world.equipHeroBasic(chosenBasic);
+            if (prep) {
+              if (sent.current) return;
+              sent.current = true;
+              battle.readyDuel(duelPets());
+              return;
+            }
             world.confirmSquad(
               chosen.filter((id) => captured.some((monster) => monster.id === id && monster.hp > 0)),
               items,
@@ -95,13 +133,14 @@ export function SquadSetupScreen() {
           }}
           style={[styles.confirm, { minHeight: s(72) }]}
         >
-          <Text style={[styles.confirmLabel, { fontSize: font(16) }]}>Vào trận</Text>
+          <Text style={[styles.confirmLabel, { fontSize: font(16) }]}>{prep ? 'Sẵn sàng' : 'Vào trận'}</Text>
           <Text style={[styles.confirmHint, { fontSize: font(11) }]}>
-            {chosen.length}/3 thú · {items.length} vật phẩm
+            {prep ? `${secondsLeft}s · ${prep.opponentUsername}` : `${chosen.length}/3 thú · ${items.length} vật phẩm`}
           </Text>
         </Pressable>
       </View>
       <Text style={[styles.copy, { fontSize: font(12) }]}>
+        {prep ? `Khiêu chiến · còn ${secondsLeft}s · ` : ''}
         Máu {Math.round(world.vitals.hp)} / {world.vitals.maxHp} · Mana {Math.round(world.vitals.mana)} / {world.vitals.maxMana}
         {world.notice ? ` · ${world.notice}` : ''}
       </Text>
@@ -195,15 +234,17 @@ export function SquadSetupScreen() {
           )}
         </View>
       </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Bỏ chạy"
-        testID="run-away"
-        onPress={() => world.cancelSquad()}
-        style={styles.flee}
-      >
-        <Text style={[styles.fleeLabel, { fontSize: font(14) }]}>Bỏ chạy</Text>
-      </Pressable>
+      {prep ? null : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Bỏ chạy"
+          testID="run-away"
+          onPress={() => world.cancelSquad()}
+          style={styles.flee}
+        >
+          <Text style={[styles.fleeLabel, { fontSize: font(14) }]}>Bỏ chạy</Text>
+        </Pressable>
+      )}
       <View style={styles.basics}>
         <Text style={[styles.paneTitle, { fontSize: font(13) }]}>Đòn đánh thường</Text>
         {basics.map((skill) => {

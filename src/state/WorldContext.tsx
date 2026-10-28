@@ -114,6 +114,8 @@ type WorldContextValue = WorldState & {
   cancelSquad: () => void;
   returnToSquad: (patch: { vitals: Vitals; bag: Stack[]; pets: { id: string; hp: number; mp: number }[] }) => void;
   beginEncounter: (monster: Encounter) => void;
+  openDuelSquad: () => void;
+  leaveDuelPrep: () => void;
   resolveBattle: (result: BattleResult) => void;
   march: (distance: number, dt: number) => void;
   sufferHazard: (dt: number) => void;
@@ -551,8 +553,30 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const cancelSquad = useCallback(() => {
     setState((current) => {
       const saved = current.fields[current.zoneId];
-      const fields = saved ? { ...current.fields, [current.zoneId]: grantFleePeace(saved) } : current.fields;
+      const healed = saved ? restoreWild(grantFleePeace(saved), encounterIds(current.encounter)) : saved;
+      const fields = healed ? { ...current.fields, [current.zoneId]: healed } : current.fields;
       return { ...current, scene: 'wilds', encounter: null, squad: null, notice: 'Đã rút khỏi trận.', fields };
+    });
+  }, []);
+
+  const openDuelSquad = useCallback(() => {
+    setState((current) => {
+      if (current.scene === 'squad' && current.encounter == null) return current;
+      return {
+        ...current,
+        scene: 'squad',
+        encounter: null,
+        squad: null,
+        notice: 'Khiêu chiến. Chọn đội trong 30 giây.',
+      };
+    });
+  }, []);
+
+  const leaveDuelPrep = useCallback(() => {
+    setState((current) => {
+      if (current.scene !== 'squad' || current.encounter) return current;
+      const scene: FieldScene = current.zoneId.startsWith('town:') ? 'town' : 'wilds';
+      return { ...current, scene, squad: null };
     });
   }, []);
 
@@ -685,6 +709,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       rest,
       collect,
       beginEncounter,
+      openDuelSquad,
+      leaveDuelPrep,
       confirmSquad,
       equipHeroBasic,
       equipHeroSkill,
@@ -718,6 +744,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     rest,
     collect,
     beginEncounter,
+    openDuelSquad,
+    leaveDuelPrep,
     confirmSquad,
     equipHeroBasic,
     equipHeroSkill,
@@ -835,30 +863,28 @@ function hunger(monster: TamedMonster): number {
   return hp + mp;
 }
 
-/** Keep the HP and mana a fight actually left. A creature at 0 HP leaves the field. */
+/** A finished fight, including a loss or a flee, puts every wild creature back to full HP and MP. */
 function rememberFieldVitals(field: FieldState, report: { id: string; hp: number; mp: number }[]): FieldState {
-  const byId = new Map(report.map((entry) => [entry.id, entry]));
-  const apply = (monster: MonsterActor): MonsterActor | null => {
-    const next = byId.get(monster.id);
-    if (!next) return monster;
-    if (next.hp <= 0) return null;
-    return {
-      ...monster,
-      hp: Math.max(0, Math.min(monster.maxHp, next.hp)),
-      mp: Math.max(0, Math.min(monster.maxMp, next.mp)),
-    };
-  };
-  const keep = (monster: MonsterActor) => {
-    const next = apply(monster);
-    return next ? [next] : [];
-  };
+  return restoreWild(field, report.map((entry) => entry.id));
+}
+
+function encounterIds(encounter: Encounter | null): string[] {
+  if (!encounter) return [];
+  return [...new Set([encounter.id, ...(encounter.pool ?? []).map((card) => card.id)])];
+}
+
+function restoreWild(field: FieldState, ids: string[]): FieldState {
+  const wanted = new Set(ids);
+  if (wanted.size === 0) return field;
+  const heal = (monster: MonsterActor): MonsterActor =>
+    wanted.has(monster.id) ? { ...monster, hp: monster.maxHp, mp: monster.maxMp } : monster;
   const chunks = { ...field.chunks };
   for (const key of Object.keys(chunks)) {
     const bucket = chunks[key];
     if (!bucket) continue;
-    chunks[key] = { ...bucket, monsters: bucket.monsters.flatMap(keep) };
+    chunks[key] = { ...bucket, monsters: bucket.monsters.map(heal) };
   }
-  return { ...field, monsters: field.monsters.flatMap(keep), chunks };
+  return { ...field, monsters: field.monsters.map(heal), chunks };
 }
 
 function readQuests(track: QuestTrack | undefined): QuestTrack {

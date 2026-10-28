@@ -6,6 +6,13 @@ import type { Gender, RegionId } from '../catalog.js';
  * Add a field here first, then teach the arena to read it.
  */
 
+export type DuelPet = {
+  name: string;
+  level: number;
+  hp: number;
+  maxHp: number;
+};
+
 export type FighterView = {
   userId: string;
   username: string;
@@ -20,6 +27,8 @@ export type FighterView = {
   defense: number;
   maxHp: number;
   hp: number;
+  /** Pets chosen on the squad screen. Empty when the fighter brought nobody. */
+  pets?: DuelPet[];
   /** True once this fighter has locked an action for the current round. */
   ready: boolean;
 };

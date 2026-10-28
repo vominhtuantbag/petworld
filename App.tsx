@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { DebugGrid } from './src/components/battle/DebugGrid';
+import { PvpChallengePrompt } from './src/components/world/PvpChallenge';
 import { RotateToLandscape } from './src/components/RotateToLandscape';
 import { useImmersiveChrome } from './src/components/ImmersiveChrome';
 import { useLandscapeLock } from './src/hooks/useLandscapeLock';
@@ -61,6 +62,12 @@ function GameRoot() {
   const world = useWorld();
   const chrome = useImmersiveChrome();
   useSavedCharacter();
+  useEffect(() => {
+    if (battle.prep) world.openDuelSquad();
+  }, [battle.prep, world]);
+  useEffect(() => {
+    if (battle.battle) world.leaveDuelPrep();
+  }, [battle.battle, world]);
 
   let screen: ReactNode = <SetupFlow />;
   if (!auth.ready) screen = <View style={styles.fill} />;
@@ -83,12 +90,14 @@ function GameRoot() {
 function FieldRoot() {
   const world = useWorld();
   const battle = useBattle();
-  if (world.scene === 'wilds') return <OpenWorldMapScreen />;
-  if (world.scene === 'squad') return <SquadSetupScreen />;
-  if (world.scene === 'encounter') return <BattleScreen />;
-  if (world.scene === 'cup') return <TournamentScreen />;
-  if (world.scene === 'pvp') {
-    return (
+
+  let body: ReactNode = <TownScreen />;
+  if (world.scene === 'wilds') body = <OpenWorldMapScreen />;
+  else if (world.scene === 'squad') body = <SquadSetupScreen />;
+  else if (world.scene === 'encounter') body = <BattleScreen />;
+  else if (world.scene === 'cup') body = <TournamentScreen />;
+  else if (world.scene === 'pvp') {
+    body = (
       <LobbyScreen
         onLeave={() => {
           battle.cancelMatch();
@@ -97,7 +106,12 @@ function FieldRoot() {
       />
     );
   }
-  return <TownScreen />;
+  return (
+    <View style={styles.fill}>
+      {body}
+      <PvpChallengePrompt />
+    </View>
+  );
 }
 
 /**

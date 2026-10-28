@@ -59,12 +59,17 @@ async function main() {
     }
 
     console.log('[smoke] auth, matchmaking, and one combat round passed');
+    left.socket.emit('battle:leave');
+    right.socket.emit('battle:leave');
+    await delay(80);
     left.socket.close();
     right.socket.close();
     await checkOpenWorld(base, lan.token, bao.token, `lan_${stamp}`, `bao_${stamp}`);
     console.log('[smoke] two players shared one map, moved, chatted, and left');
     await checkWhisperKeepsRoster(base, lan.token, bao.token, `lan_${stamp}`, `bao_${stamp}`);
     console.log('[smoke] a high-level player stayed visible, and a whisper did not clear the map');
+    await checkProximityDuel(base, lan.token, bao.token, `bao_${stamp}`);
+    console.log('[smoke] a nearby challenge opened a 30s duel and a far one was refused');
     await checkSingleSession(base, `lan_${stamp}@example.com`, lan.token);
     console.log('[smoke] a second login kicked the previous session');
   } finally {
@@ -206,6 +211,65 @@ async function checkWhisperKeepsRoster(base: string, lanToken: string, baoToken:
       throw new Error('Whisper removed the other player from the map roster.');
     }
   } finally {
+    lan.socket.close();
+    bao.socket.close();
+  }
+}
+
+async function checkProximityDuel(base: string, lanToken: string, baoToken: string, baoName: string) {
+  const lan = connect(base, lanToken);
+  const bao = connect(base, baoToken);
+  await Promise.all([lan.ready, bao.ready]);
+  try {
+    const lanSelf = waitFor<{ userId: string }>(lan.socket, 'world:self', (payload) => Boolean(payload.userId));
+    const baoSelf = waitFor<{ userId: string }>(bao.socket, 'world:self', (payload) => Boolean(payload.userId));
+    lan.socket.emit('player_enter_map', worldPose(40, 40, 'plains:m1', 4));
+    bao.socket.emit('player_enter_map', worldPose(900, 900, 'plains:m1', 4));
+    const [lanWho, baoWho] = await Promise.all([lanSelf, baoSelf]);
+    if (baoWho.userId === lanWho.userId) throw new Error('Both duel sockets resolved to one account.');
+
+    const tooFar = waitFor<{ message?: string }>(lan.socket, 'pvp_error', (payload) => Boolean(payload.message));
+    lan.socket.emit('send_pvp_challenge', { toUserId: baoWho.userId });
+    const refused = await tooFar;
+    if (!refused.message?.includes('xa')) throw new Error(`A far challenge was accepted: ${refused.message ?? ''}`);
+
+    bao.socket.emit('player_move', { x: 80, y: 50, facing: 1, hp: 90, maxHp: 100 });
+    await delay(120);
+    const invited = waitFor<{ challengeId: string; fromUsername: string }>(
+      bao.socket,
+      'pvp_challenge',
+      (payload) => Boolean(payload.challengeId),
+    );
+    lan.socket.emit('send_pvp_challenge', { toUserId: baoWho.userId });
+    const challenge = await invited;
+    if (!challenge.fromUsername.startsWith('lan_')) throw new Error('Challenge came from the wrong player.');
+
+    const lanPrep = waitFor<{ matchId: string; deadline: number; opponentUsername: string }>(
+      lan.socket,
+      'pvp_prep',
+      (payload) => payload.opponentUsername === baoName,
+    );
+    const baoPrep = waitFor<{ matchId: string; deadline: number }>(bao.socket, 'pvp_prep', (payload) => Boolean(payload.matchId));
+    bao.socket.emit('accept_pvp_challenge', { challengeId: challenge.challengeId });
+    const [leftPrep, rightPrep] = await Promise.all([lanPrep, baoPrep]);
+    if (leftPrep.matchId !== rightPrep.matchId) throw new Error('The two sides entered different prep rooms.');
+    if (leftPrep.deadline - Date.now() < 20_000) throw new Error('Squad prep was shorter than 30 seconds.');
+
+    const lanBattle = waitFor<{ deadline: number; you: { pets?: { name: string }[] }; opponent: { name: string; level: number } }>(
+      lan.socket,
+      'battle:update',
+      (payload) => payload.you.pets?.[0]?.name === 'Sóc' && payload.deadline - Date.now() > 20_000,
+    );
+    const baoBattle = waitFor<{ you: { name: string } }>(bao.socket, 'battle:update', (payload) => Boolean(payload.you.name));
+    const pets = [{ name: 'Sóc', level: 2, hp: 10, maxHp: 18 }];
+    lan.socket.emit('pvp_squad_ready', { matchId: leftPrep.matchId, pets });
+    bao.socket.emit('pvp_squad_ready', { matchId: rightPrep.matchId, pets: [] });
+    const [opened, other] = await Promise.all([lanBattle, baoBattle]);
+    if (!other.you.name) throw new Error('The opponent never entered the arena.');
+    if (opened.opponent.level < 1) throw new Error('The arena hid the opponent level.');
+  } finally {
+    lan.socket.emit('battle:leave');
+    bao.socket.emit('battle:leave');
     lan.socket.close();
     bao.socket.close();
   }

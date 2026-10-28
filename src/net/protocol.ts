@@ -7,6 +7,13 @@ export type CombatAction = 'attack' | 'skill' | 'defend';
 
 export type Gender = 'male' | 'female';
 
+export type DuelPet = {
+  name: string;
+  level: number;
+  hp: number;
+  maxHp: number;
+};
+
 export type FighterView = {
   userId: string;
   username: string;
@@ -21,6 +28,8 @@ export type FighterView = {
   defense: number;
   maxHp: number;
   hp: number;
+  /** Pets locked in during the 30-second squad countdown. */
+  pets?: DuelPet[];
   ready: boolean;
 };
 

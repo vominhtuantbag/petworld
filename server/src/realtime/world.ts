@@ -47,6 +47,13 @@ export class WorldPresence {
 
   constructor(private readonly io: Server) {}
 
+  /** Live map position. Challenges use this so a far player cannot be pulled into a duel. */
+  where(userId: string): { userId: string; username: string; x: number; y: number; zoneId: string } | null {
+    const person = this.people.get(userId);
+    if (!person) return null;
+    return { userId: person.userId, username: person.username, x: person.x, y: person.y, zoneId: person.zoneId };
+  }
+
   attach() {
     this.io.on('connection', (socket) => {
       console.log(`[world] handshake socket=${socket.id} user=${String(socket.data.userId ?? '?')}`);
