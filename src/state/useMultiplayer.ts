@@ -7,6 +7,7 @@ import { stepHorizontalFacing } from '../components/world/facing';
 import type { Gender } from '../types/game';
 import { useAuth } from './AuthContext';
 import { useSocket } from './BattleContext';
+import { presenceHeld } from './presenceHold';
 
 const SEND_MS = 100;
 const MOVE_EPS = 3;
@@ -270,7 +271,7 @@ export function useMultiplayer(presence: PresenceInput | null) {
       const leaving = token;
       const leavingEpoch = epoch;
       setTimeout(() => {
-        if (generation.current !== leaving || presenceEpoch !== leavingEpoch) return;
+        if (generation.current !== leaving || presenceEpoch !== leavingEpoch || presenceHeld()) return;
         live.emit('world:leave');
         ghosts.current.clear();
         setPlayers([]);

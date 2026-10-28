@@ -22,7 +22,9 @@ type Prep = {
   rightId: string;
   deadline: number;
   ready: Set<string>;
+  forced: Set<string>;
   pets: Map<string, DuelPet[]>;
+  sockets: Map<string, string>;
   starting: boolean;
 };
 
@@ -55,7 +57,10 @@ export class ProximityDuels {
         this.decline(userId, payload);
       });
       socket.on('pvp_squad_ready', (payload: unknown) => {
-        this.ready(userId, payload);
+        this.ready(socket, userId, payload);
+      });
+      socket.on('pvp_force_begin', (payload: unknown) => {
+        this.force(socket, userId, payload);
       });
       socket.on('disconnect', () => {
         this.drop(userId);
@@ -94,7 +99,8 @@ export class ProximityDuels {
       createdAt: Date.now(),
     };
     this.invites.set(invite.id, invite);
-    this.io.sockets.sockets.get(this.socketId(toUserId))?.emit('pvp_challenge', {
+    this.remember(userId, socket.id);
+    this.liveSocket(toUserId)?.emit('pvp_challenge', {
       challengeId: invite.id,
       fromUserId: userId,
       fromUsername: from.username,
@@ -106,13 +112,19 @@ export class ProximityDuels {
     });
   }
 
-  private socketId(userId: string): string {
-    const located = this.world.where(userId);
-    if (!located) return '';
+  private readonly sockets = new Map<string, string>();
+
+  private remember(userId: string, socketId: string) {
+    this.sockets.set(userId, socketId);
+  }
+
+  /** The live socket for this account, even after they leave the map room for squad setup. */
+  private liveSocket(userId: string): Socket | undefined {
     for (const socket of this.io.sockets.sockets.values()) {
-      if (socket.data.userId === userId) return socket.id;
+      if (socket.data.userId === userId) return socket;
     }
-    return '';
+    const saved = this.sockets.get(userId);
+    return saved ? this.io.sockets.sockets.get(saved) : undefined;
   }
 
   private async accept(socket: Socket, userId: string, payload: unknown) {
@@ -138,7 +150,12 @@ export class ProximityDuels {
       rightId: invite.toUserId,
       deadline: Date.now() + PREP_MS,
       ready: new Set(),
+      forced: new Set(),
       pets: new Map(),
+      sockets: new Map([
+        [invite.fromUserId, this.sockets.get(invite.fromUserId) ?? ''],
+        [invite.toUserId, socket.id],
+      ]),
       starting: false,
     };
     this.preps.set(prep.id, prep);
@@ -157,13 +174,33 @@ export class ProximityDuels {
     });
   }
 
-  private ready(userId: string, payload: unknown) {
+  private ready(socket: Socket, userId: string, payload: unknown) {
+    this.remember(userId, socket.id);
     const matchId = readId(payload, 'matchId');
     const prep = matchId ? this.preps.get(matchId) : this.prepFor(userId);
     if (!prep || (prep.leftId !== userId && prep.rightId !== userId)) return;
+    prep.sockets.set(userId, socket.id);
     prep.ready.add(userId);
     prep.pets.set(userId, readPets(payload));
+    socket.emit('pvp_squad_ack', { matchId: prep.id });
     if (prep.ready.has(prep.leftId) && prep.ready.has(prep.rightId)) {
+      void this.begin(prep);
+    }
+  }
+
+  /**
+   * Each client sends this when its 30s clock hits zero.
+   * One side is not enough before the deadline. Both sides, or the deadline, start the fight.
+   */
+  private force(socket: Socket, userId: string, payload: unknown) {
+    this.remember(userId, socket.id);
+    const matchId = readId(payload, 'matchId');
+    const prep = matchId ? this.preps.get(matchId) : this.prepFor(userId);
+    if (!prep || (prep.leftId !== userId && prep.rightId !== userId)) return;
+    prep.sockets.set(userId, socket.id);
+    prep.forced.add(userId);
+    const bothForced = prep.forced.has(prep.leftId) && prep.forced.has(prep.rightId);
+    if (bothForced || Date.now() + 1_500 >= prep.deadline) {
       void this.begin(prep);
     }
   }
@@ -189,20 +226,23 @@ export class ProximityDuels {
     prep.starting = true;
     this.preps.delete(prep.id);
     const opened = await this.arena.startDuel(prep.leftId, prep.rightId, prep.pets);
-    if (opened) return;
+    if (opened) {
+      this.liveSocket(prep.leftId)?.emit('pvp_battle_start', { matchId: prep.id });
+      this.liveSocket(prep.rightId)?.emit('pvp_battle_start', { matchId: prep.id });
+      return;
+    }
+    console.warn(`[pvp] duel ${prep.id} did not open for ${prep.leftId} vs ${prep.rightId}`);
     this.emitBoth(prep.leftId, prep.rightId, 'pvp_error', { message: 'Không mở được trận khiêu chiến.' });
   }
 
   private emitPrep(prep: Prep, leftName: string, rightName: string) {
-    const left = this.io.sockets.sockets.get(this.socketId(prep.leftId));
-    const right = this.io.sockets.sockets.get(this.socketId(prep.rightId));
-    left?.emit('pvp_prep', { matchId: prep.id, deadline: prep.deadline, opponentUserId: prep.rightId, opponentUsername: rightName });
-    right?.emit('pvp_prep', { matchId: prep.id, deadline: prep.deadline, opponentUserId: prep.leftId, opponentUsername: leftName });
+    this.liveSocket(prep.leftId)?.emit('pvp_prep', { matchId: prep.id, deadline: prep.deadline, opponentUserId: prep.rightId, opponentUsername: rightName });
+    this.liveSocket(prep.rightId)?.emit('pvp_prep', { matchId: prep.id, deadline: prep.deadline, opponentUserId: prep.leftId, opponentUsername: leftName });
   }
 
   private emitBoth(leftId: string, rightId: string, event: string, payload: unknown) {
-    this.io.sockets.sockets.get(this.socketId(leftId))?.emit(event, payload);
-    this.io.sockets.sockets.get(this.socketId(rightId))?.emit(event, payload);
+    this.liveSocket(leftId)?.emit(event, payload);
+    this.liveSocket(rightId)?.emit(event, payload);
   }
 
   private drop(userId: string) {
@@ -210,7 +250,7 @@ export class ProximityDuels {
       if (invite.fromUserId !== userId && invite.toUserId !== userId) continue;
       this.invites.delete(invite.id);
       const other = invite.fromUserId === userId ? invite.toUserId : invite.fromUserId;
-      this.io.sockets.sockets.get(this.socketId(other))?.emit('pvp_challenge_closed', {
+      this.liveSocket(other)?.emit('pvp_challenge_closed', {
         challengeId: invite.id,
         message: 'Đối thủ đã rời bản đồ.',
       });

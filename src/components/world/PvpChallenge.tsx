@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useBattle } from '../../state/BattleContext';
 import { theme } from '../../theme/theme';
@@ -30,14 +31,16 @@ export function nearestChallenger(self: { x: number; y: number }, remotes: Nearb
 /** Shown on the open world and in town while another player is within {@link PVP_RANGE}. */
 export function PvpChallengeButton({ self, remotes }: { self: { x: number; y: number }; remotes: NearbyFighter[] }) {
   const battle = useBattle();
+  const insets = useSafeAreaInsets();
   const target = nearestChallenger(self, remotes);
   if (!target || battle.prep || battle.pvpOutgoing || battle.pvpIncoming || battle.battle) return null;
   return (
-    <View pointerEvents="box-none" style={styles.slot}>
+    <View pointerEvents="box-none" style={[styles.slot, { top: insets.top + 8, right: insets.right + 8 }]}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Khiêu chiến ${target.username || target.name}`}
         testID="pvp-challenge"
+        hitSlop={12}
         onPress={() => battle.sendChallenge(target.userId)}
         style={styles.challenge}
       >
@@ -65,6 +68,7 @@ export function PvpChallengePrompt() {
             <Pressable
               accessibilityRole="button"
               testID="pvp-accept"
+              hitSlop={8}
               onPress={() => battle.acceptChallenge(incoming.challengeId)}
               style={[styles.choice, styles.accept]}
             >
@@ -73,6 +77,7 @@ export function PvpChallengePrompt() {
             <Pressable
               accessibilityRole="button"
               testID="pvp-decline"
+              hitSlop={8}
               onPress={() => battle.declineChallenge(incoming.challengeId)}
               style={[styles.choice, styles.decline]}
             >
@@ -100,26 +105,32 @@ export function PvpChallengePrompt() {
 }
 
 const styles = StyleSheet.create({
-  slot: { position: 'absolute', left: 0, right: 0, bottom: 28, zIndex: 30, alignItems: 'center' },
+  slot: { position: 'absolute', zIndex: 1000020, alignItems: 'flex-end' },
   challenge: {
-    width: 156,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    minWidth: 148,
+    minHeight: 48,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
     borderRadius: 14,
     backgroundColor: theme.goldDeep,
     borderWidth: 1,
     borderColor: theme.gold,
     alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
   },
   challengeLabel: { color: theme.ink, fontWeight: '800', fontSize: 16 },
   challengeName: { color: theme.ink, fontSize: 12, fontWeight: '600' },
   bannerWrap: {
     position: 'absolute',
-    top: 72,
-    left: 0,
+    top: 0,
     right: 0,
-    zIndex: 40,
+    bottom: 0,
+    left: 0,
+    zIndex: 1000020,
     alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
     gap: 8,
   },
   banner: {
@@ -135,7 +146,7 @@ const styles = StyleSheet.create({
   },
   bannerText: { color: theme.ink, fontWeight: '700', fontSize: 15, textAlign: 'center' },
   row: { flexDirection: 'row', gap: 8 },
-  choice: { minWidth: 96, minHeight: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
+  choice: { minWidth: 112, minHeight: 48, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14, cursor: 'pointer' },
   accept: { backgroundColor: '#2f6b45' },
   decline: { backgroundColor: '#6b3a32' },
   choiceLabel: { color: theme.ink, fontWeight: '800' },

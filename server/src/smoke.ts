@@ -267,6 +267,31 @@ async function checkProximityDuel(base: string, lanToken: string, baoToken: stri
     const [opened, other] = await Promise.all([lanBattle, baoBattle]);
     if (!other.you.name) throw new Error('The opponent never entered the arena.');
     if (opened.opponent.level < 1) throw new Error('The arena hid the opponent level.');
+
+    lan.socket.emit('battle:leave');
+    bao.socket.emit('battle:leave');
+    await delay(80);
+    const invitedAgain = waitFor<{ challengeId: string }>(bao.socket, 'pvp_challenge', (payload) => Boolean(payload.challengeId));
+    lan.socket.emit('send_pvp_challenge', { toUserId: baoWho.userId });
+    const again = await invitedAgain;
+    const forcedPrep = waitFor<{ matchId: string }>(lan.socket, 'pvp_prep', (payload) => Boolean(payload.matchId));
+    const forcedPrepRight = waitFor<{ matchId: string }>(bao.socket, 'pvp_prep', (payload) => Boolean(payload.matchId));
+    bao.socket.emit('accept_pvp_challenge', { challengeId: again.challengeId });
+    const [forceMatch] = await Promise.all([forcedPrep, forcedPrepRight]);
+    let early = false;
+    const markEarly = () => {
+      early = true;
+    };
+    lan.socket.on('battle:update', markEarly);
+    lan.socket.emit('pvp_force_begin', { matchId: forceMatch.matchId });
+    await delay(250);
+    lan.socket.off('battle:update', markEarly);
+    if (early) throw new Error('One player forced the duel before both clocks finished.');
+    const forcedBattle = waitFor<{ status: string }>(lan.socket, 'battle:update', (payload) => payload.status === 'active');
+    const forcedBattleRight = waitFor<{ status: string }>(bao.socket, 'battle:update', (payload) => payload.status === 'active');
+    lan.socket.emit('pvp_force_begin', { matchId: forceMatch.matchId });
+    bao.socket.emit('pvp_force_begin', { matchId: forceMatch.matchId });
+    await Promise.all([forcedBattle, forcedBattleRight]);
   } finally {
     lan.socket.emit('battle:leave');
     bao.socket.emit('battle:leave');

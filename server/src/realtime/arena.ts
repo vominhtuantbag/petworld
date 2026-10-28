@@ -75,6 +75,11 @@ export class Arena {
       socket.on('battle:action', (payload: unknown) => {
         void this.onAction(socket, userId, payload);
       });
+      socket.on('battle:sync', () => {
+        const room = this.roomFor(userId);
+        if (!room) return;
+        socket.emit('battle:update', this.view(room, userId));
+      });
       socket.on('battle:leave', () => {
         this.closeRoomFor(userId);
         socket.emit('queue:status', { state: 'idle', position: 0 });
@@ -177,6 +182,12 @@ export class Arena {
    */
   async startDuel(leftId: string, rightId: string, pets: ReadonlyMap<string, DuelPet[]>): Promise<boolean> {
     if (leftId === rightId) return false;
+    const leftRoom = this.roomFor(leftId);
+    const rightRoom = this.roomFor(rightId);
+    if (leftRoom?.status === 'active' && rightRoom?.id === leftRoom.id) {
+      this.emitRoom(leftRoom);
+      return true;
+    }
     if (this.busy(leftId) || this.busy(rightId)) return false;
     this.leaveQueue(leftId);
     this.leaveQueue(rightId);

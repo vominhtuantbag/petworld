@@ -28,7 +28,7 @@ export function SquadSetupScreen() {
   const { s, font } = useLayout();
   const prep = battle.prep;
   const [now, setNow] = useState(() => Date.now());
-  const sent = useRef(false);
+  const [locked, setLocked] = useState(false);
   const slotsRef = useRef<(string | null)[]>([null, null, null]);
   const professionId = getCharacter(setup.player?.baseCharacterId)?.professionId;
   const basics = classBasics(professionId);
@@ -50,7 +50,7 @@ export function SquadSetupScreen() {
     });
 
   useEffect(() => {
-    sent.current = false;
+    setLocked(false);
   }, [prep?.matchId]);
 
   useEffect(() => {
@@ -60,8 +60,8 @@ export function SquadSetupScreen() {
   }, [prep]);
 
   useEffect(() => {
-    if (!prep || secondsLeft !== 0 || sent.current) return;
-    sent.current = true;
+    if (!prep || secondsLeft !== 0) return;
+    setLocked(true);
     battle.readyDuel(duelPets());
   }, [prep, secondsLeft, battle]);
 
@@ -120,8 +120,7 @@ export function SquadSetupScreen() {
             const chosenBasic = basicId || basics[0]?.id || '';
             world.equipHeroBasic(chosenBasic);
             if (prep) {
-              if (sent.current) return;
-              sent.current = true;
+              setLocked(true);
               battle.readyDuel(duelPets());
               return;
             }
@@ -133,7 +132,7 @@ export function SquadSetupScreen() {
           }}
           style={[styles.confirm, { minHeight: s(72) }]}
         >
-          <Text style={[styles.confirmLabel, { fontSize: font(16) }]}>{prep ? 'Sẵn sàng' : 'Vào trận'}</Text>
+          <Text style={[styles.confirmLabel, { fontSize: font(16) }]}>{prep ? (locked ? 'Đã sẵn sàng' : 'Sẵn sàng') : 'Vào trận'}</Text>
           <Text style={[styles.confirmHint, { fontSize: font(11) }]}>
             {prep ? `${secondsLeft}s · ${prep.opponentUsername}` : `${chosen.length}/3 thú · ${items.length} vật phẩm`}
           </Text>
@@ -298,7 +297,7 @@ const styles = StyleSheet.create({
     borderColor: theme.gold,
   },
   fleeLabel: { color: theme.ink, fontWeight: '800' },
-  top: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  top: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   slot: {
     flex: 1,
     maxWidth: 160,
@@ -315,12 +314,15 @@ const styles = StyleSheet.create({
   slotName: { color: theme.ink, fontWeight: '700', paddingHorizontal: 6 },
   confirm: {
     marginLeft: 'auto',
-    minWidth: 120,
+    minWidth: 132,
+    minHeight: 52,
     paddingHorizontal: 16,
     borderRadius: 12,
     backgroundColor: '#e25b2a',
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 5,
+    cursor: 'pointer',
   },
   confirmLabel: { color: '#1b140c', fontWeight: '800' },
   confirmHint: { color: '#1b140c' },

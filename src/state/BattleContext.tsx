@@ -5,6 +5,7 @@ import { SOCKET_URL } from '../config/env';
 import type { BattleView, CombatAction, DuelPet, QueueView } from '../net/protocol';
 import { reportSessionReplaced } from '../net/sessionKick';
 import { useAuth } from './AuthContext';
+import { holdPresence } from './presenceHold';
 
 type Connection = 'offline' | 'connecting' | 'online';
 
@@ -156,6 +157,12 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     socket.on('pvp_error', (payload: { message?: string }) => {
       setNotice(payload.message ?? 'Không khiêu chiến được.');
     });
+    socket.on('pvp_squad_ack', () => {
+      setNotice(null);
+    });
+    socket.on('pvp_battle_start', () => {
+      socket.emit('battle:sync');
+    });
 
     return () => {
       socket.close();
@@ -203,6 +210,21 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     if (!matchId) return;
     socketRef.current?.emit('pvp_squad_ready', { matchId, pets });
   }, []);
+
+  useEffect(() => {
+    if (!prep && !battle) return;
+    return holdPresence();
+  }, [prep, battle]);
+
+  useEffect(() => {
+    if (!prep) return;
+    const matchId = prep.matchId;
+    const timer = setInterval(() => {
+      if (Date.now() + 250 < prep.deadline) return;
+      socketRef.current?.emit('pvp_force_begin', { matchId });
+    }, 400);
+    return () => clearInterval(timer);
+  }, [prep]);
 
   const value = useMemo<BattleContextValue>(
     () => ({

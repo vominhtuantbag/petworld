@@ -11,10 +11,10 @@ export const DebugGrid = memo(function DebugGrid() {
   return (
     <View pointerEvents="none" style={styles.grid} testID="layout-debug-grid">
       {GRID_ROWS.map((row) => (
-        <View key={row} style={styles.row}>
+        <View key={row} pointerEvents="none" style={styles.row}>
           {GRID_COLS.map((col) => (
-            <View key={col} style={styles.cell}>
-              <Text style={styles.label} numberOfLines={1}>
+            <View key={col} pointerEvents="none" style={styles.cell}>
+              <Text pointerEvents="none" style={styles.label} numberOfLines={1}>
                 {row}
                 {col}
               </Text>

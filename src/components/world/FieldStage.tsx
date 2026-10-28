@@ -146,7 +146,7 @@ function listenKeys(keys: Set<string>) {
 }
 
 const styles = StyleSheet.create({
-  stage: { flex: 1 },
+  stage: { flex: 1, zIndex: 0 },
   hud: {
     position: 'absolute',
     top: 0,
