@@ -1,4 +1,6 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import type { ReactNode } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { createPortal } from 'react-dom';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useBattle } from '../../state/BattleContext';
@@ -6,6 +8,14 @@ import { theme } from '../../theme/theme';
 
 /** How close two avatars must stand before Khiêu chiến appears. The server allows a few extra pixels. */
 export const PVP_RANGE = 140;
+
+/** Web mounts on document.body so the map canvas cannot cover or swallow the tap. */
+function host(node: ReactNode): ReactNode {
+  if (Platform.OS === 'web' && typeof document !== 'undefined') return createPortal(node, document.body);
+  return node;
+}
+
+const webLayer = Platform.OS === 'web' ? ({ position: 'fixed' } as unknown as ViewStyle) : null;
 
 export type NearbyFighter = {
   userId: string;
@@ -34,22 +44,20 @@ export function PvpChallengeButton({ self, remotes }: { self: { x: number; y: nu
   const insets = useSafeAreaInsets();
   const target = nearestChallenger(self, remotes);
   if (!target || battle.prep || battle.pvpOutgoing || battle.pvpIncoming || battle.battle) return null;
-  return (
-    <View pointerEvents="box-none" style={[styles.slot, { top: insets.top + 8, right: insets.right + 8 }]}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Khiêu chiến ${target.username || target.name}`}
-        testID="pvp-challenge"
-        hitSlop={12}
-        onPress={() => battle.sendChallenge(target.userId)}
-        style={styles.challenge}
-      >
-        <Text style={styles.challengeLabel}>Khiêu chiến</Text>
-        <Text style={styles.challengeName} numberOfLines={1}>
-          {target.username || target.name}
-        </Text>
-      </Pressable>
-    </View>
+  return host(
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Khiêu chiến ${target.username || target.name}`}
+      testID="pvp-challenge"
+      hitSlop={16}
+      onPress={() => battle.sendChallenge(target.userId)}
+      style={[styles.challenge, webLayer, { top: insets.top + 64, right: Math.max(12, insets.right + 8) }]}
+    >
+      <Text style={styles.challengeLabel}>Khiêu chiến</Text>
+      <Text style={styles.challengeName} numberOfLines={1}>
+        {target.username || target.name}
+      </Text>
+    </Pressable>,
   );
 }
 
@@ -59,10 +67,10 @@ export function PvpChallengePrompt() {
   const incoming = battle.pvpIncoming;
   const outgoing = battle.pvpOutgoing;
   if (!incoming && !outgoing && !battle.notice) return null;
-  return (
-    <View pointerEvents="box-none" style={styles.bannerWrap}>
+  return host(
+    <View pointerEvents="none" style={[styles.bannerWrap, webLayer]}>
       {incoming ? (
-        <View testID="pvp-prompt" style={styles.banner}>
+        <View testID="pvp-prompt" pointerEvents="auto" style={styles.banner}>
           <Text style={styles.bannerText}>{incoming.fromUsername} muốn khiêu chiến</Text>
           <View style={styles.row}>
             <Pressable
@@ -87,7 +95,7 @@ export function PvpChallengePrompt() {
         </View>
       ) : null}
       {outgoing && !incoming ? (
-        <View testID="pvp-waiting" style={styles.banner}>
+        <View testID="pvp-waiting" pointerEvents="auto" style={styles.banner}>
           <Text style={styles.bannerText}>Đang chờ {outgoing.toUsername} nhận khiêu chiến</Text>
           <Pressable
             accessibilityRole="button"
@@ -99,16 +107,21 @@ export function PvpChallengePrompt() {
           </Pressable>
         </View>
       ) : null}
-      {battle.notice && !incoming ? <Text style={styles.notice}>{battle.notice}</Text> : null}
-    </View>
+      {battle.notice && !incoming ? (
+        <Text pointerEvents="auto" style={styles.notice}>
+          {battle.notice}
+        </Text>
+      ) : null}
+    </View>,
   );
 }
 
 const styles = StyleSheet.create({
-  slot: { position: 'absolute', zIndex: 1000020, alignItems: 'flex-end' },
   challenge: {
-    minWidth: 148,
-    minHeight: 48,
+    position: 'absolute',
+    zIndex: 1000020,
+    minWidth: 156,
+    minHeight: 52,
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 14,

@@ -4,7 +4,19 @@ import { acceptToken, bindSessionKick, SESSION_REPLACED_MESSAGE } from '../auth/
 import { readToken } from '../auth/tokens.js';
 import { isCombatAction, strike, type CombatAction } from '../combat/rules.js';
 import type { AccountStore, CharacterRecord, UserRecord } from '../domain.js';
+import type { RegionId } from '../catalog.js';
 import type { BattleView, DuelPet, FighterView, QueueView } from './protocol.js';
+
+export type DuelHint = {
+  username: string;
+  name: string;
+  gender: 'male' | 'female';
+  baseAvatarId: string;
+  hairColor: string;
+  outfitColor: string;
+  level: number;
+  maxHp: number;
+};
 
 const ROUND_MS = 30_000;
 const DISCONNECT_GRACE_MS = 12_000;
@@ -180,20 +192,32 @@ export class Arena {
    * Opens a duel from a proximity challenge. The queue is left untouched
    * for everyone else. Pets are the squad each side locked in.
    */
-  async startDuel(leftId: string, rightId: string, pets: ReadonlyMap<string, DuelPet[]>): Promise<boolean> {
-    if (leftId === rightId) return false;
+  async startDuel(
+    leftId: string,
+    rightId: string,
+    pets: ReadonlyMap<string, DuelPet[]>,
+    hints: ReadonlyMap<string, DuelHint> = new Map(),
+  ): Promise<boolean> {
+    if (leftId === rightId) {
+      console.warn('[arena] duel refused, both ids match');
+      return false;
+    }
     const leftRoom = this.roomFor(leftId);
     const rightRoom = this.roomFor(rightId);
     if (leftRoom?.status === 'active' && rightRoom?.id === leftRoom.id) {
       this.emitRoom(leftRoom);
       return true;
     }
-    if (this.busy(leftId) || this.busy(rightId)) return false;
+    if (leftRoom) this.destroyRoom(leftRoom);
+    if (rightRoom && rightRoom.id !== leftRoom?.id) this.destroyRoom(rightRoom);
     this.leaveQueue(leftId);
     this.leaveQueue(rightId);
-    const left = await this.fighterFromId(leftId);
-    const right = await this.fighterFromId(rightId);
-    if (!left || !right) return false;
+    const left = await this.fighterFromId(leftId, hints.get(leftId));
+    const right = await this.fighterFromId(rightId, hints.get(rightId));
+    if (!left || !right) {
+      console.warn(`[arena] duel refused, fighter missing left=${Boolean(left)} right=${Boolean(right)}`);
+      return false;
+    }
     left.pets = pets.get(leftId) ?? [];
     right.pets = pets.get(rightId) ?? [];
     this.openRoom(left, right);
@@ -253,11 +277,18 @@ export class Arena {
     }
   }
 
-  private async fighterFromId(userId: string): Promise<Fighter | null> {
+  private async fighterFromId(userId: string, hint?: DuelHint): Promise<Fighter | null> {
     const user = await this.store.findUserById(userId);
-    const character = await this.store.findCharacterByUserId(userId);
-    if (!user || !character) return null;
-    return toFighter(user, character);
+    const character = user ? await this.store.findCharacterByUserId(userId) : null;
+    if (user && character) {
+      try {
+        return toFighter(user, character);
+      } catch (error) {
+        console.warn(`[arena] character for ${userId} could not be read`, error);
+      }
+    }
+    if (!hint) return null;
+    return fighterFromHint(userId, user?.username ?? hint.username, hint);
   }
 
   private async fighterFromQueue(entry: QueuedPlayer): Promise<Fighter | null> {
@@ -454,21 +485,48 @@ export class Arena {
 }
 
 function toFighter(user: UserRecord, character: CharacterRecord): Fighter {
+  const stats = character.stats ?? { hp: 100, attack: 13, defense: 6, level: 1, wins: 0, losses: 0 };
+  const level = clampStat(stats.level, 1, 200);
   return {
     userId: user.id,
     username: user.username,
-    name: character.name,
-    gender: character.gender,
-    baseAvatarId: character.baseAvatarId,
-    hairColor: character.hairColor,
-    outfitColor: character.outfitColor,
+    name: character.name || user.username,
+    gender: character.gender === 'female' ? 'female' : 'male',
+    baseAvatarId: character.baseAvatarId || 'm-wanderer',
+    hairColor: character.hairColor || '#7a4630',
+    outfitColor: character.outfitColor || '#3e6b4d',
     startingRegion: character.startingRegion,
-    level: character.stats.level,
-    attack: character.stats.attack,
-    defense: character.stats.defense,
-    maxHp: character.stats.hp,
+    level,
+    attack: clampStat(stats.attack, 1, 9999),
+    defense: clampStat(stats.defense, 0, 9999),
+    maxHp: clampStat(stats.hp, 1, 99999),
     pets: [],
   };
+}
+
+function fighterFromHint(userId: string, username: string, hint: DuelHint): Fighter {
+  const level = clampStat(hint.level, 1, 200);
+  const name = hint.name || username || 'Khách';
+  return {
+    userId,
+    username: username || hint.username || 'Khách',
+    name,
+    gender: hint.gender === 'female' ? 'female' : 'male',
+    baseAvatarId: hint.baseAvatarId || 'm-wanderer',
+    hairColor: hint.hairColor || '#7a4630',
+    outfitColor: hint.outfitColor || '#3e6b4d',
+    startingRegion: 'forest' as RegionId,
+    level,
+    attack: 10 + level * 3,
+    defense: 4 + level * 2,
+    maxHp: clampStat(hint.maxHp, 1, 99999),
+    pets: [],
+  };
+}
+
+function clampStat(value: number, low: number, high: number): number {
+  if (!Number.isFinite(value)) return low;
+  return Math.max(low, Math.min(high, Math.round(value)));
 }
 
 function present(fighter: Fighter, room: Room): FighterView {

@@ -1,7 +1,7 @@
 import type { Server, Socket } from 'socket.io';
 
 import type { DuelPet } from './protocol.js';
-import type { Arena } from './arena.js';
+import type { Arena, DuelHint } from './arena.js';
 import type { WorldPresence } from './world.js';
 
 /** Matches the button range in `src/components/world/PvpChallenge.tsx`, plus a little slack for a step in flight. */
@@ -225,7 +225,14 @@ export class ProximityDuels {
     if (prep.starting || !this.preps.has(prep.id)) return;
     prep.starting = true;
     this.preps.delete(prep.id);
-    const opened = await this.arena.startDuel(prep.leftId, prep.rightId, prep.pets);
+    const hints = new Map<string, DuelHint>();
+    for (const id of [prep.leftId, prep.rightId]) hints.set(id, this.hintFor(id));
+    let opened = false;
+    try {
+      opened = await this.arena.startDuel(prep.leftId, prep.rightId, prep.pets, hints);
+    } catch (error) {
+      console.error(`[pvp] duel ${prep.id} threw`, error);
+    }
     if (opened) {
       this.liveSocket(prep.leftId)?.emit('pvp_battle_start', { matchId: prep.id });
       this.liveSocket(prep.rightId)?.emit('pvp_battle_start', { matchId: prep.id });
@@ -233,6 +240,23 @@ export class ProximityDuels {
     }
     console.warn(`[pvp] duel ${prep.id} did not open for ${prep.leftId} vs ${prep.rightId}`);
     this.emitBoth(prep.leftId, prep.rightId, 'pvp_error', { message: 'Không mở được trận khiêu chiến.' });
+  }
+
+  private hintFor(userId: string): DuelHint {
+    const person = this.world.profile(userId);
+    const socket = this.liveSocket(userId);
+    const stored = typeof socket?.data.username === 'string' ? socket.data.username : '';
+    const username = person?.username || stored || 'Khách';
+    return {
+      username,
+      name: person?.name || username,
+      gender: person?.gender === 'female' ? 'female' : 'male',
+      baseAvatarId: person?.baseCharacterId || 'm-wanderer',
+      hairColor: person?.hairColor || '#7a4630',
+      outfitColor: person?.outfitColor || '#3e6b4d',
+      level: person?.level || 1,
+      maxHp: person?.maxHp || Math.max(1, person?.hp || 100),
+    };
   }
 
   private emitPrep(prep: Prep, leftName: string, rightName: string) {

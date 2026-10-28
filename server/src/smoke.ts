@@ -70,6 +70,8 @@ async function main() {
     console.log('[smoke] a high-level player stayed visible, and a whisper did not clear the map');
     await checkProximityDuel(base, lan.token, bao.token, `bao_${stamp}`);
     console.log('[smoke] a nearby challenge opened a 30s duel and a far one was refused');
+    await checkDuelWithoutCharacter(base, stamp);
+    console.log('[smoke] a duel opened from map profiles when no arena character was stored');
     await checkSingleSession(base, `lan_${stamp}@example.com`, lan.token);
     console.log('[smoke] a second login kicked the previous session');
   } finally {
@@ -297,6 +299,42 @@ async function checkProximityDuel(base: string, lanToken: string, baoToken: stri
     bao.socket.emit('battle:leave');
     lan.socket.close();
     bao.socket.close();
+  }
+}
+
+/** Players who never saved an arena character still have a map avatar. That must be enough to open the room. */
+async function checkDuelWithoutCharacter(base: string, stamp: string) {
+  const lan = await register(base, `nochar_lan_${stamp}`, `nochar_lan_${stamp}@example.com`);
+  const bao = await register(base, `nochar_bao_${stamp}`, `nochar_bao_${stamp}@example.com`);
+  const left = connect(base, lan.token);
+  const right = connect(base, bao.token);
+  await Promise.all([left.ready, right.ready]);
+  try {
+    const rightSelf = waitFor<{ userId: string }>(right.socket, 'world:self', (payload) => Boolean(payload.userId));
+    left.socket.emit('player_enter_map', worldPose(40, 40, 'town:forest', 6));
+    right.socket.emit('player_enter_map', worldPose(70, 50, 'town:forest', 6));
+    const who = await rightSelf;
+    const invited = waitFor<{ challengeId: string }>(right.socket, 'pvp_challenge', (payload) => Boolean(payload.challengeId));
+    left.socket.emit('send_pvp_challenge', { toUserId: who.userId });
+    const challenge = await invited;
+    const prep = waitFor<{ matchId: string }>(left.socket, 'pvp_prep', (payload) => Boolean(payload.matchId));
+    const prepRight = waitFor<{ matchId: string }>(right.socket, 'pvp_prep', (payload) => Boolean(payload.matchId));
+    right.socket.emit('accept_pvp_challenge', { challengeId: challenge.challengeId });
+    const [match] = await Promise.all([prep, prepRight]);
+    const opened = waitFor<{ you: { name: string }; opponent: { name: string } }>(
+      left.socket,
+      'battle:update',
+      (payload) => Boolean(payload.you.name && payload.opponent.name),
+    );
+    const openedRight = waitFor<{ status: string }>(right.socket, 'battle:update', (payload) => payload.status === 'active');
+    left.socket.emit('pvp_squad_ready', { matchId: match.matchId, pets: [] });
+    right.socket.emit('pvp_squad_ready', { matchId: match.matchId, pets: [] });
+    await Promise.all([opened, openedRight]);
+  } finally {
+    left.socket.emit('battle:leave');
+    right.socket.emit('battle:leave');
+    left.socket.close();
+    right.socket.close();
   }
 }
 

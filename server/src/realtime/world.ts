@@ -54,6 +54,12 @@ export class WorldPresence {
     return { userId: person.userId, username: person.username, x: person.x, y: person.y, zoneId: person.zoneId };
   }
 
+  /** Look and level currently shown on the map. Used when the account has no arena character row. */
+  profile(userId: string): WorldAvatar | null {
+    const person = this.people.get(userId);
+    return person ? publicAvatar(person) : null;
+  }
+
   attach() {
     this.io.on('connection', (socket) => {
       console.log(`[world] handshake socket=${socket.id} user=${String(socket.data.userId ?? '?')}`);

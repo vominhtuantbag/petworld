@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BATTLE_GRID_POSITIONS, feetInView, overheadDrop } from '../components/battle/courtSlots';
+import { feetInView, overheadDrop } from '../components/battle/courtSlots';
 import { CharacterAvatar } from '../components/CharacterAvatar';
 import { portraitScaleX } from '../components/world/facing';
 import { GlowButton } from '../components/GlowButton';
@@ -47,8 +47,8 @@ export function ArenaScreen() {
   const resultTitle = draw ? 'Hòa' : youWon ? 'Chiến thắng' : 'Thất bại';
 
   const foot = (cell: string) => feetInView(cell, screen.w, screen.h, insets.left + stageBox.x, insets.top + stageBox.y);
-  const youSize = s(118);
-  const foeSize = s(84);
+  const youSize = s(132);
+  const foeSize = s(72);
 
   return (
     <View
@@ -72,8 +72,8 @@ export function ArenaScreen() {
           setStageBox((current) => (current.x === x && current.y === y ? current : { x, y }));
         }}
       >
-        <ArenaFighter fighter={snapshot.you} slot={foot(BATTLE_GRID_POSITIONS.player)} portrait={youSize} face="right" statFont={font(10)} barWidth={s(104)} testID="arena-you" />
-        <ArenaFighter fighter={snapshot.opponent} slot={foot(BATTLE_GRID_POSITIONS.enemyPlayer)} portrait={foeSize} face="left" statFont={font(10)} barWidth={s(96)} testID="arena-opponent" />
+        <ArenaFighter fighter={snapshot.opponent} slot={foot('C16')} portrait={foeSize} face="left" statFont={font(10)} barWidth={s(96)} testID="arena-opponent" />
+        <ArenaFighter fighter={snapshot.you} slot={foot('O16')} portrait={youSize} face="right" statFont={font(10)} barWidth={s(104)} testID="arena-you" />
         <View style={[styles.logCard, { borderRadius: s(12), padding: s(8), maxHeight: s(72) }]}>
           <ScrollView style={styles.logScroll} contentContainerStyle={{ gap: 4 }}>
             {snapshot.log.map((line, index) => (
