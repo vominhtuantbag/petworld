@@ -1,7 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 
 import { readPayout, settlePayout } from '../combat/rewards.js';
-import { entryDenial } from './access.js';
 
 /**
  * One Socket.io room per open-world zone. Everyone standing on that map
@@ -62,6 +61,7 @@ export class WorldPresence {
       socket.on('world:who', () => this.replyWho(socket));
       socket.on('player_move', (payload: unknown) => this.move(socket, payload));
       socket.on('map_chat', (payload: unknown) => this.chat(socket, payload));
+      // Whisper is a direct emit to two sockets. It does not join, leave, or replace the zone room.
       socket.on('whisper', (payload: unknown) => this.whisper(socket, payload));
       socket.on('battle:settle', (payload: unknown) => {
         socket.emit('battle:settled', settlePayout(readPayout(payload)));
@@ -85,13 +85,6 @@ export class WorldPresence {
     const zoneId = canonicalZone(readZone(payload) ?? '');
     if (!avatar || !zoneId) {
       console.warn(`[world] enter rejected for ${username}`, payload);
-      return;
-    }
-
-    const denial = entryDenial(avatar.level, zoneId);
-    if (denial) {
-      socket.emit('world:error', { message: denial });
-      console.warn(`[world] ${username} blocked from ${zoneId}: ${denial}`);
       return;
     }
 

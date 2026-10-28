@@ -63,6 +63,8 @@ async function main() {
     right.socket.close();
     await checkOpenWorld(base, lan.token, bao.token, `lan_${stamp}`, `bao_${stamp}`);
     console.log('[smoke] two players shared one map, moved, chatted, and left');
+    await checkWhisperKeepsRoster(base, lan.token, bao.token, `lan_${stamp}`, `bao_${stamp}`);
+    console.log('[smoke] a high-level player stayed visible, and a whisper did not clear the map');
     await checkSingleSession(base, `lan_${stamp}@example.com`, lan.token);
     console.log('[smoke] a second login kicked the previous session');
   } finally {
@@ -157,9 +159,61 @@ async function checkOpenWorld(base: string, lanToken: string, baoToken: string, 
   }
 }
 
-function worldPose(x: number, y: number) {
+/** Level 15 used to be refused on map 1, which dropped them from the zone room. */
+async function checkWhisperKeepsRoster(base: string, lanToken: string, baoToken: string, lanName: string, baoName: string) {
+  const lan = connect(base, lanToken);
+  const bao = connect(base, baoToken);
+  await Promise.all([lan.ready, bao.ready]);
+  try {
+    const lanSeesBao = waitFor<{ players: { username: string }[] }>(
+      lan.socket,
+      'sync_players',
+      (payload) => payload.players.some((player) => player.username === baoName),
+    );
+    const baoSeesLan = waitFor<{ players: { username: string }[] }>(
+      bao.socket,
+      'sync_players',
+      (payload) => payload.players.some((player) => player.username === lanName),
+    );
+    lan.socket.emit('player_enter_map', worldPose(40, 40, 'plains:m1', 1));
+    bao.socket.emit('player_enter_map', worldPose(120, 80, 'plains:m1', 15));
+    await Promise.all([lanSeesBao, baoSeesLan]);
+
+    const whispered = waitFor<{ username: string; text: string; toUsername?: string }>(
+      bao.socket,
+      'whisper',
+      (payload) => payload.username === lanName && payload.toUsername === baoName && payload.text === 'riêng',
+    );
+    let leaked = false;
+    const onChat = (payload: { text?: string }) => {
+      if (payload.text === 'riêng') leaked = true;
+    };
+    bao.socket.on('map_chat', onChat);
+    lan.socket.emit('whisper', { toUsername: baoName, text: 'riêng' });
+    await whispered;
+    await delay(300);
+    bao.socket.off('map_chat', onChat);
+    if (leaked) throw new Error('A whisper was broadcast as map chat.');
+
+    const stillThere = waitFor<{ players: { username: string }[] }>(
+      bao.socket,
+      'sync_players',
+      (payload) => payload.players.some((player) => player.username === lanName),
+    );
+    bao.socket.emit('world:who');
+    const roster = await stillThere;
+    if (!roster.players.some((player) => player.username === lanName)) {
+      throw new Error('Whisper removed the other player from the map roster.');
+    }
+  } finally {
+    lan.socket.close();
+    bao.socket.close();
+  }
+}
+
+function worldPose(x: number, y: number, zoneId = 'wild:forest:1', level = 3) {
   return {
-    zoneId: 'wild:forest:1',
+    zoneId,
     x,
     y,
     facing: 1,
@@ -168,7 +222,7 @@ function worldPose(x: number, y: number) {
     gender: 'female',
     hairColor: '#7a4630',
     outfitColor: '#3e6b4d',
-    level: 3,
+    level,
     hp: 90,
     maxHp: 100,
   };

@@ -12,6 +12,12 @@ const SEND_MS = 100;
 const MOVE_EPS = 3;
 const CATCH_UP = 480;
 const SPEECH_MS = 4000;
+/**
+ * Shared across town and wilderness. Each screen has its own hook, so a
+ * per-hook counter cannot tell that the new map already joined. A stale
+ * screen must not emit world:leave after that join.
+ */
+let presenceEpoch = 0;
 
 export type RemotePlayer = WorldAvatar & {
   drawX: number;
@@ -71,6 +77,7 @@ export function useMultiplayer(presence: PresenceInput | null) {
     const live = socket;
     if (!live || !signature) return;
     const token = ++generation.current;
+    const epoch = ++presenceEpoch;
     const zone = poseRef.current?.zoneId ?? '';
     const myName = auth.user?.username ?? poseRef.current?.name ?? '';
 
@@ -88,11 +95,18 @@ export function useMultiplayer(presence: PresenceInput | null) {
       setPlayers(next);
     };
     const onList = (payload: { players?: WorldAvatar[] } | WorldAvatar[]) => {
-      for (const avatar of readList(payload)) {
+      const roster = readList(payload);
+      if (!roster) return;
+      const seen = new Set<string>();
+      for (const avatar of roster) {
         const id = avatarId(avatar);
         if (!id || isSelf(id, avatar.username, selfIdRef.current, myName)) continue;
         if (!sameMap(zone, avatar.zoneId)) continue;
+        seen.add(id);
         remember(ghosts.current, { ...avatar, userId: id }, selfIdRef.current, true);
+      }
+      for (const id of [...ghosts.current.keys()]) {
+        if (!seen.has(id)) ghosts.current.delete(id);
       }
       publish();
     };
@@ -254,8 +268,9 @@ export function useMultiplayer(presence: PresenceInput | null) {
       live.off('whisper', onWhisper);
       live.off('world:error', onError);
       const leaving = token;
+      const leavingEpoch = epoch;
       setTimeout(() => {
-        if (generation.current !== leaving) return;
+        if (generation.current !== leaving || presenceEpoch !== leavingEpoch) return;
         live.emit('world:leave');
         ghosts.current.clear();
         setPlayers([]);
@@ -340,9 +355,10 @@ function canonicalZone(zoneId: string): string {
   return zoneId;
 }
 
-function readList(payload: { players?: WorldAvatar[] } | WorldAvatar[]): WorldAvatar[] {
+function readList(payload: { players?: WorldAvatar[] } | WorldAvatar[]): WorldAvatar[] | null {
   if (Array.isArray(payload)) return payload;
-  return Array.isArray(payload?.players) ? payload.players : [];
+  if (payload && Array.isArray(payload.players)) return payload.players;
+  return null;
 }
 
 function describePacket(payload: unknown): unknown {
