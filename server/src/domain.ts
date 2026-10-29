@@ -102,6 +102,8 @@ export interface AccountStore {
   setSession(userId: string, sessionId: string): Promise<void>;
   findCharacterByUserId(userId: string): Promise<CharacterRecord | null>;
   upsertCharacter(userId: string, input: CharacterInput): Promise<CharacterRecord>;
+  setCharacterStats(userId: string, stats: CharacterStats): Promise<void>;
+  setPasswordHash(userId: string, passwordHash: string): Promise<void>;
   recordResult(userId: string, outcome: 'win' | 'loss' | 'draw'): Promise<void>;
   findAdventure(userId: string): Promise<GameSave | null>;
   saveAdventure(userId: string, save: GameSave): Promise<{ accepted: boolean; save: GameSave }>;

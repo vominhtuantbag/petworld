@@ -40,6 +40,9 @@ const ITEM_IDS = [
   'net',
   'sword',
   'armor',
+  'mine-ticket',
+  'evo-shard',
+  'might-blade',
 ] as const;
 
 const stackSchema = z.object({
@@ -91,7 +94,7 @@ export const saveSchema = z.object({
   inventory: z.object({
     bag: z.array(stackSchema).max(64),
     storage: z.array(stackSchema).max(64),
-    weapon: z.object({ itemId: z.literal('sword'), plus: z.number().int().min(0).max(5) }).nullable(),
+    weapon: z.object({ itemId: z.enum(['sword', 'might-blade']), plus: z.number().int().min(0).max(5) }).nullable(),
     armor: z.object({ itemId: z.literal('armor'), plus: z.number().int().min(0).max(5) }).nullable(),
   }),
   roster: z.array(tamedSchema).max(200),

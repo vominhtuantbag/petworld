@@ -24,3 +24,9 @@ export function statsForRecord(wins: number, losses: number): CharacterStats {
 export function freshStats(): CharacterStats {
   return statsForRecord(0, 0);
 }
+
+/** PvP/raid body for a target adventure level. Wins are inferred from the level curve. */
+export function statsAtLevel(level: number): CharacterStats {
+  const lv = Math.max(1, Math.min(200, Math.round(level)));
+  return statsForRecord(Math.max(0, (lv - 1) * 2), 0);
+}

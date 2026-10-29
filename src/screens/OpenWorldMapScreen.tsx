@@ -181,7 +181,7 @@ export function OpenWorldMapScreen() {
         </View>
         {battle.goldenHour.active ? (
           <Text pointerEvents="none" style={styles.hour}>
-            Giờ vàng 21:00–24:00 — Hầm mỏ và Hầm ngục đã mở
+            Giờ vàng 00:00–24:00 — Hầm mỏ và Hầm ngục đã mở
           </Text>
         ) : null}
       </FieldStage>

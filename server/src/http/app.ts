@@ -14,6 +14,7 @@ import type { AccountStore } from '../domain.js';
 import { toPublicUser } from '../domain.js';
 import { TournamentBoard, type Cup } from '../tournament/board.js';
 import { coerceSaveInput, saveIssue, saveSchema } from '../saves/schema.js';
+import { seedTestAccounts, TEST_PASSWORD } from '../seed/testAccounts.js';
 
 const registerSchema = z.object({
   username: z
@@ -81,6 +82,23 @@ export function createApp(store: AccountStore, board = new TournamentBoard()) {
   app.get('/health', (_request, response) => {
     response.json({ ok: true });
   });
+
+  app.post(
+    '/api/dev/seed-test-accounts',
+    rateLimit,
+    asyncRoute(async (_request, response) => {
+      if (config.production) {
+        response.status(404).json({ error: 'Not found.' });
+        return;
+      }
+      const accounts = await seedTestAccounts(store);
+      response.json({
+        ok: true,
+        password: TEST_PASSWORD,
+        accounts,
+      });
+    }),
+  );
 
   app.post(
     '/api/auth/register',

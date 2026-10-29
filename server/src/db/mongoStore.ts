@@ -164,6 +164,16 @@ export class MongoAccountStore implements AccountStore {
     return doc ? asCharacter(doc as unknown as CharacterDoc) : null;
   }
 
+  async setCharacterStats(userId: string, stats: CharacterRecord['stats']): Promise<void> {
+    if (!mongoose.isValidObjectId(userId)) return;
+    await CharacterModel.updateOne({ userId }, { stats });
+  }
+
+  async setPasswordHash(userId: string, passwordHash: string): Promise<void> {
+    if (!mongoose.isValidObjectId(userId)) return;
+    await UserModel.updateOne({ _id: userId }, { passwordHash });
+  }
+
   async upsertCharacter(userId: string, input: CharacterInput): Promise<CharacterRecord> {
     const existing = await CharacterModel.findOne({ userId });
     if (!existing) {

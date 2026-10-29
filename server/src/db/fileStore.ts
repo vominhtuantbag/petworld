@@ -74,6 +74,20 @@ export class FileAccountStore implements AccountStore {
     return this.read((db) => db.characters.find((character) => character.userId === userId) ?? null);
   }
 
+  setCharacterStats(userId: string, stats: CharacterRecord['stats']): Promise<void> {
+    return this.update((db) => {
+      const character = db.characters.find((entry) => entry.userId === userId);
+      if (character) character.stats = { ...stats };
+    });
+  }
+
+  setPasswordHash(userId: string, passwordHash: string): Promise<void> {
+    return this.update((db) => {
+      const user = db.users.find((entry) => entry.id === userId);
+      if (user) user.passwordHash = passwordHash;
+    });
+  }
+
   upsertCharacter(userId: string, input: CharacterInput): Promise<CharacterRecord> {
     return this.update((db) => {
       const existing = db.characters.find((character) => character.userId === userId);

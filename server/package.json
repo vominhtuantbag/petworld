@@ -11,7 +11,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx src/smoke.ts"
+    "smoke": "tsx src/smoke.ts",
+    "seed:test": "tsx src/seed/testAccounts.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

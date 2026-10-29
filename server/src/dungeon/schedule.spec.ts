@@ -8,19 +8,15 @@ function ict(hour: number, minute = 0): Date {
   return new Date(Date.UTC(2026, 9, 29, hour - 7, minute, 0, 0));
 }
 
-assert.equal(goldenHourAt(ict(20, 59)).active, false);
+assert.equal(goldenHourAt(ict(0, 0)).active, true);
+assert.equal(goldenHourAt(ict(10, 0)).active, true);
+assert.equal(goldenHourAt(ict(15, 0)).active, true);
 assert.equal(goldenHourAt(ict(21, 0)).active, true);
-assert.equal(goldenHourAt(ict(22, 0)).active, true);
 assert.equal(goldenHourAt(ict(23, 59)).active, true);
-assert.equal(goldenHourAt(ict(24, 0)).active, false);
-assert.equal(goldenHourAt(ict(0, 0)).active, false);
-assert.equal(goldenHourAt(ict(10, 0)).active, false);
-assert.equal(goldenHourAt(ict(15, 0)).active, false);
-assert.equal(goldenHourAt(ict(19, 0)).active, false);
 
-const night = goldenHourAt(ict(21, 15));
-assert.equal(night.windowId, '2026-10-29-21');
-assert.equal(night.endsAt, Date.UTC(2026, 9, 29, 17, 0, 0, 0));
+const alwaysOn = goldenHourAt(ict(12, 0));
+assert.equal(alwaysOn.windowId, '2026-10-29-0');
+assert.equal(alwaysOn.endsAt, Date.UTC(2026, 9, 29, 17, 0, 0, 0));
 
 const always = raidPayout(10, () => 0);
 const never = raidPayout(10, () => 0.99);

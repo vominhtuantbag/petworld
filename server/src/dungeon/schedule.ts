@@ -4,12 +4,12 @@
  * host timezone. The tournament calendar stays on UTC.
  *
  * Each window is inclusive at the start and exclusive at the end.
- * Testing window: 21:00–24:00 (9 PM to midnight).
+ * Testing window: 00:00–24:00 (always on).
  */
 
 const ICT_OFFSET_MS = 7 * 60 * 60 * 1000;
 
-export const GOLDEN_WINDOWS = [{ startHour: 21, endHour: 24 }] as const;
+export const GOLDEN_WINDOWS = [{ startHour: 0, endHour: 24 }] as const;
 
 export const GOLDEN_WINDOW_LABEL = GOLDEN_WINDOWS.map(
   (entry) => `${padHour(entry.startHour)}:00–${padHour(entry.endHour)}:00`,
