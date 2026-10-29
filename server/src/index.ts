@@ -9,6 +9,7 @@ import { connectMongo, MongoAccountStore } from './db/mongoStore.js';
 import type { AccountStore } from './domain.js';
 import { createApp } from './http/app.js';
 import { startGoldenHour } from './dungeon/clock.js';
+import { ensureTestAccounts } from './seed/testAccounts.js';
 import { Arena } from './realtime/arena.js';
 import { ProximityDuels } from './realtime/pvp.js';
 import { DungeonRaids } from './realtime/raid.js';
@@ -27,6 +28,7 @@ import { startTournamentClock } from './tournament/dispatcher.js';
 
 export async function startServer(port = config.port) {
   const store = await openStore();
+  await seedMissingTestAccounts(store);
   const board = new TournamentBoard();
   const app = createApp(store, board);
   const httpServer = createServer(app);
@@ -72,6 +74,20 @@ export async function startServer(port = config.port) {
       });
     },
   };
+}
+
+async function seedMissingTestAccounts(store: AccountStore): Promise<void> {
+  try {
+    const accounts = await ensureTestAccounts(store);
+    const created = accounts.filter((account) => account.created);
+    if (created.length === 0) {
+      console.log('[Game Thư Giãn] test accounts already present');
+      return;
+    }
+    console.log(`[Game Thư Giãn] seeded ${created.length} test account(s): ${created.map((account) => account.email).join(', ')}`);
+  } catch (error: unknown) {
+    console.error('[Game Thư Giãn] test account seed failed', error);
+  }
 }
 
 async function openStore(): Promise<AccountStore> {

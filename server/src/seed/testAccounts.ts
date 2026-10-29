@@ -66,13 +66,27 @@ export type SeededAccount = {
   tickets: number;
 };
 
-export async function seedTestAccounts(store: AccountStore): Promise<SeededAccount[]> {
+export async function seedTestAccounts(
+  store: AccountStore,
+  options: { onlyMissing?: boolean } = {},
+): Promise<SeededAccount[]> {
   const passwordHash = await hashPassword(TEST_PASSWORD);
   const stats = statsAtLevel(TEST_LEVEL);
   const results: SeededAccount[] = [];
 
   for (const spec of TEST_ACCOUNTS) {
     const existing = await store.findUserByEmail(spec.email);
+    if (existing && options.onlyMissing) {
+      results.push({
+        username: spec.username,
+        email: spec.email,
+        created: false,
+        level: TEST_LEVEL,
+        tickets: TEST_TICKETS,
+      });
+      continue;
+    }
+
     let created = false;
     let user = existing;
     if (!user) {
@@ -112,6 +126,11 @@ export async function seedTestAccounts(store: AccountStore): Promise<SeededAccou
   }
 
   return results;
+}
+
+/** Create the three test logins if they are missing. Existing rows are left alone. */
+export async function ensureTestAccounts(store: AccountStore): Promise<SeededAccount[]> {
+  return seedTestAccounts(store, { onlyMissing: true });
 }
 
 export async function openSeedStore(): Promise<AccountStore> {
