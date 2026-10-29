@@ -497,6 +497,7 @@ export function lootTable(level: number): LootWeight[] {
     { weight: 10, kind: 'item', itemId: 'berry' },
     { weight: 6, kind: 'item', itemId: 'net' },
     { weight: 8, kind: 'item', itemId: 'stamina-potion' },
+    { weight: 4, kind: 'item', itemId: 'mine-ticket' },
   ];
   if (level >= 2) table.push({ weight: 4, kind: 'item', itemId: 'town-scroll' });
   if (level >= 4) table.push({ weight: 8, kind: 'item', itemId: 'mana-potion' });

@@ -540,6 +540,7 @@ export function battleRewards(state: BattleState, rng: () => number = Math.rando
   const drops: BattleDrop[] = [{ itemId: first, qty: 1 }];
   const rest = pool.filter((itemId) => itemId !== first);
   if (rest.length > 0 && rng() < 0.4) drops.push({ itemId: rest[rollIndex(rng, rest.length)], qty: 1 });
+  if (rng() < 0.08) drops.push({ itemId: 'mine-ticket', qty: 1 });
   return { victory: true, exp, gold: Math.max(1, defeated.gold), drops, pets };
 }
 

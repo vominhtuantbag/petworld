@@ -24,6 +24,8 @@ type Props = {
   /** 1 keeps the original framing. Town and the open world pass a smaller value on mobile. */
   zoom?: number;
   remotes?: FieldRemote[];
+  /** Golden hour. Wilderness gains the mine and raid gates for this step. */
+  dungeonOpen?: boolean;
   children?: ReactNode;
 };
 
@@ -31,7 +33,7 @@ type Props = {
  * Shared loop for the town and the wilderness. `paused` freezes the player
  * while a shop is open; monsters still advance so the world does not nap.
  */
-export function FieldStage({ field, onField, onEvent, canTake, paused, playerLevel = 1, stamina, testID, player, playerFacesRight = true, zoom = 1, remotes, children }: Props) {
+export function FieldStage({ field, onField, onEvent, canTake, paused, playerLevel = 1, stamina, testID, player, playerFacesRight = true, zoom = 1, remotes, dungeonOpen = false, children }: Props) {
   const insets = useSafeAreaInsets();
   const { s, height } = useLayout();
   const pad = Math.round(Math.min(height * 0.34, Math.max(96, s(118))));
@@ -51,6 +53,7 @@ export function FieldStage({ field, onField, onEvent, canTake, paused, playerLev
   const pausedRef = useRef(paused);
   const levelRef = useRef(playerLevel);
   const staminaRef = useRef(stamina ?? Number.POSITIVE_INFINITY);
+  const dungeonRef = useRef(dungeonOpen);
   const marchClock = useRef(0);
   const marched = useRef(0);
   onEventRef.current = onEvent;
@@ -59,12 +62,13 @@ export function FieldStage({ field, onField, onEvent, canTake, paused, playerLev
   pausedRef.current = paused;
   levelRef.current = playerLevel;
   staminaRef.current = stamina ?? Number.POSITIVE_INFINITY;
+  dungeonRef.current = dungeonOpen;
 
   useEffect(() => listenKeys(keys.current), []);
 
   useGameLoop(true, (dt) => {
     const axes = pausedRef.current ? { x: 0, y: 0 } : combine(stick.current, keys.current);
-    const stepped = stepField(sim.current, axes, dt, canTakeRef.current, levelRef.current, staminaRef.current);
+    const stepped = stepField(sim.current, axes, dt, canTakeRef.current, levelRef.current, staminaRef.current, dungeonRef.current);
     sim.current = stepped.state;
     onFieldRef.current(stepped.state);
     for (const event of stepped.events) {
@@ -93,6 +97,7 @@ export function FieldStage({ field, onField, onEvent, canTake, paused, playerLev
         remotes={remotes}
         onSensor={(sensor) => {
           if (pausedRef.current) return;
+          if (sensor.dungeon) onEventRef.current({ type: 'dungeon', dungeon: sensor.dungeon });
           if (sensor.service) onEventRef.current({ type: 'service', service: sensor.service });
           if (sensor.toZone) armPortal(sensor);
         }}

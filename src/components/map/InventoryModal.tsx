@@ -86,6 +86,9 @@ function shortName(itemId: ItemId): string {
   if (itemId === 'net') return 'Lưới';
   if (itemId === 'sword') return 'Kiếm';
   if (itemId === 'armor') return 'Giáp';
+  if (itemId === 'mine-ticket') return 'Vé';
+  if (itemId === 'evo-shard') return 'Mảnh';
+  if (itemId === 'might-blade') return 'Sức';
   return 'Bánh';
 }
 

@@ -110,13 +110,21 @@ function SmithRows() {
       {world.bag.some((stack) => stack.itemId === 'armor') ? (
         <Row title="Giáp trong túi" detail="Trang bị để cộng thủ." action="Đeo" onPress={() => world.equipFromBag('armor')} />
       ) : null}
+      {world.bag.some((stack) => stack.itemId === 'might-blade') ? (
+        <Row
+          title="Kiếm sức mạnh trong túi"
+          detail={world.weapon ? 'Ô vũ khí đang có đồ.' : 'Vũ khí hầm ngục. Tấn công cao hơn kiếm thường.'}
+          action="Đeo"
+          onPress={() => world.equipFromBag('might-blade')}
+        />
+      ) : null}
       {world.weapon ? (
         <Row
-          title={`Kiếm +${world.weapon.plus}`}
+          title={`${ITEMS[world.weapon.itemId].nameVi} +${world.weapon.plus}`}
           detail={
             world.weapon.plus >= UPGRADE_CAP
-              ? `Tấn công +${weaponAttack(world.weapon.plus)}.`
-              : `Tấn công +${weaponAttack(world.weapon.plus)}. Nâng cấp ${upgradeCost(world.weapon.plus)} vàng.`
+              ? `Tấn công +${weaponAttack(world.weapon.plus, world.weapon.itemId === 'might-blade' ? 'might-blade' : 'sword')}.`
+              : `Tấn công +${weaponAttack(world.weapon.plus, world.weapon.itemId === 'might-blade' ? 'might-blade' : 'sword')}. Nâng cấp ${upgradeCost(world.weapon.plus)} vàng.`
           }
           action="Nâng"
           onPress={() => world.upgrade('weapon')}

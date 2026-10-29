@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { io, type Socket } from 'socket.io-client';
 
 import { SOCKET_URL } from '../config/env';
-import type { BattleView, DuelPet, QueueView } from '../net/protocol';
+import type { BattleView, DuelPet, GoldenHourView, QueueView, RaidBattleView, RaidJoin, RaidLobbyView } from '../net/protocol';
 import { reportSessionReplaced } from '../net/sessionKick';
 import { useAuth } from './AuthContext';
 import { holdPresence } from './presenceHold';
@@ -45,9 +45,18 @@ type BattleContextValue = {
   acceptChallenge: (challengeId: string) => void;
   declineChallenge: (challengeId: string) => void;
   readyDuel: (pets: DuelPet[]) => void;
+  goldenHour: GoldenHourView;
+  raidLobby: RaidLobbyView | null;
+  raid: RaidBattleView | null;
+  joinRaid: (body: RaidJoin) => void;
+  readyRaid: () => void;
+  leaveRaid: () => void;
+  sendRaidAction: (action: 'attack' | 'skill', targetId: string, skill?: 0 | 1) => void;
 };
 
 const BattleContext = createContext<BattleContextValue | null>(null);
+
+const IDLE_HOUR: GoldenHourView = { active: false, windowId: null, endsAt: null, message: null };
 
 /**
  * One socket for the signed-in player. Socket.io retries the connection on
@@ -65,6 +74,9 @@ export function BattleProvider({ children }: { children: ReactNode }) {
   const [pvpIncoming, setPvpIncoming] = useState<PvpInvite | null>(null);
   const [pvpOutgoing, setPvpOutgoing] = useState<PvpOutgoing | null>(null);
   const [prep, setPrep] = useState<PvpPrep | null>(null);
+  const [goldenHour, setGoldenHour] = useState<GoldenHourView>(IDLE_HOUR);
+  const [raidLobby, setRaidLobby] = useState<RaidLobbyView | null>(null);
+  const [raid, setRaid] = useState<RaidBattleView | null>(null);
   const prepRef = useRef<PvpPrep | null>(null);
   prepRef.current = prep;
 
@@ -79,6 +91,9 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       setPvpIncoming(null);
       setPvpOutgoing(null);
       setPrep(null);
+      setGoldenHour(IDLE_HOUR);
+      setRaidLobby(null);
+      setRaid(null);
       return;
     }
 
@@ -163,6 +178,42 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     socket.on('pvp_battle_start', () => {
       socket.emit('battle:sync');
     });
+    socket.on('dungeon:hour', (payload: GoldenHourView) => {
+      if (!payload || typeof payload.active !== 'boolean') return;
+      setGoldenHour({
+        active: payload.active,
+        windowId: payload.windowId ?? null,
+        endsAt: payload.endsAt ?? null,
+        message: payload.active ? payload.message ?? null : null,
+      });
+    });
+    socket.on('dungeon:broadcast', (payload: { message?: string; windowId?: string; endsAt?: number }) => {
+      if (!payload?.windowId) return;
+      setGoldenHour({
+        active: true,
+        windowId: payload.windowId,
+        endsAt: payload.endsAt ?? null,
+        message: payload.message ?? null,
+      });
+    });
+    socket.on('raid:lobby', (next: RaidLobbyView) => {
+      if (!next?.lobbyId || !Array.isArray(next.slots)) return;
+      setRaidLobby(next);
+      setNotice(null);
+    });
+    socket.on('raid:update', (next: RaidBattleView) => {
+      if (!next?.roomId) return;
+      setRaid(next);
+      setRaidLobby(null);
+      setNotice(null);
+    });
+    socket.on('raid:evict', (payload: { message?: string }) => {
+      setRaidLobby(null);
+      setNotice(payload?.message ?? 'Bạn bị đưa về bản đồ.');
+    });
+    socket.on('raid:error', (payload: { message?: string }) => {
+      setNotice(payload?.message ?? 'Không vào được hầm ngục.');
+    });
 
     return () => {
       socket.close();
@@ -205,6 +256,25 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     setPvpOutgoing(null);
   }, []);
 
+  const joinRaid = useCallback((body: RaidJoin) => {
+    setNotice(null);
+    socketRef.current?.emit('raid:join', body);
+  }, []);
+
+  const readyRaid = useCallback(() => {
+    socketRef.current?.emit('raid:ready');
+  }, []);
+
+  const leaveRaid = useCallback(() => {
+    socketRef.current?.emit('raid:leave');
+    setRaid(null);
+    setRaidLobby(null);
+  }, []);
+
+  const sendRaidAction = useCallback((action: 'attack' | 'skill', targetId: string, skill?: 0 | 1) => {
+    socketRef.current?.emit('raid:action', { action, targetId, skill: skill ?? 0 });
+  }, []);
+
   const readyDuel = useCallback((pets: DuelPet[]) => {
     const matchId = prepRef.current?.matchId;
     if (!matchId) return;
@@ -212,9 +282,9 @@ export function BattleProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!prep && !battle) return;
+    if (!prep && !battle && !raid && !raidLobby) return;
     return holdPresence();
-  }, [prep, battle]);
+  }, [prep, battle, raid, raidLobby]);
 
   useEffect(() => {
     if (!prep) return;
@@ -244,6 +314,13 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       acceptChallenge,
       declineChallenge,
       readyDuel,
+      goldenHour,
+      raidLobby,
+      raid,
+      joinRaid,
+      readyRaid,
+      leaveRaid,
+      sendRaidAction,
     }),
     [
       connection,
@@ -262,6 +339,13 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       acceptChallenge,
       declineChallenge,
       readyDuel,
+      goldenHour,
+      raidLobby,
+      raid,
+      joinRaid,
+      readyRaid,
+      leaveRaid,
+      sendRaidAction,
     ],
   );
 

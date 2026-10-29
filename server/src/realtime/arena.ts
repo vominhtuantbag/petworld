@@ -207,6 +207,13 @@ export class Arena {
     return this.roomFor(userId)?.status === 'active';
   }
 
+  /** Extra reason to refuse the matchmaking queue, such as a dungeon raid. */
+  blockQueue(check: (userId: string) => boolean) {
+    this.queueBlocked = check;
+  }
+
+  private queueBlocked: (userId: string) => boolean = () => false;
+
   /**
    * Opens a duel from a proximity challenge. The queue is left untouched
    * for everyone else. Pets are the squad each side locked in.
@@ -259,6 +266,10 @@ export class Arena {
       this.closeRoomFor(user.id);
     }
 
+    if (this.queueBlocked(user.id)) {
+      socket.emit('battle:error', { message: 'Bạn đang trong hầm ngục.' });
+      return;
+    }
     const character = await this.store.findCharacterByUserId(user.id);
     if (!character) {
       socket.emit('battle:error', { message: 'Hãy tạo nhân vật trước khi tìm trận.' });

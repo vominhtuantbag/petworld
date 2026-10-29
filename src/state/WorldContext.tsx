@@ -10,6 +10,7 @@ import type { RegionId } from '../types/game';
 import { useSetup } from './SetupContext';
 import { entryBlock, isSpecialRegion, LOCKED_LAND, parseSector, parseTier, resolveZoneId, specialRegionOpen } from '../world/atlas';
 import { createField, fieldNeedsRebuild, monsterStats, nextRegion, townZoneId } from '../world/catalog';
+import { mineEncounter, withoutDungeonGates } from '../world/dungeons';
 import { speciesById } from '../world/monsters';
 import { grantFleePeace, rejectPortal } from '../world/sim';
 import { ADVENTURE_LEVEL_CAP, expForNextLevel, MARCH_REGEN_PER_SEC, MARCH_STAMINA_PER_PX } from '../world/progression';
@@ -29,6 +30,7 @@ import {
   upgradeCost,
   weaponAttack,
 } from '../world/items';
+import type { RaidRewardView } from '../net/protocol';
 import type { BattleResult, TamedMonster } from '../world/combat';
 import { useWorldPersistence } from './save/useWorldPersistence';
 import {
@@ -98,7 +100,7 @@ type WorldContextValue = WorldState & {
   fastTravel: (regionId: RegionId) => void;
   buy: (itemId: ItemId) => void;
   upgrade: (slot: 'weapon' | 'armor') => void;
-  equipFromBag: (itemId: 'sword' | 'armor') => void;
+  equipFromBag: (itemId: 'sword' | 'armor' | 'might-blade') => void;
   useBagItem: (itemId: ItemId) => void;
   claimQuest: (id: string) => void;
   touchQuests: () => void;
@@ -114,6 +116,9 @@ type WorldContextValue = WorldState & {
   cancelSquad: () => void;
   returnToSquad: (patch: { vitals: Vitals; bag: Stack[]; pets: { id: string; hp: number; mp: number }[] }) => void;
   beginEncounter: (monster: Encounter) => void;
+  approachMine: () => void;
+  grantRaidReward: (reward: RaidRewardView) => void;
+  say: (notice: string) => void;
   openDuelSquad: () => void;
   leaveDuelPrep: () => void;
   resolveBattle: (result: BattleResult) => void;
@@ -184,7 +189,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const saveField = useCallback((field: FieldState) => {
-    setState((current) => ({ ...current, fields: { ...current.fields, [field.zoneId]: field } }));
+    const clean = withoutDungeonGates(field);
+    setState((current) => ({ ...current, fields: { ...current.fields, [clean.zoneId]: clean } }));
   }, []);
 
   const takeField = useCallback((zoneId: string) => {
@@ -306,10 +312,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const equipFromBag = useCallback((itemId: 'sword' | 'armor') => {
+  const equipFromBag = useCallback((itemId: 'sword' | 'armor' | 'might-blade') => {
     setState((current) => {
-      if ((itemId === 'sword' && current.weapon) || (itemId === 'armor' && current.armor)) {
-        return { ...current, notice: 'Món này đang được trang bị.' };
+      if (itemId === 'armor' && current.armor) return { ...current, notice: 'Món này đang được trang bị.' };
+      if ((itemId === 'sword' || itemId === 'might-blade') && current.weapon) {
+        return { ...current, notice: 'Ô vũ khí đang có đồ.' };
       }
       const bag = removeOne(current.bag, itemId);
       if (!bag) return { ...current, notice: 'Không có trong túi.' };
@@ -317,7 +324,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       return {
         ...current,
         bag,
-        weapon: itemId === 'sword' ? gear : current.weapon,
+        weapon: itemId === 'armor' ? current.weapon : gear,
         armor: itemId === 'armor' ? gear : current.armor,
         notice: `Đã trang bị ${ITEMS[itemId].nameVi}.`,
       };
@@ -346,6 +353,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     setState((current) => {
       const quests = readQuests(current.quests);
       if (itemId === 'net') return { ...current, quests, notice: 'Lưới dùng trong trận để thu phục quái.' };
+      if (itemId === 'mine-ticket') return { ...current, quests, notice: 'Vé vào Hầm mỏ. Đến cửa hầm trong giờ vàng.' };
+      if (itemId === 'evo-shard') return { ...current, quests, notice: 'Mảnh tiến hóa thú. Giữ trong túi.' };
+      if (itemId === 'might-blade') {
+        if (current.weapon) return { ...current, quests, notice: 'Ô vũ khí đang có đồ. Kiếm sức mạnh nằm trong túi.' };
+        const bag = removeOne(current.bag, itemId);
+        if (!bag) return { ...current, quests, notice: 'Không còn trong túi.' };
+        return { ...current, quests, bag, weapon: { itemId: 'might-blade', plus: 0 }, notice: 'Đã trang bị Kiếm sức mạnh.' };
+      }
       if (itemId === 'town-scroll') {
         if (current.scene === 'town') return { ...current, quests, notice: 'Bạn đang ở thị trấn.' };
         const bag = removeOne(current.bag, itemId);
@@ -461,6 +476,42 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     return accepted;
   }, []);
 
+  const approachMine = useCallback(() => {
+    setState((current) => {
+      if (current.encounter?.mine && (current.scene === 'squad' || current.scene === 'encounter')) return current;
+      if (current.scene !== 'wilds') return current;
+      const ticket = current.bag.some((stack) => stack.itemId === 'mine-ticket' && stack.qty > 0);
+      if (!ticket) return { ...current, notice: 'Cần vé Hầm mỏ. Vé rơi ngẫu nhiên khi đi săn.' };
+      return {
+        ...current,
+        scene: 'squad',
+        encounter: mineEncounter(current.adventureLevel),
+        squad: null,
+        notice: 'Hầm mỏ. Một quái mạnh hơn quái ngoài map.',
+      };
+    });
+  }, []);
+
+  const grantRaidReward = useCallback((reward: RaidRewardView) => {
+    setState((current) => {
+      const progressed = applyExp(current, reward.exp, professionRef.current);
+      const leveled = progressed.adventureLevel > current.adventureLevel;
+      let bag = current.bag;
+      const gained: string[] = [];
+      for (const drop of reward.drops) {
+        if (!(drop.itemId in ITEMS)) continue;
+        const next = addStack(bag, drop.itemId as ItemId, Math.max(1, drop.qty));
+        if (!next) continue;
+        bag = next;
+        gained.push(ITEMS[drop.itemId as ItemId].nameVi);
+      }
+      const notice = [leveled ? `Cấp phiêu lưu ${progressed.adventureLevel}.` : '', `Hầm ngục +${reward.exp} kinh nghiệm.`, gained.join(', ')]
+        .filter(Boolean)
+        .join(' ');
+      return { ...progressed, bag, notice };
+    });
+  }, []);
+
   const beginEncounter = useCallback((monster: Encounter) => {
     setState((current) => ({
       ...current,
@@ -518,10 +569,17 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   const confirmSquad = useCallback((allyIds: string[], itemIds: ItemId[], basicId: string) => {
     setState((current) => {
+      let bag = current.bag;
+      if (current.encounter?.mine) {
+        const next = removeOne(bag, 'mine-ticket');
+        if (!next) return { ...current, notice: 'Cần vé Hầm mỏ.' };
+        bag = next;
+      }
       const living = new Set(current.tamed.filter((monster) => monster.hp > 0).map((monster) => monster.id));
       const ready = allyIds.filter((id) => living.has(id));
       return {
         ...current,
+        bag,
         scene: 'encounter',
         squad: { allyIds: ready.slice(0, 3), itemIds: itemIds.slice(0, 3), basicId },
         notice: ready.length < allyIds.length ? 'Thú hết máu không thể ra trận.' : current.notice,
@@ -688,7 +746,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<WorldContextValue>(() => {
-    const attack = state.baseAttack + (state.weapon ? weaponAttack(state.weapon.plus) : 0);
+    const weaponKind = state.weapon?.itemId === 'might-blade' ? 'might-blade' : 'sword';
+    const attack = state.baseAttack + (state.weapon ? weaponAttack(state.weapon.plus, weaponKind) : 0);
     const defense = state.baseDefense + (state.armor ? armorDefense(state.armor.plus) : 0);
     return {
       ...state,
@@ -709,6 +768,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       rest,
       collect,
       beginEncounter,
+      approachMine,
+      grantRaidReward,
+      say,
       openDuelSquad,
       leaveDuelPrep,
       confirmSquad,
@@ -744,6 +806,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     rest,
     collect,
     beginEncounter,
+    approachMine,
+    grantRaidReward,
+    say,
     openDuelSquad,
     leaveDuelPrep,
     confirmSquad,
@@ -904,8 +969,8 @@ function rememberSpecies(list: string[], id: string): string[] {
 function moveStack(current: WorldState, from: 'bag' | 'storage', to: 'bag' | 'storage', itemId: ItemId): WorldState {
   const source = removeOne(current[from], itemId);
   if (!source) return { ...current, notice: 'Không có món này.' };
-  if ((itemId === 'sword' || itemId === 'armor') && from === 'bag') {
-    const equipped = itemId === 'sword' ? current.weapon?.itemId : current.armor?.itemId;
+  if ((itemId === 'sword' || itemId === 'might-blade' || itemId === 'armor') && from === 'bag') {
+    const equipped = itemId === 'armor' ? current.armor?.itemId : current.weapon?.itemId;
     if (equipped === itemId) return { ...current, notice: 'Hãy tháo trang bị trước khi cất.' };
   }
   const dest = addStack(current[to], itemId);

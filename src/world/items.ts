@@ -114,6 +114,30 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     tint: '#8ea0b5',
     blurb: 'Giáp nhẹ. Thợ rèn nâng cấp được.',
   },
+  'mine-ticket': {
+    id: 'mine-ticket',
+    nameVi: 'Vé hầm mỏ',
+    price: 0,
+    stack: true,
+    tint: '#c47a3a',
+    blurb: 'Vé vào Hầm mỏ. Rơi ngẫu nhiên khi đi săn. Dùng trong giờ vàng.',
+  },
+  'evo-shard': {
+    id: 'evo-shard',
+    nameVi: 'Mảnh tiến hóa',
+    price: 0,
+    stack: true,
+    tint: '#7d5cff',
+    blurb: 'Nguyên liệu tiến hóa thú. Phần thưởng hầm ngục.',
+  },
+  'might-blade': {
+    id: 'might-blade',
+    nameVi: 'Kiếm sức mạnh',
+    price: 0,
+    stack: true,
+    tint: '#e4c27a',
+    blurb: 'Vũ khí sức mạnh từ hầm ngục. Tấn công cao hơn kiếm thường.',
+  },
 };
 
 /** Bag and storage each hold this many stacks. The map inventory draws every cell. */
@@ -126,8 +150,9 @@ export const UPGRADE_CAP = 5;
 export const STORE_STOCK: ItemId[] = ['hp-potion', 'mana-potion', 'stamina-potion', 'ration', 'antidote', 'town-scroll', 'berry', 'mana-fruit', 'hearty-fruit', 'net'];
 export const SMITH_STOCK: ItemId[] = ['sword', 'armor'];
 
-export function weaponAttack(plus: number): number {
-  return 4 + plus * 2;
+export function weaponAttack(plus: number, itemId: 'sword' | 'might-blade' = 'sword'): number {
+  const base = itemId === 'might-blade' ? 12 : 4;
+  return base + plus * 2;
 }
 
 export function armorDefense(plus: number): number {

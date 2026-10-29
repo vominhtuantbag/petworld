@@ -8,8 +8,10 @@ import { FileAccountStore } from './db/fileStore.js';
 import { connectMongo, MongoAccountStore } from './db/mongoStore.js';
 import type { AccountStore } from './domain.js';
 import { createApp } from './http/app.js';
+import { startGoldenHour } from './dungeon/clock.js';
 import { Arena } from './realtime/arena.js';
 import { ProximityDuels } from './realtime/pvp.js';
+import { DungeonRaids } from './realtime/raid.js';
 import { WorldPresence } from './realtime/world.js';
 import { TournamentBoard } from './tournament/board.js';
 import { startTournamentClock } from './tournament/dispatcher.js';
@@ -37,7 +39,11 @@ export async function startServer(port = config.port) {
   arena.attach();
   const world = new WorldPresence(io);
   world.attach();
-  new ProximityDuels(io, world, arena).attach();
+  const raids = new DungeonRaids(io, world, arena);
+  raids.attach();
+  arena.blockQueue((userId) => raids.engaged(userId));
+  new ProximityDuels(io, world, arena, (userId) => raids.engaged(userId)).attach();
+  const stopHour = startGoldenHour(io);
   const stopClock = startTournamentClock(board, io);
 
   await new Promise<void>((resolve, reject) => {
@@ -56,6 +62,7 @@ export async function startServer(port = config.port) {
     httpServer,
     io,
     async close() {
+      stopHour();
       stopClock();
       await io.close();
       if (!httpServer.listening) return;

@@ -80,4 +80,78 @@ export type QueueView = {
   position: number;
 };
 
+/** Arrival slot in a five-person raid lobby. `index` 0 is the first player through the gate. */
+export type RaidSlotView = {
+  index: number;
+  userId: string;
+  username: string;
+  name: string;
+  ready: boolean;
+  level: number;
+  baseAvatarId: string;
+  hairColor: string;
+  outfitColor: string;
+};
+
+export type RaidLobbyView = {
+  lobbyId: string;
+  zoneId: string;
+  deadline: number;
+  youIndex: number;
+  slots: (RaidSlotView | null)[];
+};
+
+export type RaidJoin = {
+  zoneId: string;
+  name: string;
+  gender: Gender;
+  baseAvatarId: string;
+  hairColor: string;
+  outfitColor: string;
+  level: number;
+  attack: number;
+  defense: number;
+  maxHp: number;
+};
+
+export type RaidUnitView = {
+  id: string;
+  name: string;
+  kind: 'hero' | 'monster' | 'boss';
+  slot: number;
+  hp: number;
+  maxHp: number;
+  mp: number;
+  maxMp: number;
+  attack: number;
+  defense: number;
+  side: 'party' | 'foe';
+  ownerId: string | null;
+  tint: string;
+  baseAvatarId?: string;
+  hairColor?: string;
+  outfitColor?: string;
+};
+
+export type RaidRewardView = {
+  exp: number;
+  drops: { itemId: string; qty: number }[];
+};
+
+export type RaidBattleView = {
+  roomId: string;
+  round: number;
+  deadline: number;
+  status: 'active' | 'finished';
+  victory: boolean;
+  log: string[];
+  turnId: string;
+  queue: string[];
+  units: RaidUnitView[];
+  skills: DuelSkillView[];
+  yourTurn: boolean;
+  /** Present on a win. The same object for every fighter. No leader bonus. */
+  rewards: RaidRewardView | null;
+};
+
 export type { CombatAction };

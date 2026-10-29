@@ -511,7 +511,7 @@ function parseInventory(value: unknown): GameSave['inventory'] {
   return {
     bag: parseStacks(row.bag),
     storage: parseStacks(row.storage),
-    weapon: parseGear(row.weapon, 'sword'),
+    weapon: parseWeapon(row.weapon),
     armor: parseGear(row.armor, 'armor'),
   };
 }
@@ -528,6 +528,11 @@ function parseStacks(value: unknown): Stack[] {
     merged.set(itemId, (merged.get(itemId) ?? 0) + qty);
   }
   return order.slice(0, BAG_SLOTS).map((itemId) => ({ itemId, qty: Math.min(999, merged.get(itemId) ?? 1) }));
+}
+
+function parseWeapon(value: unknown): Gear | null {
+  if (!isRecord(value) || (value.itemId !== 'sword' && value.itemId !== 'might-blade')) return null;
+  return { itemId: value.itemId, plus: int(value.plus, 0, UPGRADE_CAP, 0) };
 }
 
 function parseGear(value: unknown, slot: 'sword' | 'armor'): Gear | null {

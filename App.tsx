@@ -11,6 +11,8 @@ import { SetupFlow } from './src/game/SetupFlow';
 import { getRegion } from './src/data/regions';
 import type { ServerCharacter } from './src/net/protocol';
 import { ArenaScreen } from './src/screens/ArenaScreen';
+import { RaidLobbyScreen } from './src/screens/RaidLobbyScreen';
+import { RaidScreen } from './src/screens/RaidScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { BattleScreen } from './src/screens/BattleScreen';
 import { SquadSetupScreen } from './src/screens/SquadSetupScreen';
@@ -62,6 +64,7 @@ function GameRoot() {
   const world = useWorld();
   const chrome = useImmersiveChrome();
   useSavedCharacter();
+  useGoldenAnnounce();
   useEffect(() => {
     if (battle.prep) world.openDuelSquad();
   }, [battle.prep, world]);
@@ -72,6 +75,7 @@ function GameRoot() {
   let screen: ReactNode = <SetupFlow />;
   if (!auth.ready) screen = <View style={styles.fill} />;
   else if (!auth.token) screen = <AuthScreen />;
+  else if (battle.raid) screen = <RaidScreen />;
   else if (battle.battle) screen = <ArenaScreen />;
   else if (setup.step === 'gameplay' && setup.player) {
     screen = world.ready ? <FieldRoot /> : <View style={styles.fill} />;
@@ -80,7 +84,7 @@ function GameRoot() {
   return (
     <View style={styles.root} {...chrome.panHandlers}>
       {screen}
-      {battle.battle || world.scene === 'encounter' ? null : <DebugGrid />}
+      {battle.battle || battle.raid || world.scene === 'encounter' ? null : <DebugGrid />}
       {chrome.bar}
       <RotateToLandscape />
     </View>
@@ -92,7 +96,8 @@ function FieldRoot() {
   const battle = useBattle();
 
   let body: ReactNode = <TownScreen />;
-  if (world.scene === 'wilds') body = <OpenWorldMapScreen />;
+  if (battle.raidLobby) body = <RaidLobbyScreen />;
+  else if (world.scene === 'wilds') body = <OpenWorldMapScreen />;
   else if (world.scene === 'squad') body = <SquadSetupScreen />;
   else if (world.scene === 'encounter') body = <BattleScreen />;
   else if (world.scene === 'cup') body = <TournamentScreen />;
@@ -109,9 +114,22 @@ function FieldRoot() {
   return (
     <View style={styles.fill}>
       {body}
-      <PvpChallengePrompt />
+      {battle.raidLobby ? null : <PvpChallengePrompt />}
     </View>
   );
+}
+
+/** One toast per golden-hour window, including for players who log in while it is already open. */
+function useGoldenAnnounce() {
+  const golden = useBattle().goldenHour;
+  const say = useWorld().say;
+  const seen = useRef<string | null>(null);
+  useEffect(() => {
+    if (!golden.active || !golden.windowId || !golden.message) return;
+    if (seen.current === golden.windowId) return;
+    seen.current = golden.windowId;
+    say(golden.message);
+  }, [golden.active, golden.windowId, golden.message, say]);
 }
 
 /**

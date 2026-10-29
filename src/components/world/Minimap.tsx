@@ -88,6 +88,7 @@ function MapMarkers({
   portal: number;
 }) {
   const portals = field.sensors.filter((sensor) => sensor.toZone);
+  const dungeons = field.sensors.filter((sensor) => sensor.dungeon);
   const monsters = knownMonsters(field);
   const monsterSize = monster * 0.5;
   const portalH = Math.max(3, Math.round(portal / PORTAL_ASPECT));
@@ -100,6 +101,16 @@ function MapMarkers({
             styles.monster,
             pin(actor.x, actor.y, field, width, height, monsterSize),
             { width: monsterSize, height: monsterSize, borderRadius: monsterSize / 2 },
+          ]}
+        />
+      ))}
+      {dungeons.map((sensor) => (
+        <View
+          key={sensor.id}
+          style={[
+            styles.dungeon,
+            pin(sensor.x, sensor.y, field, width, height, player),
+            { width: player, height: player, borderRadius: player / 2, backgroundColor: sensor.dungeon === 'mine' ? '#c47a3a' : '#e4c27a' },
           ]}
         />
       ))}
@@ -180,6 +191,9 @@ const styles = StyleSheet.create({
   monster: {
     position: 'absolute',
     backgroundColor: MONSTER_COLOR,
+  },
+  dungeon: {
+    position: 'absolute',
   },
   portal: {
     position: 'absolute',

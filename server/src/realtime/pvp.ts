@@ -41,6 +41,7 @@ export class ProximityDuels {
     private readonly io: Server,
     private readonly world: WorldPresence,
     private readonly arena: Arena,
+    private readonly extraBusy: (userId: string) => boolean = () => false,
   ) {}
 
   attach() {
@@ -78,7 +79,7 @@ export class ProximityDuels {
       socket.emit('pvp_error', { message: 'Không thể khiêu chiến người này.' });
       return;
     }
-    if (this.engaged(userId) || this.engaged(toUserId) || this.arena.busy(userId) || this.arena.busy(toUserId)) {
+    if (this.engaged(userId) || this.engaged(toUserId) || this.extraBusy(userId) || this.extraBusy(toUserId) || this.arena.busy(userId) || this.arena.busy(toUserId)) {
       socket.emit('pvp_error', { message: 'Một trong hai người đang bận khiêu chiến.' });
       return;
     }
@@ -132,6 +133,14 @@ export class ProximityDuels {
     const invite = challengeId ? this.invites.get(challengeId) : undefined;
     if (!invite || invite.toUserId !== userId) {
       socket.emit('pvp_error', { message: 'Lời khiêu chiến không còn.' });
+      return;
+    }
+    if (this.extraBusy(invite.fromUserId) || this.extraBusy(userId)) {
+      this.invites.delete(invite.id);
+      this.emitBoth(invite.fromUserId, invite.toUserId, 'pvp_challenge_closed', {
+        challengeId: invite.id,
+        message: 'Một người đang trong hầm ngục.',
+      });
       return;
     }
     this.invites.delete(invite.id);

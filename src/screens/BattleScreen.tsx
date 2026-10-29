@@ -962,6 +962,7 @@ function isBoar(card: Encounter): boolean {
 }
 
 function fieldFoes(encounter: Encounter): Encounter[] {
+  if (encounter.solo) return roster(encounter);
   const cards = roster(encounter);
   const lead = cards[0];
   if (!lead || !isBoar(lead)) return cards.slice(0, 3);
@@ -975,6 +976,7 @@ function fieldFoes(encounter: Encounter): Encounter[] {
 function roster(encounter: Encounter): Encounter[] {
   const source = encounter.pool?.length ? encounter.pool : [encounter];
   const cards = source.map((card) => ({ ...card, pool: undefined }));
+  if (encounter.solo) return cards.slice(0, 1);
   while (cards.length < 3) {
     const base = cards[cards.length - 1];
     cards.push({ ...base, id: `${base.id}-pack-${cards.length}`, name: `${base.name} ${cards.length + 1}` });

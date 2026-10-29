@@ -1,4 +1,5 @@
 import { createChunk, rollLoot } from './catalog';
+import { withDungeonGates } from './dungeons';
 import { isWaterKind, planLocomotion } from './gait';
 import { chunkKey, chunksNear } from './grid';
 import { HAZARD_TICK_SEC } from './hazards';
@@ -28,8 +29,9 @@ export function stepField(
   canTake: (loot: LootActor) => boolean,
   playerLevel = 1,
   stamina = Number.POSITIVE_INFINITY,
+  dungeonOpen = false,
 ): { state: FieldState; events: FieldEvent[] } {
-  const awake = syncChunks(field);
+  const awake = withDungeonGates(syncChunks(field), dungeonOpen);
   const events: FieldEvent[] = [];
   const beforeX = awake.player.x;
   const beforeY = awake.player.y;
@@ -72,7 +74,8 @@ export function stepField(
   if (sensor) {
     if (heldSensorId !== sensor.id) {
       heldSensorId = sensor.id;
-      if (sensor.service) events.push({ type: 'service', service: sensor.service });
+      if (sensor.dungeon) events.push({ type: 'dungeon', dungeon: sensor.dungeon });
+      else if (sensor.service) events.push({ type: 'service', service: sensor.service });
     }
   } else {
     heldSensorId = null;

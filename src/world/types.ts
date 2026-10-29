@@ -17,7 +17,10 @@ export type ItemId =
   | 'hearty-fruit'
   | 'net'
   | 'sword'
-  | 'armor';
+  | 'armor'
+  | 'mine-ticket'
+  | 'evo-shard'
+  | 'might-blade';
 
 export type ServiceId = 'store' | 'smith' | 'storage' | 'travel' | 'inn' | 'pvp' | 'cup';
 
@@ -84,7 +87,7 @@ export type Rect = {
 
 export type Stack = { itemId: ItemId; qty: number };
 
-export type Gear = { itemId: 'sword' | 'armor'; plus: number };
+export type Gear = { itemId: 'sword' | 'might-blade' | 'armor'; plus: number };
 
 export type Vitals = {
   hp: number;
@@ -117,6 +120,8 @@ export type Sensor = {
   /** Region unlocked when this gate is used. */
   unlock?: RegionId;
   arrive?: Vec;
+  /** Golden-hour gate. Mine is solo. Raid opens the five-person lobby. */
+  dungeon?: 'mine' | 'raid';
 };
 
 export type MonsterActor = {
@@ -263,6 +268,7 @@ export type FieldEvent =
   | { type: 'travel'; toZone: string; unlock?: RegionId; arrive?: Vec }
   | { type: 'pickup'; loot: LootActor }
   | { type: 'encounter'; monster: MonsterActor }
+  | { type: 'dungeon'; dungeon: 'mine' | 'raid' }
   | { type: 'hazard'; dt: number }
   | { type: 'march'; distance: number; dt: number }
   | { type: 'quicksand' }
@@ -285,6 +291,10 @@ export type Encounter = {
   speed?: number;
   /** Nearby monsters the player chooses from. The battle uses exactly three. */
   pool?: Encounter[];
+  /** One foe. The wild court does not pad this fight out to a pack. */
+  solo?: boolean;
+  /** Spending a mine ticket starts this fight. */
+  mine?: boolean;
 };
 
 export type FieldScene = 'town' | 'wilds' | 'pvp' | 'squad' | 'encounter' | 'cup';

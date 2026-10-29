@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { CharacterAvatar } from '../components/CharacterAvatar';
 import { MapHud, type MapMenuId } from '../components/map/MapHud';
@@ -12,6 +12,7 @@ import { Minimap } from '../components/world/Minimap';
 import { RemotePlayer } from '../components/world/RemotePlayer';
 import { getCharacter } from '../data/characters';
 import { useAvatarLook } from '../state/avatarLook';
+import { useBattle } from '../state/BattleContext';
 import { useSetup } from '../state/SetupContext';
 import { useMultiplayer } from '../state/useMultiplayer';
 import { useWorld } from '../state/WorldContext';
@@ -29,6 +30,7 @@ import type { Encounter, FieldEvent, MonsterActor } from '../world/types';
  */
 export function OpenWorldMapScreen() {
   const world = useWorld();
+  const battle = useBattle();
   const setup = useSetup();
   const { field, update } = useFieldSession(world.zoneId);
   const [menu, setMenu] = useState<MapMenuId | null>(null);
@@ -82,6 +84,24 @@ export function OpenWorldMapScreen() {
     if (event.type === 'encounter') {
       const pool = battlePool(field.monsters, field.player, event.monster);
       world.beginEncounter({ ...pool[0], pool });
+      return;
+    }
+    if (event.type === 'dungeon') {
+      if (event.dungeon === 'mine') world.approachMine();
+      else if (setup.player) {
+        battle.joinRaid({
+          zoneId: world.zoneId,
+          name: setup.player.name,
+          gender: setup.player.gender,
+          baseAvatarId: setup.player.baseCharacterId,
+          hairColor: setup.player.hairColor,
+          outfitColor: setup.player.outfitColor,
+          level: world.adventureLevel,
+          attack: world.attack,
+          defense: world.defense,
+          maxHp: world.vitals.maxHp,
+        });
+      }
     }
   };
 
@@ -97,6 +117,7 @@ export function OpenWorldMapScreen() {
         stamina={world.vitals.stamina}
         testID="world-screen"
         zoom={worldZoom()}
+        dungeonOpen={battle.goldenHour.active}
         playerFacesRight={portraitFacesRight(character?.professionId, character?.gender)}
         remotes={others.players.map((player) => ({
           id: player.userId,
@@ -136,6 +157,11 @@ export function OpenWorldMapScreen() {
           />
           <Minimap field={field} />
         </View>
+        {battle.goldenHour.active ? (
+          <Text pointerEvents="none" style={styles.hour}>
+            Giờ vàng — Hầm mỏ và Hầm ngục đã mở
+          </Text>
+        ) : null}
       </FieldStage>
       <MapChat messages={others.messages} online={others.players.length} selfUserId={others.selfUserId} onSend={others.sendChat} onFocusChange={setChatFocused} />
       <PvpChallengeButton
@@ -194,4 +220,15 @@ function toCard(monster: MonsterActor): Encounter {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bgDeep },
   top: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  hour: {
+    alignSelf: 'center',
+    marginTop: 6,
+    color: theme.gold,
+    fontWeight: '800',
+    backgroundColor: 'rgba(16, 33, 28, 0.88)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
 });
