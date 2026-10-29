@@ -1,19 +1,19 @@
 /**
- * Golden Hour. The three windows are Vietnam local time (ICT, UTC+7),
- * because that is the play day the broadcast is written for. The clock does
- * not follow the host timezone. The tournament calendar stays on UTC.
+ * Golden Hour. Windows are Vietnam local time (ICT, UTC+7), because that is
+ * the play day the broadcast is written for. The clock does not follow the
+ * host timezone. The tournament calendar stays on UTC.
  *
- * Each window is inclusive at the start and exclusive at the end:
- * 10:00–12:00, 15:00–17:00, 19:00–21:00.
+ * Each window is inclusive at the start and exclusive at the end.
+ * Testing window: 21:00–24:00 (9 PM to midnight).
  */
 
 const ICT_OFFSET_MS = 7 * 60 * 60 * 1000;
 
-export const GOLDEN_WINDOWS = [
-  { startHour: 10, endHour: 12 },
-  { startHour: 15, endHour: 17 },
-  { startHour: 19, endHour: 21 },
-] as const;
+export const GOLDEN_WINDOWS = [{ startHour: 21, endHour: 24 }] as const;
+
+export const GOLDEN_WINDOW_LABEL = GOLDEN_WINDOWS.map(
+  (entry) => `${padHour(entry.startHour)}:00–${padHour(entry.endHour)}:00`,
+).join(', ');
 
 export const DUNGEON_SPAWN_MESSAGE = 'Hầm ngục đã xuất hiện trên khắp bản đồ.';
 
@@ -37,4 +37,8 @@ export function goldenHourAt(now: Date): GoldenHour {
     windowId: `${year}-${month + 1}-${day}-${window.startHour}`,
     endsAt,
   };
+}
+
+function padHour(hour: number): string {
+  return String(hour).padStart(2, '0');
 }

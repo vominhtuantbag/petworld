@@ -1,6 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 
-import { goldenHourAt } from '../dungeon/schedule.js';
+import { GOLDEN_WINDOW_LABEL, goldenHourAt } from '../dungeon/schedule.js';
 import { raidPayout, type RaidPayout } from '../dungeon/rewards.js';
 import type { Arena } from './arena.js';
 import type { WorldPresence } from './world.js';
@@ -163,7 +163,7 @@ export class DungeonRaids {
       return;
     }
     if (!goldenHourAt(new Date()).active) {
-      socket.emit('raid:error', { message: 'Hầm ngục chỉ mở trong giờ vàng (10:00–12:00, 15:00–17:00, 19:00–21:00).' });
+      socket.emit('raid:error', { message: `Hầm ngục chỉ mở trong giờ vàng (${GOLDEN_WINDOW_LABEL}).` });
       return;
     }
     if (body.zoneId.startsWith('town:')) {
