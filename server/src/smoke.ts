@@ -85,8 +85,10 @@ async function main() {
     console.log('[smoke] a nearby challenge opened a 30s duel and a far one was refused');
     await checkDuelWithoutCharacter(base, stamp);
     console.log('[smoke] a duel opened from map profiles when no arena character was stored');
-    await checkSingleSession(base, `lan_${stamp}@example.com`, lan.token);
+    const liveToken = await checkSingleSession(base, `lan_${stamp}@example.com`, lan.token);
     console.log('[smoke] a second login kicked the previous session');
+    await checkSameTabHandshake(base, liveToken);
+    console.log('[smoke] a same-tab handshake retry did not kick the live socket');
   } finally {
     await server.close();
   }
@@ -116,6 +118,7 @@ async function checkSingleSession(base: string, email: string, token: string) {
   if (fresh.status !== 200) throw new Error('The new login could not read the account.');
   current.socket.close();
   await checkSecondTab(base, again.token);
+  return again.token;
 }
 
 /** Two sockets with the same login: the older tab must be replaced. */
@@ -138,6 +141,27 @@ async function checkSecondTab(base: string, token: string) {
   if (message !== SESSION_REPLACED_MESSAGE) throw new Error(`Second tab notice was wrong: ${message}`);
   if (!second.socket.connected) throw new Error('The newer tab was disconnected.');
   first.socket.close();
+  second.socket.close();
+}
+
+/** Overlapping handshakes from the same tab must not fire the other-device notice. */
+async function checkSameTabHandshake(base: string, token: string) {
+  const first = connect(base, token, 'tab-create');
+  await first.ready;
+  let replaced = false;
+  first.socket.on('session:replaced', () => {
+    replaced = true;
+  });
+  first.socket.on('session_replaced', () => {
+    replaced = true;
+  });
+  const second = connect(base, token, 'tab-create');
+  await second.ready;
+  first.socket.io.reconnection(false);
+  first.socket.close();
+  await delay(400);
+  if (replaced) throw new Error('A same-tab retry was treated as another device.');
+  if (!second.socket.connected) throw new Error('The live socket dropped during a same-tab retry.');
   second.socket.close();
 }
 
@@ -539,8 +563,8 @@ type SmokeBattle = {
   status?: string;
 };
 
-function connect(base: string, token: string) {
-  const socket = io(base, { auth: { token }, transports: ['websocket', 'polling'] });
+function connect(base: string, token: string, clientId?: string) {
+  const socket = io(base, { auth: { token, ...(clientId ? { clientId } : {}) }, transports: ['websocket', 'polling'] });
   const battles: SmokeBattle[] = [];
   let wake: (() => void) | null = null;
   socket.on('battle:update', (snapshot: SmokeBattle) => {

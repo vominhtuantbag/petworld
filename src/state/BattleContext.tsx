@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { io, type Socket } from 'socket.io-client';
+import type { Socket } from 'socket.io-client';
 
-import { SOCKET_URL } from '../config/env';
+import { holdBattleSocket, releaseBattleSocket } from '../net/battleSocket';
 import type { BattleView, DuelPet, GoldenHourView, QueueView, RaidBattleView, RaidJoin, RaidLobbyView } from '../net/protocol';
 import { reportSessionReplaced } from '../net/sessionKick';
 import { useAuth } from './AuthContext';
@@ -59,9 +59,10 @@ const BattleContext = createContext<BattleContextValue | null>(null);
 const IDLE_HOUR: GoldenHourView = { active: false, windowId: null, endsAt: null, message: null };
 
 /**
- * One socket for the signed-in player. Socket.io retries the connection on
- * its own. After a drop during a duel, the server sends the live room again
- * when this socket authenticates with the same account.
+ * One socket for the signed-in player. Strict Mode remounts reuse that
+ * socket. Handshake retries from this tab are not treated as another device.
+ * After a drop during a duel, the server sends the live room again when this
+ * socket authenticates with the same account.
  */
 export function BattleProvider({ children }: { children: ReactNode }) {
   const auth = useAuth();
@@ -78,12 +79,16 @@ export function BattleProvider({ children }: { children: ReactNode }) {
   const [raidLobby, setRaidLobby] = useState<RaidLobbyView | null>(null);
   const [raid, setRaid] = useState<RaidBattleView | null>(null);
   const prepRef = useRef<PvpPrep | null>(null);
+  const refreshRef = useRef(auth.refreshCharacter);
   prepRef.current = prep;
+  refreshRef.current = auth.refreshCharacter;
 
   useEffect(() => {
     if (!auth.token) {
-      socketRef.current?.close();
-      socketRef.current = null;
+      if (socketRef.current) {
+        releaseBattleSocket(socketRef.current);
+        socketRef.current = null;
+      }
       setSocket(null);
       setConnection('offline');
       setQueue({ state: 'idle', position: 0 });
@@ -97,88 +102,81 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    setConnection('connecting');
     const token = auth.token;
-    const socket = io(SOCKET_URL, {
-      auth: { token: auth.token },
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 500,
-      reconnectionDelayMax: 5000,
-    });
+    const socket = holdBattleSocket(token);
+    let alive = true;
     socketRef.current = socket;
     setSocket(socket);
+    setConnection(socket.connected ? 'online' : 'connecting');
 
-    socket.on('connect', () => {
+    const onConnect = () => {
+      if (!alive || socketRef.current !== socket) return;
       setConnection('online');
       setNotice(null);
-      console.info(`[Game Thư Giãn] Socket connected ${SOCKET_URL}`);
-    });
-    socket.on('disconnect', () => setConnection('connecting'));
+      console.info(`[Game Thư Giãn] Socket connected`);
+    };
+    const onDisconnect = () => {
+      if (!alive || socketRef.current !== socket) return;
+      setConnection('connecting');
+    };
     const onReplaced = () => {
+      if (!alive || socketRef.current !== socket) return;
       socket.io.reconnection(false);
       socket.disconnect();
       reportSessionReplaced(token);
     };
-    socket.on('session:replaced', onReplaced);
-    socket.on('session_replaced', onReplaced);
-    socket.on('connect_error', (error: Error) => {
+    const onConnectError = (error: Error) => {
+      if (!alive || socketRef.current !== socket) return;
       if (error.message.includes('session_replaced')) {
         socket.io.reconnection(false);
         socket.close();
         reportSessionReplaced(token);
         return;
       }
-      console.warn(`[Game Thư Giãn] Socket chưa nối được ${SOCKET_URL}. ${error.message}`);
+      console.warn(`[Game Thư Giãn] Socket chưa nối được. ${error.message}`);
       setConnection('connecting');
-    });
-    socket.on('queue:status', (next: QueueView) => setQueue(next));
-    socket.on('battle:update', (next: BattleView) => {
+    };
+
+    const onQueue = (next: QueueView) => setQueue(next);
+    const onBattle = (next: BattleView) => {
       setBattle(next);
       setPrep(null);
       setPvpIncoming(null);
       setPvpOutgoing(null);
       setQueue({ state: 'idle', position: 0 });
-      if (next.status === 'finished') {
-        void auth.refreshCharacter();
-      }
-    });
-    socket.on('battle:error', (payload: { message?: string }) => {
+      if (next.status === 'finished') void refreshRef.current();
+    };
+    const onBattleError = (payload: { message?: string }) => {
       setNotice(payload.message ?? 'Không thực hiện được thao tác.');
-    });
-    socket.on('pvp_challenge', (next: PvpInvite) => {
+    };
+    const onPvpChallenge = (next: PvpInvite) => {
       if (!next?.challengeId || !next.fromUserId) return;
       setPvpIncoming(next);
       setNotice(null);
-    });
-    socket.on('pvp_outgoing', (next: PvpOutgoing) => {
+    };
+    const onPvpOutgoing = (next: PvpOutgoing) => {
       if (!next?.challengeId) return;
       setPvpOutgoing(next);
       setNotice(null);
-    });
-    socket.on('pvp_challenge_closed', (payload: { message?: string }) => {
+    };
+    const onPvpClosed = (payload: { message?: string }) => {
       setPvpIncoming(null);
       setPvpOutgoing(null);
       if (payload?.message) setNotice(payload.message);
-    });
-    socket.on('pvp_prep', (next: PvpPrep) => {
+    };
+    const onPvpPrep = (next: PvpPrep) => {
       if (!next?.matchId || typeof next.deadline !== 'number') return;
       setPrep(next);
       setPvpIncoming(null);
       setPvpOutgoing(null);
       setNotice(null);
-    });
-    socket.on('pvp_error', (payload: { message?: string }) => {
+    };
+    const onPvpError = (payload: { message?: string }) => {
       setNotice(payload.message ?? 'Không khiêu chiến được.');
-    });
-    socket.on('pvp_squad_ack', () => {
-      setNotice(null);
-    });
-    socket.on('pvp_battle_start', () => {
-      socket.emit('battle:sync');
-    });
-    socket.on('dungeon:hour', (payload: GoldenHourView) => {
+    };
+    const onPvpAck = () => setNotice(null);
+    const onPvpStart = () => socket.emit('battle:sync');
+    const onDungeonHour = (payload: GoldenHourView) => {
       if (!payload || typeof payload.active !== 'boolean') return;
       setGoldenHour({
         active: payload.active,
@@ -186,8 +184,8 @@ export function BattleProvider({ children }: { children: ReactNode }) {
         endsAt: payload.endsAt ?? null,
         message: payload.active ? payload.message ?? null : null,
       });
-    });
-    socket.on('dungeon:broadcast', (payload: { message?: string; windowId?: string; endsAt?: number }) => {
+    };
+    const onDungeonBroadcast = (payload: { message?: string; windowId?: string; endsAt?: number }) => {
       if (!payload?.windowId) return;
       setGoldenHour({
         active: true,
@@ -195,32 +193,75 @@ export function BattleProvider({ children }: { children: ReactNode }) {
         endsAt: payload.endsAt ?? null,
         message: payload.message ?? null,
       });
-    });
-    socket.on('raid:lobby', (next: RaidLobbyView) => {
+    };
+    const onRaidLobby = (next: RaidLobbyView) => {
       if (!next?.lobbyId || !Array.isArray(next.slots)) return;
       setRaidLobby(next);
       setNotice(null);
-    });
-    socket.on('raid:update', (next: RaidBattleView) => {
+    };
+    const onRaidUpdate = (next: RaidBattleView) => {
       if (!next?.roomId) return;
       setRaid(next);
       setRaidLobby(null);
       setNotice(null);
-    });
-    socket.on('raid:evict', (payload: { message?: string }) => {
+    };
+    const onRaidEvict = (payload: { message?: string }) => {
       setRaidLobby(null);
       setNotice(payload?.message ?? 'Bạn bị đưa về bản đồ.');
-    });
-    socket.on('raid:error', (payload: { message?: string }) => {
+    };
+    const onRaidError = (payload: { message?: string }) => {
       setNotice(payload?.message ?? 'Không vào được hầm ngục.');
-    });
+    };
+
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.on('session:replaced', onReplaced);
+    socket.on('session_replaced', onReplaced);
+    socket.on('connect_error', onConnectError);
+    socket.on('queue:status', onQueue);
+    socket.on('battle:update', onBattle);
+    socket.on('battle:error', onBattleError);
+    socket.on('pvp_challenge', onPvpChallenge);
+    socket.on('pvp_outgoing', onPvpOutgoing);
+    socket.on('pvp_challenge_closed', onPvpClosed);
+    socket.on('pvp_prep', onPvpPrep);
+    socket.on('pvp_error', onPvpError);
+    socket.on('pvp_squad_ack', onPvpAck);
+    socket.on('pvp_battle_start', onPvpStart);
+    socket.on('dungeon:hour', onDungeonHour);
+    socket.on('dungeon:broadcast', onDungeonBroadcast);
+    socket.on('raid:lobby', onRaidLobby);
+    socket.on('raid:update', onRaidUpdate);
+    socket.on('raid:evict', onRaidEvict);
+    socket.on('raid:error', onRaidError);
 
     return () => {
-      socket.close();
+      alive = false;
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.off('session:replaced', onReplaced);
+      socket.off('session_replaced', onReplaced);
+      socket.off('connect_error', onConnectError);
+      socket.off('queue:status', onQueue);
+      socket.off('battle:update', onBattle);
+      socket.off('battle:error', onBattleError);
+      socket.off('pvp_challenge', onPvpChallenge);
+      socket.off('pvp_outgoing', onPvpOutgoing);
+      socket.off('pvp_challenge_closed', onPvpClosed);
+      socket.off('pvp_prep', onPvpPrep);
+      socket.off('pvp_error', onPvpError);
+      socket.off('pvp_squad_ack', onPvpAck);
+      socket.off('pvp_battle_start', onPvpStart);
+      socket.off('dungeon:hour', onDungeonHour);
+      socket.off('dungeon:broadcast', onDungeonBroadcast);
+      socket.off('raid:lobby', onRaidLobby);
+      socket.off('raid:update', onRaidUpdate);
+      socket.off('raid:evict', onRaidEvict);
+      socket.off('raid:error', onRaidError);
       if (socketRef.current === socket) socketRef.current = null;
-      setSocket((current) => (current === socket ? null : current));
+      releaseBattleSocket(socket);
     };
-  }, [auth.token, auth.refreshCharacter]);
+  }, [auth.token]);
 
   const findMatch = useCallback(() => {
     setNotice(null);

@@ -145,16 +145,23 @@ export class Arena {
     }
     socket.data.userId = auth.sub;
     socket.data.sid = auth.sid;
+    socket.data.clientId = readClientId(socket);
     socket.data.username = user.username;
   }
 
   /**
-   * One socket per account. A second tab or device replaces the previous socket,
-   * and that socket is told to leave before it is disconnected.
+   * One live socket per account. A second tab or a new login is told the
+   * session moved. A handshake retry from the same tab (reconnect, transport
+   * upgrade, React remount) replaces the old engine silently.
    */
   private claim(socket: Socket, userId: string) {
     const previousId = this.activeSessions.get(userId);
-    if (previousId && previousId !== socket.id) this.kickSocket(previousId);
+    if (previousId && previousId !== socket.id) {
+      const previous = this.io.sockets.sockets.get(previousId);
+      const sameTab = Boolean(previous?.data.clientId) && previous?.data.clientId === socket.data.clientId;
+      if (sameTab) this.dropSocket(previousId);
+      else this.kickSocket(previousId);
+    }
     this.activeSessions.set(userId, socket.id);
     this.userSocket.set(userId, socket.id);
   }
@@ -178,13 +185,21 @@ export class Arena {
     timer.unref?.();
   }
 
+  /** Same-tab takeover. Do not emit the other-device notice. */
+  private dropSocket(socketId: string) {
+    const socket = this.io.sockets.sockets.get(socketId);
+    if (!socket) return;
+    socket.disconnect(true);
+  }
+
   private async onConnection(socket: Socket, userId: string) {
     const user = await this.store.findUserById(userId);
-    if (!user || this.activeSessions.get(userId) !== socket.id) {
-      if (!user) socket.emit('battle:error', { message: 'Phiên đăng nhập không còn hiệu lực.' });
-      this.kickSocket(socket.id);
+    if (!user) {
+      socket.emit('battle:error', { message: 'Phiên đăng nhập không còn hiệu lực.' });
+      socket.disconnect(true);
       return;
     }
+    if (this.activeSessions.get(userId) !== socket.id) return;
     socket.data.username = user.username;
 
     const roomId = this.userRoom.get(userId);
@@ -588,6 +603,13 @@ function fighterFromHint(userId: string, username: string, hint: DuelHint): Figh
     maxHp: clampStat(hint.maxHp, 1, 99999),
     pets: [],
   };
+}
+
+function readClientId(socket: Socket): string {
+  const value = socket.handshake.auth?.clientId;
+  if (typeof value !== 'string') return '';
+  const id = value.trim();
+  return id ? id.slice(0, 80) : '';
 }
 
 function clampStat(value: number, low: number, high: number): number {
