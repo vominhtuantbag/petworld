@@ -139,6 +139,13 @@ export function captureChance(hp: number, maxHp: number, bonuses: number[]): num
   return Math.min(35, Math.max(0, low + rhythm));
 }
 
+/** Dungeon-boss taming. Rhythm stops still add, but the roll never exceeds 30%. */
+export function raidTameChance(bonuses: number[]): number {
+  const list = Array.isArray(bonuses) ? bonuses : [];
+  const rhythm = list.reduce((sum, bonus) => sum + (Number.isFinite(bonus) ? bonus : 0), 0);
+  return Math.min(30, Math.max(0, rhythm));
+}
+
 export function zoneAt(position: number): (typeof TAMING_ZONES)[number] {
   const raw = Number.isFinite(position) ? position : 0;
   const clamped = Math.min(0.999, Math.max(0, raw));
@@ -540,7 +547,6 @@ export function battleRewards(state: BattleState, rng: () => number = Math.rando
   const drops: BattleDrop[] = [{ itemId: first, qty: 1 }];
   const rest = pool.filter((itemId) => itemId !== first);
   if (rest.length > 0 && rng() < 0.4) drops.push({ itemId: rest[rollIndex(rng, rest.length)], qty: 1 });
-  if (rng() < 0.08) drops.push({ itemId: 'mine-ticket', qty: 1 });
   return { victory: true, exp, gold: Math.max(1, defeated.gold), drops, pets };
 }
 

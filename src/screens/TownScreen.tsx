@@ -6,7 +6,7 @@ import { MapHud, type MapMenuId } from '../components/map/MapHud';
 import { portraitFacesRight } from '../components/world/facing';
 import { FieldStage } from '../components/world/FieldStage';
 import { MapChat } from '../components/world/MapChat';
-import { PvpChallengeButton } from '../components/world/PvpChallenge';
+import { toNearby } from '../components/world/PvpChallenge';
 import { PlayerInfoHUD } from '../components/world/PlayerInfoHUD';
 import { RemotePlayer } from '../components/world/RemotePlayer';
 import { ServicePanel } from '../components/town/ServicePanel';
@@ -116,17 +116,7 @@ export function TownScreen() {
         </View>
       </FieldStage>
       <MapChat messages={others.messages} online={others.players.length} selfUserId={others.selfUserId} onSend={others.sendChat} onFocusChange={setChatFocused} />
-      <PvpChallengeButton
-        self={field.player}
-        remotes={others.players.map((player) => ({
-          userId: player.userId,
-          username: player.username,
-          name: player.name,
-          x: player.x,
-          y: player.y,
-        }))}
-      />
-      <MapHud menu={menu} onOpen={setMenu} onClose={() => setMenu(null)} />
+      <MapHud menu={menu} onOpen={setMenu} onClose={() => setMenu(null)} self={field.player} remotes={toNearby(others.players)} />
       {panel ? <ServicePanel panel={panel} onClose={() => setPanel(null)} /> : null}
     </View>
   );

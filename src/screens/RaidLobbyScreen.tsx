@@ -31,7 +31,7 @@ export function RaidLobbyScreen() {
       <View style={[styles.card, { padding: s(16), gap: s(10), borderRadius: s(16) }]}>
         <Text style={[styles.title, { fontSize: font(22) }]}>Hầm ngục</Text>
         <Text style={[styles.copy, { fontSize: font(13) }]}>
-          {seconds}s. Ai chưa sẵn sàng sẽ bị đưa về bản đồ. Phần thưởng chia đều, không có thưởng trưởng nhóm.
+          {seconds}s. Khi cả nhóm sẵn sàng, trận bắt đầu ngay. Cần 2–5 người. Ai chưa sẵn sàng khi hết giờ sẽ bị đưa về bản đồ.
         </Text>
         <View style={styles.slots}>
           {lobby.slots.map((slot, index) => {

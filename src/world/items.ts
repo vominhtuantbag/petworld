@@ -116,11 +116,11 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   },
   'mine-ticket': {
     id: 'mine-ticket',
-    nameVi: 'Vé hầm mỏ',
+    nameVi: 'Vé hầm ngục',
     price: 0,
     stack: true,
     tint: '#c47a3a',
-    blurb: 'Vé vào Hầm mỏ. Rơi ngẫu nhiên khi đi săn. Dùng trong giờ vàng.',
+    blurb: 'Vé vào Hầm ngục (2–5 người). Rơi từ tầng cuối Hầm mỏ.',
   },
   'evo-shard': {
     id: 'evo-shard',

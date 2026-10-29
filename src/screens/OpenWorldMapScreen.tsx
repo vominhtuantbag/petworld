@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { CharacterAvatar } from '../components/CharacterAvatar';
@@ -6,7 +6,7 @@ import { MapHud, type MapMenuId } from '../components/map/MapHud';
 import { portraitFacesRight } from '../components/world/facing';
 import { FieldStage } from '../components/world/FieldStage';
 import { MapChat } from '../components/world/MapChat';
-import { PvpChallengeButton } from '../components/world/PvpChallenge';
+import { toNearby } from '../components/world/PvpChallenge';
 import { PlayerInfoHUD } from '../components/world/PlayerInfoHUD';
 import { Minimap } from '../components/world/Minimap';
 import { RemotePlayer } from '../components/world/RemotePlayer';
@@ -88,22 +88,44 @@ export function OpenWorldMapScreen() {
     }
     if (event.type === 'dungeon') {
       if (event.dungeon === 'mine') world.approachMine();
-      else if (setup.player) {
-        battle.joinRaid({
-          zoneId: world.zoneId,
-          name: setup.player.name,
-          gender: setup.player.gender,
-          baseAvatarId: setup.player.baseCharacterId,
-          hairColor: setup.player.hairColor,
-          outfitColor: setup.player.outfitColor,
-          level: world.adventureLevel,
-          attack: world.attack,
-          defense: world.defense,
-          maxHp: world.vitals.maxHp,
-        });
-      }
+      else enterRaid();
     }
   };
+
+  const enterRaid = () => {
+    if (!setup.player) return;
+    const ticket = world.bag.some((stack) => stack.itemId === 'mine-ticket' && stack.qty > 0);
+    if (!ticket) {
+      world.say('Cần vé hầm ngục. Hoàn thành tầng cuối Hầm mỏ để nhận vé.');
+      return;
+    }
+    battle.joinRaid({
+      zoneId: world.zoneId,
+      name: setup.player.name,
+      gender: setup.player.gender,
+      baseAvatarId: setup.player.baseCharacterId,
+      hairColor: setup.player.hairColor,
+      outfitColor: setup.player.outfitColor,
+      level: world.adventureLevel,
+      attack: world.attack,
+      defense: world.defense,
+      maxHp: world.vitals.maxHp,
+      hasTicket: true,
+    });
+  };
+
+  useEffect(() => {
+    if (!battle.raidCall) return;
+    if (battle.raidCall !== world.zoneId) {
+      battle.clearRaidCall();
+      world.say('Hãy đứng cùng khu với party để vào hầm ngục.');
+      return;
+    }
+    battle.clearRaidCall();
+    enterRaid();
+    // Party members auto-join the same-zone lobby once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [battle.raidCall]);
 
   return (
     <View style={styles.screen}>
@@ -164,17 +186,7 @@ export function OpenWorldMapScreen() {
         ) : null}
       </FieldStage>
       <MapChat messages={others.messages} online={others.players.length} selfUserId={others.selfUserId} onSend={others.sendChat} onFocusChange={setChatFocused} />
-      <PvpChallengeButton
-        self={field.player}
-        remotes={others.players.map((player) => ({
-          userId: player.userId,
-          username: player.username,
-          name: player.name,
-          x: player.x,
-          y: player.y,
-        }))}
-      />
-      <MapHud menu={menu} onOpen={setMenu} onClose={() => setMenu(null)} />
+      <MapHud menu={menu} onOpen={setMenu} onClose={() => setMenu(null)} self={field.player} remotes={toNearby(others.players)} />
     </View>
   );
 }

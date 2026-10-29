@@ -24,13 +24,13 @@ const morning = goldenHourAt(ict(10, 15));
 assert.equal(morning.windowId, '2026-10-29-10');
 assert.equal(morning.endsAt, Date.UTC(2026, 9, 29, 5, 0, 0, 0));
 
-const low = raidPayout(10);
-const same = raidPayout(10);
-assert.equal(low.exp, (8 + 10 * 3) * 3);
-assert.deepEqual(low, same);
-assert.deepEqual(low.drops, [
-  { itemId: 'evo-shard', qty: 1 },
+const always = raidPayout(10, () => 0);
+const never = raidPayout(10, () => 0.99);
+assert.equal(always.exp, (8 + 10 * 3) * 3);
+assert.deepEqual(always.drops, [
+  { itemId: 'evo-shard', qty: 10 },
   { itemId: 'might-blade', qty: 1 },
 ]);
+assert.deepEqual(never.drops, []);
 
 console.log('dungeon schedule ok');

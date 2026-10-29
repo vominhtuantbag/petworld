@@ -24,6 +24,9 @@ type Props = {
   victory: boolean;
   members: ExpMember[];
   slots: LootSlot[];
+  notes?: string[];
+  shareLabel?: string;
+  onShare?: () => void;
   onConfirm: () => void;
   onRetry?: () => void;
 };
@@ -39,7 +42,7 @@ type Progress = {
  * Victory claims loot and returns to the map. Defeat offers another try
  * or a return, and the party keeps none of the fight's rewards.
  */
-export function EndGameModal({ victory, members, slots, onConfirm, onRetry }: Props) {
+export function EndGameModal({ victory, members, slots, notes, shareLabel, onShare, onConfirm, onRetry }: Props) {
   const { s, font, width } = useLayout();
   const banner = victory
     ? { kicker: 'VICTORY', title: 'CHIẾN THẮNG', colors: ['#f3d48a', '#a97832'] as const }
@@ -76,17 +79,33 @@ export function EndGameModal({ victory, members, slots, onConfirm, onRetry }: Pr
           ) : (
             <Text style={[styles.note, { fontSize: font(12) }]}>Thua trận không nhận kinh nghiệm, vàng hay vật phẩm.</Text>
           )}
+          {notes && notes.length > 0
+            ? notes.map((note) => (
+                <Text key={note} style={[styles.note, { fontSize: font(12) }]}>
+                  {note}
+                </Text>
+              ))
+            : null}
         </ScrollView>
         <View style={[styles.actions, { padding: s(12), gap: s(8) }]}>
           {victory ? (
-            <Pressable accessibilityRole="button" testID="end-game-confirm" onPress={onConfirm} style={[styles.primary, { minHeight: s(42), borderRadius: s(12) }]}>
-              <Text style={[styles.primaryLabel, { fontSize: font(15) }]}>Tiếp tục</Text>
-            </Pressable>
+            <>
+              {onShare ? (
+                <Pressable accessibilityRole="button" testID="end-game-share" onPress={onShare} style={[styles.ghost, { minHeight: s(42), borderRadius: s(12) }]}>
+                  <Text style={[styles.ghostLabel, { fontSize: font(14) }]}>{shareLabel ?? 'Chia sẻ Facebook'}</Text>
+                </Pressable>
+              ) : null}
+              <Pressable accessibilityRole="button" testID="end-game-confirm" onPress={onConfirm} style={[styles.primary, { minHeight: s(42), borderRadius: s(12) }]}>
+                <Text style={[styles.primaryLabel, { fontSize: font(15) }]}>Tiếp tục</Text>
+              </Pressable>
+            </>
           ) : (
             <>
-              <Pressable accessibilityRole="button" testID="end-game-retry" onPress={onRetry} style={[styles.ghost, { minHeight: s(42), borderRadius: s(12) }]}>
-                <Text style={[styles.ghostLabel, { fontSize: font(14) }]}>Thử lại</Text>
-              </Pressable>
+              {onRetry ? (
+                <Pressable accessibilityRole="button" testID="end-game-retry" onPress={onRetry} style={[styles.ghost, { minHeight: s(42), borderRadius: s(12) }]}>
+                  <Text style={[styles.ghostLabel, { fontSize: font(14) }]}>Thử lại</Text>
+                </Pressable>
+              ) : null}
               <Pressable accessibilityRole="button" testID="end-game-return" onPress={onConfirm} style={[styles.primary, styles.actionGrow, { minHeight: s(42), borderRadius: s(12) }]}>
                 <Text style={[styles.primaryLabel, { fontSize: font(15) }]}>Quay về</Text>
               </Pressable>

@@ -30,7 +30,8 @@
     "web": "expo start --web",
     "build:web": "expo export -p web",
     "export:web": "expo export -p web",
-    "server": "npm --prefix server run dev"
+    "server": "npm --prefix server run dev",
+    "lint": "expo lint"
   },
   "private": true
 }

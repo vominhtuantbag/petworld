@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { TamingMiniGameModal } from '../components/battle/TamingMiniGameModal';
 import { FloatingCombatText } from '../components/battle/FloatingCombatText';
 import { TurnTimeline } from '../components/battle/TurnTimeline';
 import { feetInView } from '../components/battle/courtSlots';
@@ -14,7 +15,7 @@ import { useWorld } from '../state/WorldContext';
 import { theme } from '../theme/theme';
 import { useLayout } from '../theme/useLayout';
 import { ITEMS } from '../world/items';
-import { RAID_ADD_CELLS, RAID_BOSS_CELL, RAID_BOSS_SCALE, RAID_PARTY_CELLS } from '../world/dungeons';
+import { RAID_ADD_CELLS, RAID_BOSS_CELL, RAID_BOSS_SCALE, RAID_PARTY_CELLS, RAID_TAME_CAP } from '../world/dungeons';
 import type { ItemId } from '../world/types';
 
 const ARENA = require('../../assets/images/sandau_2.jpg');
@@ -41,6 +42,7 @@ export function RaidScreen() {
   const hpWatch = useRef<Map<string, number> | null>(null);
   const floatSerial = useRef(0);
   const claimed = useRef<string | null>(null);
+  const ticketRoom = useRef<string | null>(null);
   const hpKey = (snapshot?.units ?? []).map((unit) => `${unit.id}:${unit.hp}`).join('|');
 
   useEffect(() => {
@@ -51,6 +53,13 @@ export function RaidScreen() {
   useEffect(() => {
     setPicked('attack');
   }, [snapshot?.turnId]);
+
+  useEffect(() => {
+    if (!snapshot || snapshot.status === 'finished') return;
+    if (ticketRoom.current === snapshot.roomId) return;
+    ticketRoom.current = snapshot.roomId;
+    world.consumeDungeonTicket();
+  }, [snapshot, world]);
 
   const units = snapshot?.units ?? [];
   const party = units.filter((unit) => unit.side === 'party');
@@ -82,8 +91,12 @@ export function RaidScreen() {
   if (!snapshot) return null;
 
   const finished = snapshot.status === 'finished';
-  const yourTurn = snapshot.yourTurn && !finished;
-  const seconds = Math.max(0, Math.ceil((snapshot.deadline - now) / 1000));
+  const taming = snapshot.status === 'taming';
+  const yourTurn = snapshot.yourTurn && !finished && !taming;
+  const seconds = Math.max(
+    0,
+    Math.ceil((((taming ? snapshot.tameUntil : snapshot.deadline) ?? snapshot.deadline) - now) / 1000),
+  );
   const actor = units.find((unit) => unit.id === snapshot.turnId) ?? null;
   const queued = snapshot.queue ?? [];
   const turnQueue = queued.length > 0 ? queued : units.filter((unit) => unit.hp > 0).map((unit) => unit.id);
@@ -100,9 +113,11 @@ export function RaidScreen() {
   const rewardLine = rewardText(snapshot.rewards);
   const log = finished
     ? `${resultTitle}. ${snapshot.victory ? rewardLine : lastLine}`
-    : yourTurn
-      ? `${seconds}s. ${actor?.name ?? 'Bạn'} đang ra đòn. ${lastLine}`
-      : `Đợi ${actor?.name ?? 'đối thủ'}. ${lastLine}`;
+    : taming
+      ? `Thu phục boss. ${seconds}s. Tối đa ${Math.round(RAID_TAME_CAP * 100)}%.`
+      : yourTurn
+        ? `${seconds}s. ${actor?.name ?? 'Bạn'} đang ra đòn. ${lastLine}`
+        : `Đợi ${actor?.name ?? 'đối thủ'}. ${lastLine}`;
 
   const confirm = () => {
     if (!yourTurn || !focus) return;
@@ -116,6 +131,13 @@ export function RaidScreen() {
       world.grantRaidReward(snapshot.rewards);
     }
     battle.leaveRaid();
+  };
+
+  const shareFacebook = () => {
+    const tame = snapshot.yourTame ? 'thu phục thành công boss' : 'không thu phục được boss';
+    const text = `Tôi đã hạ boss Hầm ngục và ${tame} trong Game Thư Giãn!`;
+    const url = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent('https://www.facebook.com/')}&quote=${encodeURIComponent(text)}`;
+    void Linking.openURL(url);
   };
 
   const sizeOf = (unit: RaidUnitView) => (unit.kind === 'boss' ? bossSize : unit.kind === 'hero' ? heroSize : foeSize);
@@ -290,11 +312,38 @@ export function RaidScreen() {
           </View>
         </View>
       </SafeAreaView>
+      {taming && snapshot.yourTame == null ? (
+        <TamingMiniGameModal
+          monsterName="Boss hầm ngục"
+          lowHp={false}
+          deadlineAt={snapshot.tameUntil}
+          capPercent={Math.round(RAID_TAME_CAP * 100)}
+          onClose={() => battle.sendRaidTame([])}
+          onFinish={(bonuses) => battle.sendRaidTame(bonuses)}
+        />
+      ) : null}
+      {taming && snapshot.yourTame != null ? (
+        <View style={styles.overlay} pointerEvents="none">
+          <Text style={[styles.resultCopy, { fontSize: font(14) }]}>
+            {snapshot.yourTame ? 'Thu phục thành công. Đợi đồng đội.' : 'Thu phục thất bại. Đợi đồng đội.'}
+          </Text>
+        </View>
+      ) : null}
       {finished ? (
         <View style={styles.overlay}>
           <View style={[styles.result, { borderRadius: s(18), padding: s(18), gap: s(8) }]}>
             <Text style={[styles.resultTitle, { fontSize: font(28) }]}>{resultTitle}</Text>
             <Text style={[styles.resultCopy, { fontSize: font(14) }]}>{snapshot.victory ? rewardLine : 'Không nhận thưởng.'}</Text>
+            {snapshot.victory && snapshot.tameResults
+              ? snapshot.tameResults.map((entry) => (
+                  <Text key={entry.userId} style={[styles.resultCopy, { fontSize: font(13) }]}>
+                    {entry.name}: {entry.success ? 'Thu phục thành công' : 'Thu phục thất bại'}
+                  </Text>
+                ))
+              : null}
+            {snapshot.victory ? (
+              <RoundButton testID="raid-share" label="Chia sẻ Facebook" hint="Đăng thành tích" onPress={shareFacebook} size={s(44)} font={font(12)} />
+            ) : null}
             <RoundButton testID="raid-done" label="Về bản đồ" hint="Rời trận" hot tint="#e23a22" onPress={claim} size={s(48)} font={font(12)} />
           </View>
         </View>

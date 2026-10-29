@@ -10,7 +10,7 @@ import type { RegionId } from '../types/game';
 import { useSetup } from './SetupContext';
 import { entryBlock, isSpecialRegion, LOCKED_LAND, parseSector, parseTier, resolveZoneId, specialRegionOpen } from '../world/atlas';
 import { createField, fieldNeedsRebuild, monsterStats, nextRegion, townZoneId } from '../world/catalog';
-import { mineEncounter, withoutDungeonGates } from '../world/dungeons';
+import { MINE_DAILY_LIMIT, MINE_FLOOR_COUNT, mineEncounter, mineLabel, withoutDungeonGates } from '../world/dungeons';
 import { speciesById } from '../world/monsters';
 import { grantFleePeace, rejectPortal } from '../world/sim';
 import { ADVENTURE_LEVEL_CAP, expForNextLevel, MARCH_REGEN_PER_SEC, MARCH_STAMINA_PER_PX } from '../world/progression';
@@ -74,6 +74,7 @@ export type WorldState = {
   homeRegion: RegionId;
   adventureLevel: number;
   adventureExp: number;
+  mineFloor: number;
   encounter: Encounter | null;
   /** Pets (player team) and consumables chosen on the squad screen. Null until Vào trận. */
   squad: { allyIds: string[]; itemIds: ItemId[]; basicId: string } | null;
@@ -117,6 +118,9 @@ type WorldContextValue = WorldState & {
   returnToSquad: (patch: { vitals: Vitals; bag: Stack[]; pets: { id: string; hp: number; mp: number }[] }) => void;
   beginEncounter: (monster: Encounter) => void;
   approachMine: () => void;
+  setMineWave: (wave: number) => void;
+  consumeDungeonTicket: () => boolean;
+  refundDungeonTicket: () => void;
   grantRaidReward: (reward: RaidRewardView) => void;
   say: (notice: string) => void;
   openDuelSquad: () => void;
@@ -152,6 +156,7 @@ const EMPTY: WorldState = {
   homeRegion: 'forest',
   adventureLevel: 1,
   adventureExp: 0,
+  mineFloor: 1,
   encounter: null,
   squad: null,
   tamed: [],
@@ -353,7 +358,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     setState((current) => {
       const quests = readQuests(current.quests);
       if (itemId === 'net') return { ...current, quests, notice: 'Lưới dùng trong trận để thu phục quái.' };
-      if (itemId === 'mine-ticket') return { ...current, quests, notice: 'Vé vào Hầm mỏ. Đến cửa hầm trong giờ vàng.' };
+      if (itemId === 'mine-ticket') return { ...current, quests, notice: 'Vé hầm ngục. Cần 2–5 người tại cửa hầm trong giờ vàng.' };
       if (itemId === 'evo-shard') return { ...current, quests, notice: 'Mảnh tiến hóa thú. Giữ trong túi.' };
       if (itemId === 'might-blade') {
         if (current.weapon) return { ...current, quests, notice: 'Ô vũ khí đang có đồ. Kiếm sức mạnh nằm trong túi.' };
@@ -480,15 +485,41 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     setState((current) => {
       if (current.encounter?.mine && (current.scene === 'squad' || current.scene === 'encounter')) return current;
       if (current.scene !== 'wilds') return current;
-      const ticket = current.bag.some((stack) => stack.itemId === 'mine-ticket' && stack.qty > 0);
-      if (!ticket) return { ...current, notice: 'Cần vé Hầm mỏ. Vé rơi ngẫu nhiên khi đi săn.' };
+      const quests = readQuests(current.quests);
+      if (quests.mineEntriesToday >= MINE_DAILY_LIMIT) {
+        return { ...current, notice: `Hầm mỏ chỉ vào được ${MINE_DAILY_LIMIT} lần mỗi ngày.` };
+      }
+      const floor = Math.max(1, Math.min(MINE_FLOOR_COUNT, current.mineFloor || 1));
       return {
         ...current,
         scene: 'squad',
-        encounter: mineEncounter(current.adventureLevel),
+        encounter: mineEncounter(current.adventureLevel, floor, 1),
         squad: null,
-        notice: 'Hầm mỏ. Một quái mạnh hơn quái ngoài map.',
+        notice: `Hầm mỏ tầng ${floor}. Năm sóng ${mineLabel(floor, 1)} đến ${mineLabel(floor, 5)}. Máu và mana giữ nguyên giữa các sóng.`,
       };
+    });
+  }, []);
+
+  const setMineWave = useCallback((wave: number) => {
+    setState((current) => {
+      if (!current.encounter?.mine) return current;
+      const floor = current.encounter.mineFloor ?? current.mineFloor ?? 1;
+      return { ...current, encounter: mineEncounter(current.adventureLevel, floor, wave) };
+    });
+  }, []);
+
+  const consumeDungeonTicket = useCallback(() => {
+    const current = stateRef.current;
+    const next = removeOne(current.bag, 'mine-ticket');
+    if (!next) return false;
+    setState({ ...current, bag: next });
+    return true;
+  }, []);
+
+  const refundDungeonTicket = useCallback(() => {
+    setState((current) => {
+      const bag = addStack(current.bag, 'mine-ticket', 1);
+      return bag ? { ...current, bag } : current;
     });
   }, []);
 
@@ -569,17 +600,18 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   const confirmSquad = useCallback((allyIds: string[], itemIds: ItemId[], basicId: string) => {
     setState((current) => {
-      let bag = current.bag;
-      if (current.encounter?.mine) {
-        const next = removeOne(bag, 'mine-ticket');
-        if (!next) return { ...current, notice: 'Cần vé Hầm mỏ.' };
-        bag = next;
+      let quests = readQuests(current.quests);
+      if (current.encounter?.mine && (current.encounter.mineWave ?? 1) <= 1) {
+        if (quests.mineEntriesToday >= MINE_DAILY_LIMIT) {
+          return { ...current, notice: `Hầm mỏ chỉ vào được ${MINE_DAILY_LIMIT} lần mỗi ngày.` };
+        }
+        quests = { ...quests, mineEntriesToday: quests.mineEntriesToday + 1 };
       }
       const living = new Set(current.tamed.filter((monster) => monster.hp > 0).map((monster) => monster.id));
       const ready = allyIds.filter((id) => living.has(id));
       return {
         ...current,
-        bag,
+        quests,
         scene: 'encounter',
         squad: { allyIds: ready.slice(0, 3), itemIds: itemIds.slice(0, 3), basicId },
         notice: ready.length < allyIds.length ? 'Thú hết máu không thể ra trận.' : current.notice,
@@ -680,11 +712,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         saved && result.fieldMonsters && result.fieldMonsters.length > 0
           ? { ...current.fields, [current.zoneId]: rememberFieldVitals(saved, result.fieldMonsters) }
           : current.fields;
+      const clearedMine = Boolean(result.victory && current.encounter?.mine && (current.encounter.mineWave ?? 1) >= 5);
+      const mineFloor = clearedMine ? Math.min(MINE_FLOOR_COUNT, (current.mineFloor || 1) + 1) : current.mineFloor || 1;
       return {
         ...progressed,
         scene: 'wilds',
         encounter: null,
         squad: null,
+        mineFloor,
         fields,
         vitals: {
           ...result.vitals,
@@ -769,6 +804,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       collect,
       beginEncounter,
       approachMine,
+      setMineWave,
+      consumeDungeonTicket,
+      refundDungeonTicket,
       grantRaidReward,
       say,
       openDuelSquad,
@@ -807,6 +845,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     collect,
     beginEncounter,
     approachMine,
+    setMineWave,
+    consumeDungeonTicket,
+    refundDungeonTicket,
     grantRaidReward,
     say,
     openDuelSquad,

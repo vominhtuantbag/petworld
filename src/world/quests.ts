@@ -11,6 +11,7 @@ export type QuestTrack = {
   winsToday: number;
   feedsToday: number;
   scrollsToday: number;
+  mineEntriesToday: number;
   totalWins: number;
   claimed: string[];
 };
@@ -42,18 +43,20 @@ export function todayKey(now = new Date()): string {
 }
 
 export function emptyQuests(now = new Date()): QuestTrack {
-  return { day: todayKey(now), winsToday: 0, feedsToday: 0, scrollsToday: 0, totalWins: 0, claimed: [] };
+  return { day: todayKey(now), winsToday: 0, feedsToday: 0, scrollsToday: 0, mineEntriesToday: 0, totalWins: 0, claimed: [] };
 }
 
 export function normalizeQuests(track: QuestTrack, now = new Date()): QuestTrack {
   const day = todayKey(now);
-  if (track.day === day) return track;
+  const mineEntriesToday = Number.isFinite(track.mineEntriesToday) ? Math.max(0, Math.round(track.mineEntriesToday)) : 0;
+  if (track.day === day) return { ...track, mineEntriesToday };
   return {
     ...track,
     day,
     winsToday: 0,
     feedsToday: 0,
     scrollsToday: 0,
+    mineEntriesToday: 0,
     claimed: track.claimed.filter((id) => !id.startsWith('daily-')),
   };
 }

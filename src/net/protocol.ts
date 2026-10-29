@@ -112,6 +112,23 @@ export type RaidJoin = {
   attack: number;
   defense: number;
   maxHp: number;
+  hasTicket: boolean;
+};
+
+export type RaidTameResult = {
+  userId: string;
+  name: string;
+  success: boolean;
+};
+
+export type PartyInviteView = {
+  fromUserId: string;
+  fromName: string;
+};
+
+export type PartyMemberView = {
+  userId: string;
+  name: string;
 };
 
 export type RaidUnitView = {
@@ -142,7 +159,7 @@ export type RaidBattleView = {
   roomId: string;
   round: number;
   deadline: number;
-  status: 'active' | 'finished';
+  status: 'active' | 'taming' | 'finished';
   victory: boolean;
   log: string[];
   turnId: string;
@@ -152,6 +169,9 @@ export type RaidBattleView = {
   yourTurn: boolean;
   /** Present on a win. The same package for every fighter. No leader bonus. */
   rewards: RaidRewardView | null;
+  tameUntil: number | null;
+  yourTame: boolean | null;
+  tameResults: RaidTameResult[] | null;
 };
 
 export type GoldenHourView = {

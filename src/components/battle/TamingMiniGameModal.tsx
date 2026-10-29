@@ -9,6 +9,10 @@ type Props = {
   monsterName: string;
   /** At 5% health or less the live total starts with that 5% and still caps at 35. */
   lowHp: boolean;
+  /** Raid taming ends when this timestamp is reached, even mid-swing. */
+  deadlineAt?: number | null;
+  /** Shown in the header. Wild capture caps at 35, dungeon bosses at 30. */
+  capPercent?: number;
   /** Turns already stopped. Three means Huỷ spends a net and skips the turn. */
   onClose: (turnsPlayed: number) => void;
   /** One bonus per stop. The battle adds the low-HP 5% and caps the total at 35. */
@@ -70,7 +74,7 @@ function headerFor(tryNumber: number, bonuses: number[], lowHp: boolean): string
  * Rhythm capture for a wild Monster / Quái. Three stops are the whole attempt.
  * Each stop is faster and travels a shorter band. Pets are not captured here.
  */
-export function TamingMiniGameModal({ monsterName, lowHp, onClose, onFinish }: Props) {
+export function TamingMiniGameModal({ monsterName, lowHp, deadlineAt, capPercent, onClose, onFinish }: Props) {
   const { s, font } = useLayout();
   const progress = useRef(new Animated.Value(0)).current;
   const cursorX = useRef(new Animated.Value(0)).current;
@@ -215,11 +219,28 @@ export function TamingMiniGameModal({ monsterName, lowHp, onClose, onFinish }: P
     return () => host.removeEventListener?.('keydown', onKey);
   }, []);
 
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (deadlineAt == null) return;
+    const timer = setInterval(() => setNow(Date.now()), 200);
+    return () => clearInterval(timer);
+  }, [deadlineAt]);
+  useEffect(() => {
+    if (deadlineAt == null || doneRef.current) return;
+    if (Date.now() < deadlineAt) return;
+    doneRef.current = true;
+    runningRef.current = false;
+    progress.stopAnimation();
+    onFinishRef.current(bonusesRef.current.filter((bonus) => Number.isFinite(bonus)));
+  }, [deadlineAt, now, progress]);
+
   const tryNumber = bonuses.length >= STOPS ? STOPS : running ? bonuses.length + 1 : Math.max(1, bonuses.length);
   const name = monsterName?.trim() || 'Quái';
+  const remain = deadlineAt != null ? Math.max(0, Math.ceil((deadlineAt - now) / 1000)) : null;
   const zones = TAMING_ZONES.filter((zone) => zone.to > zone.from);
   const close = () => {
     try {
+      if (doneRef.current) return;
       runningRef.current = false;
       progress.stopAnimation();
       onCloseRef.current(bonusesRef.current.length);
@@ -233,7 +254,7 @@ export function TamingMiniGameModal({ monsterName, lowHp, onClose, onFinish }: P
     <View style={styles.scrim} testID="tame-modal">
       <View style={[styles.card, { padding: s(14), gap: s(10), borderRadius: s(16), maxWidth: s(520) }]}>
         <Text style={[styles.header, { fontSize: font(15) }]} accessibilityLabel={`${name}. ${headerFor(tryNumber, bonuses, lowHp)}`}>
-          {headerFor(tryNumber, bonuses, lowHp)}
+          {remain != null ? `${name}. ${remain}s. Tối đa ${capPercent ?? 30}%. ${headerFor(tryNumber, bonuses, lowHp)}` : headerFor(tryNumber, bonuses, lowHp)}
         </Text>
         <View
           style={[styles.gauge, { height: s(42) }]}

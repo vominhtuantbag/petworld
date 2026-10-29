@@ -37,6 +37,7 @@ import {
 } from '../world/combat';
 import { upcomingQueue } from '../world/combat/order';
 import { ITEMS } from '../world/items';
+import { MINE_WAVE_COUNT, mineClearDrops, mineEncounter, mineLabel } from '../world/dungeons';
 import type { Encounter, ItemId } from '../world/types';
 
 const ARENA = require('../../assets/images/sandau_2.jpg');
@@ -116,6 +117,9 @@ export function BattleScreen() {
   const focusRef = useRef<string | null>(null);
   const autoRef = useRef(false);
   const rewardsRef = useRef<BattleRewards | null>(null);
+  const mineWaveRef = useRef(world.encounter?.mineWave ?? 1);
+  const mineAcc = useRef({ exp: 0, gold: 0 });
+  const advancingRef = useRef(false);
   const hpWatch = useRef<Map<string, number> | null>(null);
   const floatSerial = useRef(0);
   const fxSerial = useRef(0);
@@ -133,7 +137,18 @@ export function BattleScreen() {
   const queueRef = useRef<string[]>([]);
   autoRef.current = auto;
   battleRef.current = battle;
-  if (battle?.over && !rewardsRef.current) rewardsRef.current = battleRewards(battle);
+  if (battle?.over && !rewardsRef.current) {
+    const midMine = battle.over === 'win' && Boolean(world.encounter?.mine) && mineWaveRef.current < MINE_WAVE_COUNT;
+    if (!midMine) {
+      const payout = battleRewards(battle);
+      if (world.encounter?.mine && battle.over === 'win') {
+        payout.exp += mineAcc.current.exp;
+        payout.gold += mineAcc.current.gold;
+        payout.drops = mineClearDrops();
+      }
+      rewardsRef.current = payout;
+    }
+  }
 
   const turnToken = battle && !battle.over && !paused ? battle.turnId : null;
   const handsOff = Boolean(
@@ -434,6 +449,56 @@ export function BattleScreen() {
     toastTimer.current = setTimeout(() => setToast(null), 2200);
   };
 
+  const bootMineWave = (prev: BattleState, floor: number, wave: number) => {
+    mineWaveRef.current = wave;
+    const foes = fieldFoes(mineEncounter(world.adventureLevel, floor, wave)).map(makeWild);
+    const next = startBattle(
+      { ...prev.player, cooldowns: {} },
+      prev.allies.map((ally) => ({ ...ally, cooldowns: {} })),
+      foes,
+      prev.bag,
+      prev.stamina,
+      prev.maxStamina,
+    );
+    next.tamed = prev.tamed;
+    advancingRef.current = false;
+    rewardsRef.current = null;
+    setFocusId(next.foes[0]?.id ?? null);
+    strikeGen.current += 1;
+    beatRef.current = 'stance';
+    setBeat('stance');
+    setSteps({});
+    setSlashes({});
+    setShakes({});
+    setFates({});
+    prevBattle.current = null;
+    hpWatch.current = null;
+    clocks.current.forEach(clearTimeout);
+    clocks.current = [];
+    setPaused(false);
+    setBattle(next);
+  };
+
+  useEffect(() => {
+    if (!battle?.over || battle.over !== 'win' || rewardsRef.current) return;
+    if (!world.encounter?.mine || mineWaveRef.current >= MINE_WAVE_COUNT) return;
+    if (advancingRef.current) return;
+    advancingRef.current = true;
+    const payout = battleRewards(battle);
+    mineAcc.current.exp += payout.exp;
+    mineAcc.current.gold += payout.gold;
+    const floor = world.encounter.mineFloor ?? world.mineFloor ?? 1;
+    const from = mineWaveRef.current;
+    const nextWave = from + 1;
+    showToast(`Sóng ${mineLabel(floor, from)} xong. Máu và mana giữ nguyên.`);
+    world.setMineWave(nextWave);
+    const snapshot = battle;
+    const timer = setTimeout(() => bootMineWave(snapshot, floor, nextWave), 800);
+    return () => clearTimeout(timer);
+    // Wave advance is driven by this over-state, not by world identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [battle]);
+
   const openTame = () => {
     try {
       if (!battle || battle.over || paused || beatRef.current !== 'ready' || battle.turnId !== 'player' || tameId) return;
@@ -566,6 +631,16 @@ export function BattleScreen() {
         <View style={styles.headerLeft}>
           <RoundButton label={paused ? '▶' : 'Dừng'} hint="Tạm dừng" disabled={!battle || Boolean(battle.over)} hot={paused} onPress={() => setPaused((value) => !value)} testID="battle-pause" size={s(36)} width={s(72)} font={font(12)} />
           <RoundButton label={auto ? 'Tự: Bật' : 'Tự: Tắt'} hint={auto ? 'Tắt tự động đánh' : 'Bật tự động đánh'} disabled={!battle || Boolean(battle.over)} hot={auto} onPress={() => setAuto((value) => !value)} testID="battle-auto" size={s(36)} width={s(78)} font={font(11)} />
+          {world.encounter?.mine ? (
+            <RoundButton
+              label={mineLabel(world.encounter.mineFloor ?? world.mineFloor ?? 1, mineWaveRef.current)}
+              hint="Sóng hầm mỏ"
+              onPress={() => undefined}
+              size={s(36)}
+              width={s(72)}
+              font={font(12)}
+            />
+          ) : null}
         </View>
         <TurnTimeline
           ids={turnQueue}
@@ -868,7 +943,7 @@ export function BattleScreen() {
           members={expMembers(battle, rewards, world.adventureLevel, world.adventureExp, world.tamed)}
           slots={rewards.victory ? lootSlots(rewards) : []}
           onConfirm={finish}
-          onRetry={retry}
+          onRetry={world.encounter?.mine ? undefined : retry}
         />
       ) : null}
     </View>
@@ -962,6 +1037,10 @@ function isBoar(card: Encounter): boolean {
 }
 
 function fieldFoes(encounter: Encounter): Encounter[] {
+  if (encounter.mine) {
+    const cards = (encounter.pool?.length ? encounter.pool : [encounter]).map((card) => ({ ...card, pool: undefined }));
+    return encounter.solo ? cards.slice(0, 1) : cards;
+  }
   if (encounter.solo) return roster(encounter);
   const cards = roster(encounter);
   const lead = cards[0];

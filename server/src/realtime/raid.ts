@@ -4,11 +4,25 @@ import { goldenHourAt } from '../dungeon/schedule.js';
 import { raidPayout, type RaidPayout } from '../dungeon/rewards.js';
 import type { Arena } from './arena.js';
 import type { WorldPresence } from './world.js';
-import type { DuelSkillView, RaidBattleView, RaidJoin, RaidLobbyView, RaidSlotView, RaidUnitView } from './protocol.js';
+import type {
+  DuelSkillView,
+  PartyInviteView,
+  PartyMemberView,
+  RaidBattleView,
+  RaidJoin,
+  RaidLobbyView,
+  RaidSlotView,
+  RaidTameResult,
+  RaidUnitView,
+} from './protocol.js';
 
 const LOBBY_MS = 30_000;
 const TURN_MS = 30_000;
+const TAME_MS = 15_000;
+const TAME_CAP = 30;
 const SLOTS = 5;
+const MIN_PARTY = 2;
+const MAX_PARTY = 5;
 
 type Member = {
   userId: string;
@@ -56,12 +70,20 @@ type Unit = {
   outfitColor?: string;
 };
 
+type TameAttempt = {
+  userId: string;
+  name: string;
+  bonuses: number[];
+  done: boolean;
+  success: boolean;
+};
+
 type RaidRoom = {
   id: string;
   level: number;
   round: number;
   deadline: number;
-  status: 'active' | 'finished';
+  status: 'active' | 'taming' | 'finished';
   resolving: boolean;
   victory: boolean;
   finishedAt: number;
@@ -71,6 +93,15 @@ type RaidRoom = {
   order: string[];
   turnId: string;
   rewards: RaidPayout | null;
+  payouts: Map<string, RaidPayout>;
+  tameUntil: number | null;
+  tames: TameAttempt[];
+};
+
+type Party = {
+  id: string;
+  leaderId: string;
+  members: { userId: string; name: string }[];
 };
 
 /**
@@ -84,6 +115,9 @@ export class DungeonRaids {
   private readonly userLobby = new Map<string, string>();
   private readonly rooms = new Map<string, RaidRoom>();
   private readonly userRoom = new Map<string, string>();
+  private readonly parties = new Map<string, Party>();
+  private readonly userParty = new Map<string, string>();
+  private readonly invites = new Map<string, { fromUserId: string; fromName: string; at: number }>();
 
   constructor(
     private readonly io: Server,
@@ -109,6 +143,10 @@ export class DungeonRaids {
       socket.on('raid:ready', () => this.ready(socket, userId));
       socket.on('raid:leave', () => this.leave(userId));
       socket.on('raid:action', (payload: unknown) => this.action(socket, userId, payload));
+      socket.on('raid:tame', (payload: unknown) => this.tame(socket, userId, payload));
+      socket.on('party:invite', (payload: unknown) => this.inviteParty(socket, userId, payload));
+      socket.on('party:accept', () => this.acceptParty(socket, userId));
+      socket.on('party:decline', () => this.declineParty(userId));
       socket.on('disconnect', () => {
         if (this.userLobby.has(userId)) this.dropLobby(userId);
       });
@@ -139,6 +177,10 @@ export class DungeonRaids {
     }
     if (this.arena.busy(userId)) {
       socket.emit('raid:error', { message: 'Bạn đang trong trận khác.' });
+      return;
+    }
+    if (!body.hasTicket) {
+      socket.emit('raid:error', { message: 'Cần vé hầm ngục. Hoàn thành Hầm mỏ tầng cuối để nhận vé.' });
       return;
     }
     const existingLobby = this.lobbyFor(userId);
@@ -186,6 +228,7 @@ export class DungeonRaids {
     };
     this.userLobby.set(userId, lobby.zoneId);
     this.emitLobby(lobby);
+    this.callParty(userId, lobby);
   }
 
   private ready(socket: Socket, userId: string) {
@@ -199,6 +242,7 @@ export class DungeonRaids {
     member.ready = true;
     socket.emit('raid:ready_ack', { lobbyId: lobby.id });
     this.emitLobby(lobby);
+    if (this.allReady(lobby)) this.closeLobby(lobby);
   }
 
   private leave(userId: string) {
@@ -225,6 +269,7 @@ export class DungeonRaids {
       return;
     }
     this.emitLobby(lobby);
+    if (this.allReady(lobby)) this.closeLobby(lobby);
   }
 
   /** Packs the line so the next arrival takes the first open slot. */
@@ -265,6 +310,10 @@ export class DungeonRaids {
         if (now - room.finishedAt > 120_000) this.destroy(room);
         continue;
       }
+      if (room.status === 'taming') {
+        if (now >= (room.tameUntil ?? 0) || room.tames.every((entry) => entry.done)) this.settleTame(room);
+        continue;
+      }
       if (room.resolving || now < room.deadline) continue;
       const actor = room.units.find((unit) => unit.id === room.turnId);
       room.log.push(`${actor?.name ?? 'Người chơi'} hết giờ và tự tấn công.`);
@@ -286,8 +335,18 @@ export class DungeonRaids {
       }
       ready.push({ member: slot, slot: index });
     }
-    if (ready.length === 0) return;
+    if (ready.length < MIN_PARTY) {
+      for (const entry of ready) {
+        this.live(entry.member.userId)?.emit('raid:evict', { message: 'Cần 2 đến 5 người để vào hầm ngục.' });
+      }
+      return;
+    }
     this.openRoom(ready);
+  }
+
+  private allReady(lobby: Lobby): boolean {
+    const filled = lobby.slots.filter((slot): slot is Member => slot != null);
+    return filled.length >= MIN_PARTY && filled.every((member) => member.ready);
   }
 
   private openRoom(party: { member: Member; slot: number }[]) {
@@ -312,6 +371,9 @@ export class DungeonRaids {
       order,
       turnId,
       rewards: null,
+      payouts: new Map(),
+      tameUntil: null,
+      tames: [],
     };
     this.rooms.set(room.id, room);
     for (const member of members) this.userRoom.set(member.userId, room.id);
@@ -391,13 +453,62 @@ export class DungeonRaids {
   }
 
   private finish(room: RaidRoom, victory: boolean) {
-    if (room.status === 'finished') return;
-    room.status = 'finished';
+    if (room.status === 'finished' || room.status === 'taming') return;
     room.victory = victory;
-    room.finishedAt = Date.now();
     room.deadline = Date.now();
     room.rewards = victory ? raidPayout(room.level) : null;
-    room.log.push(victory ? 'Cả đội hạ boss. Mỗi người nhận cùng một phần thưởng.' : 'Hầm ngục đánh bại cả đội.');
+    room.payouts = victory
+      ? new Map(room.members.map((member) => [member.userId, raidPayout(room.level)]))
+      : new Map();
+    if (!victory) {
+      room.status = 'finished';
+      room.finishedAt = Date.now();
+      room.log.push('Hầm ngục đánh bại cả đội.');
+      return;
+    }
+    room.status = 'taming';
+    room.tameUntil = Date.now() + TAME_MS;
+    room.tames = room.members.map((member) => ({
+      userId: member.userId,
+      name: member.name,
+      bonuses: [],
+      done: false,
+      success: false,
+    }));
+    room.log.push('Cả đội hạ boss. 15 giây thu phục. Tỉ lệ tối đa 30%.');
+  }
+
+  private tame(socket: Socket, userId: string, payload: unknown) {
+    const room = this.roomFor(userId);
+    if (!room || room.status !== 'taming') {
+      socket.emit('raid:error', { message: 'Không còn lượt thu phục.' });
+      return;
+    }
+    const attempt = room.tames.find((entry) => entry.userId === userId);
+    if (!attempt || attempt.done) return;
+    const bonuses = readBonuses(payload);
+    const chance = tameChance(bonuses);
+    attempt.bonuses = bonuses;
+    attempt.done = true;
+    attempt.success = Math.random() * 100 < chance;
+    room.log.push(`${attempt.name} ${attempt.success ? 'thu phục thành công' : 'thu phục thất bại'} (${Math.round(chance)}%).`);
+    this.emitRoom(room);
+    if (room.tames.every((entry) => entry.done)) this.settleTame(room);
+  }
+
+  private settleTame(room: RaidRoom) {
+    if (room.status !== 'taming') return;
+    for (const attempt of room.tames) {
+      if (attempt.done) continue;
+      attempt.done = true;
+      attempt.success = false;
+      attempt.bonuses = [];
+    }
+    room.status = 'finished';
+    room.finishedAt = Date.now();
+    room.tameUntil = Date.now();
+    room.log.push('Hết giờ thu phục. Mỗi người nhận phần thưởng riêng.');
+    this.emitRoom(room);
   }
 
   private emitRoom(room: RaidRoom) {
@@ -440,8 +551,121 @@ export class DungeonRaids {
       units: room.units.map((unit) => toView(unit)),
       skills: skillButtons(skillSource),
       yourTurn,
-      rewards: room.victory ? room.rewards : null,
+      rewards: room.victory ? (room.payouts.get(userId) ?? room.rewards) : null,
+      tameUntil: room.status === 'taming' ? room.tameUntil : null,
+      yourTame: (() => {
+        const attempt = room.tames.find((entry) => entry.userId === userId);
+        return attempt?.done ? attempt.success : null;
+      })(),
+      tameResults: room.status === 'finished' ? room.tames.map((entry) => ({ userId: entry.userId, name: entry.name, success: entry.success })) : null,
     };
+  }
+
+  private inviteParty(socket: Socket, userId: string, payload: unknown) {
+    const toUserId =
+      payload && typeof payload === 'object' && 'toUserId' in payload && typeof payload.toUserId === 'string' ? payload.toUserId : '';
+    if (!toUserId || toUserId === userId) {
+      socket.emit('party:error', { message: 'Không mời được người này.' });
+      return;
+    }
+    const party = this.partyOf(userId);
+    if (party && party.members.length >= MAX_PARTY) {
+      socket.emit('party:error', { message: 'Party đã đủ 5 người.' });
+      return;
+    }
+    const fromName = this.displayName(userId) || (typeof socket.data.username === 'string' ? socket.data.username : 'Người chơi');
+    this.invites.set(toUserId, { fromUserId: userId, fromName, at: Date.now() });
+    const view: PartyInviteView = { fromUserId: userId, fromName };
+    this.live(toUserId)?.emit('party:invite', view);
+    socket.emit('party:invite_sent', { toUserId });
+  }
+
+  private acceptParty(socket: Socket, userId: string) {
+    const invite = this.invites.get(userId);
+    this.invites.delete(userId);
+    if (!invite) {
+      socket.emit('party:error', { message: 'Lời mời đã hết.' });
+      return;
+    }
+    this.mergeParty(invite.fromUserId, userId);
+    const lobby = this.lobbyFor(invite.fromUserId);
+    if (lobby && !lobby.closing) this.live(userId)?.emit('raid:party_call', { zoneId: lobby.zoneId });
+  }
+
+  private declineParty(userId: string) {
+    const invite = this.invites.get(userId);
+    this.invites.delete(userId);
+    if (!invite) return;
+    this.live(invite.fromUserId)?.emit('party:declined', { userId });
+  }
+
+  private mergeParty(leaderId: string, memberId: string) {
+    let party = this.partyOf(leaderId);
+    if (!party) {
+      party = {
+        id: `party-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        leaderId,
+        members: [{ userId: leaderId, name: this.displayName(leaderId) }],
+      };
+      this.parties.set(party.id, party);
+      this.userParty.set(leaderId, party.id);
+    }
+    if (party.members.some((member) => member.userId === memberId)) {
+      this.emitParty(party);
+      return;
+    }
+    if (party.members.length >= MAX_PARTY) {
+      this.live(memberId)?.emit('party:error', { message: 'Party đã đủ 5 người.' });
+      return;
+    }
+    if (this.partyOf(memberId)) this.dropPartyMember(memberId);
+    party.members.push({ userId: memberId, name: this.displayName(memberId) });
+    this.userParty.set(memberId, party.id);
+    this.emitParty(party);
+  }
+
+  private dropPartyMember(userId: string) {
+    const party = this.partyOf(userId);
+    this.userParty.delete(userId);
+    if (!party) return;
+    party.members = party.members.filter((member) => member.userId !== userId);
+    if (party.members.length < 2) {
+      this.parties.delete(party.id);
+      for (const member of party.members) {
+        this.userParty.delete(member.userId);
+        this.live(member.userId)?.emit('party:update', { partyId: party.id, members: [] });
+      }
+      return;
+    }
+    if (party.leaderId === userId) party.leaderId = party.members[0]?.userId ?? party.leaderId;
+    this.emitParty(party);
+  }
+
+  private emitParty(party: Party) {
+    const members: PartyMemberView[] = party.members.map((member) => ({ userId: member.userId, name: member.name }));
+    for (const member of party.members) {
+      this.live(member.userId)?.emit('party:update', { partyId: party.id, members });
+    }
+  }
+
+  private callParty(userId: string, lobby: Lobby) {
+    const party = this.partyOf(userId);
+    if (!party) return;
+    for (const member of party.members) {
+      if (member.userId === userId || this.engaged(member.userId)) continue;
+      const standing = this.world.where(member.userId);
+      if (!standing || standing.zoneId !== lobby.zoneId) continue;
+      this.live(member.userId)?.emit('raid:party_call', { zoneId: lobby.zoneId });
+    }
+  }
+
+  private partyOf(userId: string): Party | undefined {
+    const partyId = this.userParty.get(userId);
+    return partyId ? this.parties.get(partyId) : undefined;
+  }
+
+  private displayName(userId: string): string {
+    return this.world.profile(userId)?.name || this.world.where(userId)?.username || 'Người chơi';
   }
 
   private lobbyFor(userId: string): Lobby | undefined {
@@ -631,7 +855,18 @@ function readJoin(payload: unknown): RaidJoin | null {
     attack: clamp(body.attack, 1, 9999, 10),
     defense: clamp(body.defense, 0, 9999, 4),
     maxHp: clamp(body.maxHp, 1, 99999, 100),
+    hasTicket: body.hasTicket === true,
   };
+}
+
+function readBonuses(payload: unknown): number[] {
+  if (!payload || typeof payload !== 'object' || !('bonuses' in payload) || !Array.isArray(payload.bonuses)) return [];
+  return payload.bonuses.filter((bonus): bonus is number => typeof bonus === 'number' && Number.isFinite(bonus)).slice(0, 3);
+}
+
+function tameChance(bonuses: number[]): number {
+  const rhythm = bonuses.reduce((sum, bonus) => sum + bonus, 0);
+  return Math.min(TAME_CAP, Math.max(0, rhythm));
 }
 
 function clip(value: unknown, max: number, fallback: string): string {

@@ -23,7 +23,31 @@ export type NearbyFighter = {
   name: string;
   x: number;
   y: number;
+  baseCharacterId?: string;
+  gender?: 'male' | 'female';
+  hairColor?: string;
+  outfitColor?: string;
+  level?: number;
+  hp?: number;
+  maxHp?: number;
 };
+
+export function toNearby(players: NearbyFighter[]): NearbyFighter[] {
+  return players.map((player) => ({
+    userId: player.userId,
+    username: player.username,
+    name: player.name,
+    x: player.x,
+    y: player.y,
+    baseCharacterId: player.baseCharacterId,
+    gender: player.gender,
+    hairColor: player.hairColor,
+    outfitColor: player.outfitColor,
+    level: player.level,
+    hp: player.hp,
+    maxHp: player.maxHp,
+  }));
+}
 
 export function nearestChallenger(self: { x: number; y: number }, remotes: NearbyFighter[]): NearbyFighter | null {
   let best: NearbyFighter | null = null;
@@ -58,6 +82,40 @@ export function PvpChallengeButton({ self, remotes }: { self: { x: number; y: nu
         {target.username || target.name}
       </Text>
     </Pressable>,
+  );
+}
+
+/** Accept or decline a dungeon-party invite. Mounted once above every field screen. */
+export function PartyInvitePrompt() {
+  const battle = useBattle();
+  const invite = battle.partyInvite;
+  if (!invite) return null;
+  return host(
+    <View pointerEvents="none" style={[styles.bannerWrap, webLayer]}>
+      <View testID="party-prompt" pointerEvents="auto" style={styles.banner}>
+        <Text style={styles.bannerText}>{invite.fromName} mời vào party hầm ngục</Text>
+        <View style={styles.row}>
+          <Pressable
+            accessibilityRole="button"
+            testID="party-accept"
+            hitSlop={8}
+            onPress={() => battle.acceptParty()}
+            style={[styles.choice, styles.accept]}
+          >
+            <Text style={styles.choiceLabel}>Nhận</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            testID="party-decline"
+            hitSlop={8}
+            onPress={() => battle.declineParty()}
+            style={[styles.choice, styles.decline]}
+          >
+            <Text style={styles.choiceLabel}>Từ chối</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>,
   );
 }
 

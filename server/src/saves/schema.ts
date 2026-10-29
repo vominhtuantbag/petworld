@@ -100,6 +100,7 @@ export const saveSchema = z.object({
     winsToday: z.number().int().min(0).max(9_999),
     feedsToday: z.number().int().min(0).max(9_999),
     scrollsToday: z.number().int().min(0).max(9_999),
+    mineEntriesToday: z.number().int().min(0).max(9_999).optional(),
     totalWins: z.number().int().min(0).max(999_999),
     claimed: z.array(z.string().min(1).max(40)).max(100),
   }),
@@ -134,6 +135,7 @@ export const saveSchema = z.object({
       .nullable(),
     adventureLevel: z.number().int().min(1).max(200),
     adventureExp: z.number().int().min(0).max(10_000_000),
+    mineFloor: z.number().int().min(1).max(10).optional(),
   }),
   avatar: z
     .union([

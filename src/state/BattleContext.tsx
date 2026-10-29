@@ -2,7 +2,17 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Socket } from 'socket.io-client';
 
 import { holdBattleSocket, releaseBattleSocket } from '../net/battleSocket';
-import type { BattleView, DuelPet, GoldenHourView, QueueView, RaidBattleView, RaidJoin, RaidLobbyView } from '../net/protocol';
+import type {
+  BattleView,
+  DuelPet,
+  GoldenHourView,
+  PartyInviteView,
+  PartyMemberView,
+  QueueView,
+  RaidBattleView,
+  RaidJoin,
+  RaidLobbyView,
+} from '../net/protocol';
 import { reportSessionReplaced } from '../net/sessionKick';
 import { useAuth } from './AuthContext';
 import { holdPresence } from './presenceHold';
@@ -52,6 +62,14 @@ type BattleContextValue = {
   readyRaid: () => void;
   leaveRaid: () => void;
   sendRaidAction: (action: 'attack' | 'skill', targetId: string, skill?: 0 | 1) => void;
+  sendRaidTame: (bonuses: number[]) => void;
+  partyInvite: PartyInviteView | null;
+  party: PartyMemberView[];
+  raidCall: string | null;
+  inviteParty: (toUserId: string) => void;
+  acceptParty: () => void;
+  declineParty: () => void;
+  clearRaidCall: () => void;
 };
 
 const BattleContext = createContext<BattleContextValue | null>(null);
@@ -78,6 +96,9 @@ export function BattleProvider({ children }: { children: ReactNode }) {
   const [goldenHour, setGoldenHour] = useState<GoldenHourView>(IDLE_HOUR);
   const [raidLobby, setRaidLobby] = useState<RaidLobbyView | null>(null);
   const [raid, setRaid] = useState<RaidBattleView | null>(null);
+  const [partyInvite, setPartyInvite] = useState<PartyInviteView | null>(null);
+  const [party, setParty] = useState<PartyMemberView[]>([]);
+  const [raidCall, setRaidCall] = useState<string | null>(null);
   const prepRef = useRef<PvpPrep | null>(null);
   const refreshRef = useRef(auth.refreshCharacter);
   prepRef.current = prep;
@@ -212,6 +233,23 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     const onRaidError = (payload: { message?: string }) => {
       setNotice(payload?.message ?? 'Không vào được hầm ngục.');
     };
+    const onPartyInvite = (next: PartyInviteView) => {
+      if (!next?.fromUserId) return;
+      setPartyInvite(next);
+      setNotice(`${next.fromName} mời vào party hầm ngục.`);
+    };
+    const onPartyUpdate = (payload: { members?: PartyMemberView[] }) => {
+      setParty(Array.isArray(payload?.members) ? payload.members : []);
+    };
+    const onPartyError = (payload: { message?: string }) => {
+      setNotice(payload?.message ?? 'Không mời được party.');
+    };
+    const onPartyDeclined = () => {
+      setNotice('Lời mời party bị từ chối.');
+    };
+    const onRaidCall = (payload: { zoneId?: string }) => {
+      if (typeof payload?.zoneId === 'string' && payload.zoneId.length > 0) setRaidCall(payload.zoneId);
+    };
 
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
@@ -234,6 +272,11 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     socket.on('raid:update', onRaidUpdate);
     socket.on('raid:evict', onRaidEvict);
     socket.on('raid:error', onRaidError);
+    socket.on('party:invite', onPartyInvite);
+    socket.on('party:update', onPartyUpdate);
+    socket.on('party:error', onPartyError);
+    socket.on('party:declined', onPartyDeclined);
+    socket.on('raid:party_call', onRaidCall);
 
     return () => {
       alive = false;
@@ -258,6 +301,11 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       socket.off('raid:update', onRaidUpdate);
       socket.off('raid:evict', onRaidEvict);
       socket.off('raid:error', onRaidError);
+      socket.off('party:invite', onPartyInvite);
+      socket.off('party:update', onPartyUpdate);
+      socket.off('party:error', onPartyError);
+      socket.off('party:declined', onPartyDeclined);
+      socket.off('raid:party_call', onRaidCall);
       if (socketRef.current === socket) socketRef.current = null;
       releaseBattleSocket(socket);
     };
@@ -316,6 +364,29 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     socketRef.current?.emit('raid:action', { action, targetId, skill: skill ?? 0 });
   }, []);
 
+  const sendRaidTame = useCallback((bonuses: number[]) => {
+    socketRef.current?.emit('raid:tame', { bonuses });
+  }, []);
+
+  const inviteParty = useCallback((toUserId: string) => {
+    setNotice('Đã gửi lời mời party.');
+    socketRef.current?.emit('party:invite', { toUserId });
+  }, []);
+
+  const acceptParty = useCallback(() => {
+    setPartyInvite(null);
+    socketRef.current?.emit('party:accept');
+  }, []);
+
+  const declineParty = useCallback(() => {
+    setPartyInvite(null);
+    socketRef.current?.emit('party:decline');
+  }, []);
+
+  const clearRaidCall = useCallback(() => {
+    setRaidCall(null);
+  }, []);
+
   const readyDuel = useCallback((pets: DuelPet[]) => {
     const matchId = prepRef.current?.matchId;
     if (!matchId) return;
@@ -362,6 +433,14 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       readyRaid,
       leaveRaid,
       sendRaidAction,
+      sendRaidTame,
+      partyInvite,
+      party,
+      raidCall,
+      inviteParty,
+      acceptParty,
+      declineParty,
+      clearRaidCall,
     }),
     [
       connection,
@@ -387,6 +466,14 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       readyRaid,
       leaveRaid,
       sendRaidAction,
+      sendRaidTame,
+      partyInvite,
+      party,
+      raidCall,
+      inviteParty,
+      acceptParty,
+      declineParty,
+      clearRaidCall,
     ],
   );
 

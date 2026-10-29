@@ -293,8 +293,10 @@ export type Encounter = {
   pool?: Encounter[];
   /** One foe. The wild court does not pad this fight out to a pack. */
   solo?: boolean;
-  /** Spending a mine ticket starts this fight. */
+  /** A Hầm mỏ run. Waves 1–5 live on `mineWave`. */
   mine?: boolean;
+  mineFloor?: number;
+  mineWave?: number;
 };
 
 export type FieldScene = 'town' | 'wilds' | 'pvp' | 'squad' | 'encounter' | 'cup';

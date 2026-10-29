@@ -86,6 +86,7 @@ export type GameSave = {
     heroSkills: HeroSkillLoadout | null;
     adventureLevel: number;
     adventureExp: number;
+    mineFloor: number;
   };
   avatar: AvatarLook | null;
 };
@@ -109,6 +110,7 @@ export type SaveSource = {
   homeRegion: RegionId;
   adventureLevel: number;
   adventureExp: number;
+  mineFloor: number;
   tamed: TamedMonster[];
   heroSkills: HeroSkillLoadout | null;
   quests: QuestTrack;
@@ -133,9 +135,10 @@ export type WorldSnapshot = {
   innReadyAt: number;
   unlocked: RegionId[];
   homeRegion: RegionId;
-  adventureLevel: number;
-  adventureExp: number;
-  encounter: null;
+    adventureLevel: number;
+    adventureExp: number;
+    mineFloor: number;
+    encounter: null;
   squad: null;
   tamed: TamedMonster[];
   heroSkills: HeroSkillLoadout | null;
@@ -244,6 +247,7 @@ export function captureGameSave(state: SaveSource, player: InitializedPlayer, av
       heroSkills: state.heroSkills,
       adventureLevel: state.adventureLevel,
       adventureExp: state.adventureExp,
+      mineFloor: state.mineFloor,
     },
     avatar,
   };
@@ -285,6 +289,7 @@ export function applyGameSave(save: GameSave): WorldSnapshot {
     homeRegion: save.world.homeRegion,
     adventureLevel: save.world.adventureLevel,
     adventureExp: save.world.adventureExp,
+    mineFloor: save.world.mineFloor,
     encounter: null,
     squad: null,
     tamed: save.roster,
@@ -335,6 +340,7 @@ export function createStarterWorld(player: InitializedPlayer): WorldSnapshot {
     homeRegion: region,
     adventureLevel: 1,
     adventureExp: 0,
+    mineFloor: 1,
     encounter: null,
     squad: null,
     tamed: [],
@@ -487,6 +493,7 @@ function parseWorld(value: unknown, profile: GameSave['profile']): GameSave['wor
     heroSkills: parseHeroSkills(row.heroSkills),
     adventureLevel: level,
     adventureExp: int(row.adventureExp, 0, 10_000_000, 0),
+    mineFloor: int(row.mineFloor, 1, 10, 1),
   };
 }
 
@@ -597,6 +604,7 @@ function parseQuests(value: unknown): QuestTrack {
     winsToday: int(value.winsToday, 0, 9_999, 0),
     feedsToday: int(value.feedsToday, 0, 9_999, 0),
     scrollsToday: int(value.scrollsToday, 0, 9_999, 0),
+    mineEntriesToday: int(value.mineEntriesToday, 0, 9_999, 0),
     totalWins: int(value.totalWins, 0, 999_999, 0),
     claimed,
   });
