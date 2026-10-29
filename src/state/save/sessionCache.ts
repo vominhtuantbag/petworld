@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import type { PublicUser, ServerCharacter } from '../../net/protocol';
+import type { PublicUser, ServerCharacter, SocialProvider } from '../../net/protocol';
 
 const KEY = 'game-thu-gian.session';
 
@@ -16,7 +16,11 @@ export async function readSessionCache(): Promise<SessionCache | null> {
     if (!raw) return null;
     const data = JSON.parse(raw) as Partial<SessionCache>;
     if (!data.user || typeof data.user.id !== 'string' || typeof data.user.email !== 'string') return null;
-    return { user: data.user, character: data.character ?? null };
+    const providers = Array.isArray(data.user.providers) ? data.user.providers.filter(isProvider) : [];
+    return {
+      user: { ...data.user, guest: Boolean(data.user.guest), providers },
+      character: data.character ?? null,
+    };
   } catch (error) {
     console.warn('[Game Thư Giãn] Không đọc được phiên đã lưu.', error);
     return null;
@@ -29,6 +33,10 @@ export async function writeSessionCache(cache: SessionCache): Promise<void> {
   } catch (error) {
     console.warn('[Game Thư Giãn] Không ghi được phiên.', error);
   }
+}
+
+function isProvider(value: unknown): value is SocialProvider {
+  return value === 'google' || value === 'apple' || value === 'facebook';
 }
 
 export async function clearSessionCache(): Promise<void> {

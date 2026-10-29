@@ -80,11 +80,15 @@ export type QueueView = {
   position: number;
 };
 
+export type SocialProvider = 'google' | 'apple' | 'facebook';
+
 export type PublicUser = {
   id: string;
   username: string;
   email: string;
   createdAt: string;
+  guest: boolean;
+  providers: SocialProvider[];
 };
 
 export type CharacterStats = {

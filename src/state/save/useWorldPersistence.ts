@@ -17,7 +17,7 @@ import {
   type SaveSource,
   type WorldSnapshot,
 } from './gameSave';
-import { readDeviceSave, readLocalSave, readLocalSaveSync, writeLocalSave } from './localSave';
+import { readLocalSave, readLocalSaveSync, writeLocalSave } from './localSave';
 import { commitGameSave, fetchRemoteSave } from './syncSave';
 
 const PUSH_MS = 800;
@@ -110,6 +110,15 @@ export function useWorldPersistence(state: SaveSource, setState: (next: WorldSna
       return;
     }
     if (!player) return;
+    if (booted.current && booted.current !== userId) {
+      allowPush.current = false;
+      pending.current = null;
+      remoteChecked.current = null;
+      booted.current = null;
+      revision.current = 0;
+      lastFingerprint.current = '';
+      setState(emptyWorld());
+    }
     if (booted.current === userId && remoteChecked.current === userId) return;
 
     const run = ++generation.current;
@@ -144,18 +153,6 @@ export function useWorldPersistence(state: SaveSource, setState: (next: WorldSna
         if (progressed) {
           pushRef.current();
           return;
-        }
-        try {
-          const device = await readDeviceSave();
-          if (generation.current !== run) return;
-          if (device) {
-            publish(device, userId);
-            await writeLocalSave(userId, device);
-            pushRef.current();
-            return;
-          }
-        } catch (error) {
-          console.warn('[Game Thư Giãn] Không khôi phục được tiến trình.', error);
         }
         if (booted.current !== userId) {
           lastFingerprint.current = '';

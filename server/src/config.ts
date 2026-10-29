@@ -38,4 +38,10 @@ export const config = {
   corsOrigin: envText('CORS_ORIGIN') ?? '*',
   bcryptRounds: production ? 12 : 10,
   production,
+  publicUrl: envText('PUBLIC_URL'),
+  googleClientId: envText('GOOGLE_CLIENT_ID'),
+  googleClientSecret: envText('GOOGLE_CLIENT_SECRET'),
+  facebookAppId: envText('FACEBOOK_APP_ID'),
+  facebookAppSecret: envText('FACEBOOK_APP_SECRET'),
+  appleClientId: envText('APPLE_CLIENT_ID'),
 } as const;

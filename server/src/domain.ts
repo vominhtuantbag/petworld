@@ -6,6 +6,13 @@ import type { GameSave } from './saves/schema.js';
  * Add a column/field here and in both store implementations together.
  */
 
+export type SocialProvider = 'google' | 'apple' | 'facebook';
+
+export type LinkedLogin = {
+  provider: SocialProvider;
+  subject: string;
+};
+
 export type UserRecord = {
   id: string;
   username: string;
@@ -14,6 +21,9 @@ export type UserRecord = {
   createdAt: string;
   /** Latest login. An older token for this account is no longer valid. */
   sessionId?: string;
+  /** True until this anonymous account is bound to a social login. */
+  guest?: boolean;
+  providers?: LinkedLogin[];
 };
 
 export type PublicUser = {
@@ -21,6 +31,8 @@ export type PublicUser = {
   username: string;
   email: string;
   createdAt: string;
+  guest: boolean;
+  providers: SocialProvider[];
 };
 
 export type CharacterStats = {
@@ -60,6 +72,8 @@ export function toPublicUser(user: UserRecord): PublicUser {
     username: user.username,
     email: user.email,
     createdAt: user.createdAt,
+    guest: Boolean(user.guest),
+    providers: (user.providers ?? []).map((entry) => entry.provider),
   };
 }
 
@@ -67,11 +81,24 @@ export function toPublicUser(user: UserRecord): PublicUser {
  * One character per account. Cosmetic edits keep wins, losses, and level.
  * A brand-new character starts at level 1.
  */
+export type NewUser = {
+  username: string;
+  email: string;
+  passwordHash: string;
+  guest?: boolean;
+  providers?: LinkedLogin[];
+};
+
+export type LinkResult = 'linked' | 'taken' | 'email_used' | 'missing';
+
 export interface AccountStore {
-  createUser(input: { username: string; email: string; passwordHash: string }): Promise<UserRecord>;
+  createUser(input: NewUser): Promise<UserRecord>;
   findUserByEmail(email: string): Promise<UserRecord | null>;
   findUserByUsername(username: string): Promise<UserRecord | null>;
   findUserById(id: string): Promise<UserRecord | null>;
+  findUserByProvider(provider: SocialProvider, subject: string): Promise<UserRecord | null>;
+  /** Binds a social login onto this user id. Progress stays on the same account. */
+  linkProvider(userId: string, login: LinkedLogin, email: string | null): Promise<LinkResult>;
   setSession(userId: string, sessionId: string): Promise<void>;
   findCharacterByUserId(userId: string): Promise<CharacterRecord | null>;
   upsertCharacter(userId: string, input: CharacterInput): Promise<CharacterRecord>;

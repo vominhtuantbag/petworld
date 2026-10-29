@@ -33,6 +33,7 @@ async function main() {
     const bao = await register(base, `bao_${stamp}`, `bao_${stamp}@example.com`);
     await saveCharacter(base, lan.token, 'Lan', 'f-archer', 'forest');
     await saveCharacter(base, bao.token, 'Bao', 'm-monk', 'beach');
+    await checkAccountsStaySeparate(base, lan.token, bao.token, `lan_${stamp}@example.com`, `bao_${stamp}@example.com`);
     await checkAdventureSave(base, lan.token);
 
     const left = connect(base, lan.token);
@@ -403,6 +404,42 @@ async function register(base: string, username: string, email: string) {
   });
   if (response.status !== 201) throw new Error(JSON.stringify(response.json));
   return response.json as { token: string };
+}
+
+async function checkAccountsStaySeparate(base: string, lanToken: string, baoToken: string, lanEmail: string, baoEmail: string) {
+  const lanMe = await requestJson(`${base}/api/me`, { method: 'GET', token: lanToken });
+  const baoMe = await requestJson(`${base}/api/me`, { method: 'GET', token: baoToken });
+  const lanUser = userOf(lanMe.json);
+  const baoUser = userOf(baoMe.json);
+  if (!lanUser || lanUser.email !== lanEmail) throw new Error('The first login resolved to another account.');
+  if (!baoUser || baoUser.email !== baoEmail || baoUser.id === lanUser.id) throw new Error('The second login resolved to the first account.');
+  const guestA = await requestJson(`${base}/api/auth/guest`, { method: 'POST', body: {} });
+  const guestB = await requestJson(`${base}/api/auth/guest`, { method: 'POST', body: {} });
+  const first = userOf(guestA.json);
+  const second = userOf(guestB.json);
+  const guestToken = tokenOf(guestA.json);
+  if (guestA.status !== 201 || guestB.status !== 201 || !first?.guest || !second?.guest || first.id === second.id || !guestToken) {
+    throw new Error('Two guest plays shared one account.');
+  }
+  const again = await requestJson(`${base}/api/me`, { method: 'GET', token: guestToken });
+  const seen = userOf(again.json);
+  if (!seen || seen.id !== first.id) throw new Error('A guest token opened a different account.');
+  console.log('[smoke] two emails and two guests stayed on separate accounts');
+}
+
+function userOf(json: unknown): { id: string; email: string; guest?: boolean } | null {
+  if (!json || typeof json !== 'object' || !('user' in json)) return null;
+  const user = (json as { user?: unknown }).user;
+  if (!user || typeof user !== 'object') return null;
+  const row = user as { id?: unknown; email?: unknown; guest?: unknown };
+  if (typeof row.id !== 'string' || typeof row.email !== 'string') return null;
+  return { id: row.id, email: row.email, guest: row.guest === true };
+}
+
+function tokenOf(json: unknown): string | null {
+  if (!json || typeof json !== 'object' || !('token' in json)) return null;
+  const token = (json as { token?: unknown }).token;
+  return typeof token === 'string' ? token : null;
 }
 
 async function checkAdventureSave(base: string, token: string) {

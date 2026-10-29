@@ -33,6 +33,18 @@ export async function clearToken(): Promise<void> {
   await SecureStore.deleteItemAsync(KEY);
 }
 
+/** Subject of a JWT, used only to keep a cached profile from attaching to another account. */
+export function tokenSubject(token: string): string | null {
+  const part = token.split('.')[1];
+  if (!part || typeof globalThis.atob !== 'function') return null;
+  try {
+    const json = JSON.parse(globalThis.atob(part.replace(/-/g, '+').replace(/_/g, '/'))) as { sub?: unknown };
+    return typeof json.sub === 'string' ? json.sub : null;
+  } catch {
+    return null;
+  }
+}
+
 function webStorage(): Storage | undefined {
   if (typeof localStorage === 'undefined') return undefined;
   return localStorage;

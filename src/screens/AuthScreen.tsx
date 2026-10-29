@@ -1,12 +1,19 @@
-import { useState } from 'react';
-import { Keyboard, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Keyboard, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { GlowButton } from '../components/GlowButton';
 import { ApiError } from '../net/api';
+import type { SocialProvider } from '../net/protocol';
 import { useAuth } from '../state/AuthContext';
 import { theme } from '../theme/theme';
 import { useLayout } from '../theme/useLayout';
+
+const SOCIAL: { id: SocialProvider; label: string }[] = [
+  { id: 'google', label: 'Google' },
+  { id: 'apple', label: 'Apple' },
+  { id: 'facebook', label: 'Facebook' },
+];
 
 /**
  * Landscape sign-in. Registration and login share one card so the form
@@ -21,6 +28,14 @@ export function AuthScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (typeof sessionStorage === 'undefined') return;
+    const notice = sessionStorage.getItem('game-thu-gian.auth-error');
+    if (!notice) return;
+    sessionStorage.removeItem('game-thu-gian.auth-error');
+    setError(notice);
+  }, []);
 
   const submit = async () => {
     Keyboard.dismiss();
@@ -68,6 +83,40 @@ export function AuthScreen() {
               void submit();
             }}
           />
+          <GlowButton
+            testID="auth-guest"
+            label="Chơi ngay"
+            enabled={!busy}
+            onPress={() => {
+              setBusy(true);
+              setError(null);
+              void auth.playAsGuest().catch((caught: unknown) => {
+                setError(caught instanceof ApiError ? caught.message : 'Không vào được với tư cách khách.');
+                setBusy(false);
+              });
+            }}
+          />
+          <View style={styles.socialRow}>
+            {SOCIAL.map((provider) => (
+              <Pressable
+                key={provider.id}
+                accessibilityRole="button"
+                testID={`auth-${provider.id}`}
+                disabled={busy}
+                onPress={() => {
+                  setBusy(true);
+                  setError(null);
+                  void auth.beginSocial(provider.id).catch((caught: unknown) => {
+                    setError(caught instanceof ApiError ? caught.message : 'Không mở được đăng nhập mạng xã hội.');
+                    setBusy(false);
+                  });
+                }}
+                style={styles.social}
+              >
+                <Text style={[styles.socialLabel, { fontSize: font(13) }]}>{provider.label}</Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
       </View>
     </SafeAreaView>
@@ -181,5 +230,23 @@ const styles = StyleSheet.create({
   },
   error: {
     color: '#e7a3a3',
+  },
+  socialRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  social: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: theme.cardRaised,
+  },
+  socialLabel: {
+    color: theme.ink,
+    fontWeight: '800',
   },
 });

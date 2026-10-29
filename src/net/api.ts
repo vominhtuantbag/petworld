@@ -1,5 +1,5 @@
 import { API_URL } from '../config/env';
-import type { PublicUser, ServerCharacter } from './protocol';
+import type { PublicUser, ServerCharacter, SocialProvider } from './protocol';
 import { reportSessionReplaced } from './sessionKick';
 
 export class ApiError extends Error {
@@ -33,6 +33,22 @@ export async function registerAccount(input: { username: string; email: string; 
 
 export async function loginAccount(input: { email: string; password: string }): Promise<AuthResponse> {
   return request('/api/auth/login', { method: 'POST', body: input });
+}
+
+export async function loginGuest(): Promise<AuthResponse> {
+  return request('/api/auth/guest', { method: 'POST', body: {} });
+}
+
+export async function startSocialLogin(provider: SocialProvider, returnTo: string): Promise<{ url: string }> {
+  return request('/api/auth/social/start', { method: 'POST', body: { provider, returnTo } });
+}
+
+export async function startAccountLink(token: string, provider: SocialProvider, returnTo: string): Promise<{ url: string }> {
+  return request('/api/auth/link/start', { method: 'POST', token, body: { provider, returnTo } });
+}
+
+export async function exchangeSocialCode(code: string): Promise<AuthResponse> {
+  return request('/api/auth/social/exchange', { method: 'POST', body: { code } });
 }
 
 export async function fetchMe(token: string): Promise<PublicUser> {

@@ -1,8 +1,11 @@
+import { randomUUID } from 'node:crypto';
+
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
 import { z } from 'zod';
 
+import { beginOAuth, identityFromCallback, isSocialProvider, parkExchange, providerReady, publicBase, safeReturn, takeExchange, takeState } from '../auth/oauth.js';
 import { acceptToken, issueSession, SESSION_REPLACED_CODE, SESSION_REPLACED_MESSAGE } from '../auth/sessions.js';
 import { hashPassword, readToken, verifyPassword } from '../auth/tokens.js';
 import { AVATAR_IDS, REGION_IDS } from '../catalog.js';
@@ -69,6 +72,7 @@ export function createApp(store: AccountStore, board = new TournamentBoard()) {
     }),
   );
   app.use(express.json({ limit: '256kb' }));
+  app.use(express.urlencoded({ extended: false }));
 
   app.get('/', (_request, response) => {
     response.json({ ok: true, service: 'game-thu-gian' });
@@ -126,6 +130,146 @@ export function createApp(store: AccountStore, board = new TournamentBoard()) {
       response.json({ token: await issueSession(store, publicUser), user: publicUser });
     }),
   );
+
+  app.post(
+    '/api/auth/guest',
+    rateLimit,
+    asyncRoute(async (_request, response) => {
+      const username = await uniqueUsername(store, 'khach');
+      const user = await store.createUser({
+        username,
+        email: `guest.${randomUUID()}@guest.local`,
+        passwordHash: await hashPassword(randomUUID()),
+        guest: true,
+      });
+      const publicUser = toPublicUser(user);
+      response.status(201).json({ token: await issueSession(store, publicUser), user: publicUser });
+    }),
+  );
+
+  app.post(
+    '/api/auth/social/start',
+    rateLimit,
+    asyncRoute(async (request, response) => {
+      const provider = typeof request.body?.provider === 'string' ? request.body.provider : '';
+      const returnTo = typeof request.body?.returnTo === 'string' ? safeReturn(request.body.returnTo) : null;
+      if (!isSocialProvider(provider) || !returnTo) {
+        response.status(400).json({ error: 'Nhà cung cấp hoặc đường về không hợp lệ.' });
+        return;
+      }
+      if (!providerReady(provider)) {
+        response.status(503).json({ error: `Đăng nhập ${providerLabel(provider)} chưa được cấu hình trên máy chủ.` });
+        return;
+      }
+      const url = beginOAuth({
+        provider,
+        returnTo,
+        redirectUri: `${publicBase(request)}/api/auth/social/callback`,
+        mode: 'login',
+      });
+      response.json({ url });
+    }),
+  );
+
+  app.post(
+    '/api/auth/link/start',
+    rateLimit,
+    asyncRoute(async (request, response) => {
+      const user = await userFromRequest(store, request, response);
+      if (!user) return;
+      const provider = typeof request.body?.provider === 'string' ? request.body.provider : '';
+      const returnTo = typeof request.body?.returnTo === 'string' ? safeReturn(request.body.returnTo) : null;
+      if (!isSocialProvider(provider) || !returnTo) {
+        response.status(400).json({ error: 'Nhà cung cấp hoặc đường về không hợp lệ.' });
+        return;
+      }
+      if (!providerReady(provider)) {
+        response.status(503).json({ error: `Liên kết ${providerLabel(provider)} chưa được cấu hình trên máy chủ.` });
+        return;
+      }
+      const url = beginOAuth({
+        provider,
+        returnTo,
+        redirectUri: `${publicBase(request)}/api/auth/social/callback`,
+        mode: 'link',
+        userId: user.id,
+      });
+      response.json({ url });
+    }),
+  );
+
+  app.post(
+    '/api/auth/social/exchange',
+    rateLimit,
+    asyncRoute(async (request, response) => {
+      const code = typeof request.body?.code === 'string' ? request.body.code : '';
+      const token = takeExchange(code);
+      const auth = token ? readToken(token) : null;
+      const user = auth ? await store.findUserById(auth.sub) : null;
+      if (!token || !user) {
+        response.status(401).json({ error: 'Mã đăng nhập đã hết hạn.' });
+        return;
+      }
+      response.json({ token, user: toPublicUser(user) });
+    }),
+  );
+
+  const socialCallback = asyncRoute(async (request, response) => {
+    const source = { ...request.query, ...request.body } as Record<string, unknown>;
+    const state = typeof source.state === 'string' ? source.state : '';
+    const pending = state ? takeState(state) : null;
+    const fail = (message: string) => {
+      if (!pending) {
+        response.status(400).json({ error: message });
+        return;
+      }
+      const back = new URL(pending.returnTo);
+      back.searchParams.set(pending.mode === 'link' ? 'link_error' : 'auth_error', message);
+      response.redirect(back.toString());
+    };
+    if (!pending) {
+      fail('Phiên đăng nhập mạng xã hội đã hết hạn.');
+      return;
+    }
+    try {
+      const identity = await identityFromCallback(pending, source, source);
+      if (pending.mode === 'link') {
+        if (!pending.userId) throw new Error('Không có tài khoản để liên kết.');
+        const linked = await store.linkProvider(pending.userId, { provider: identity.provider, subject: identity.subject }, identity.email);
+        if (linked === 'taken') throw new Error('Tài khoản mạng xã hội này đã được dùng.');
+        if (linked === 'email_used') throw new Error('Email này đã thuộc một tài khoản khác.');
+        if (linked !== 'linked') throw new Error('Không liên kết được tài khoản.');
+        const back = new URL(pending.returnTo);
+        back.searchParams.set('linked', identity.provider);
+        response.redirect(back.toString());
+        return;
+      }
+      let account = await store.findUserByProvider(identity.provider, identity.subject);
+      if (!account && identity.email) {
+        const byEmail = await store.findUserByEmail(identity.email);
+        if (byEmail) {
+          fail('Email này đã có tài khoản. Hãy đăng nhập rồi liên kết trong Cài đặt.');
+          return;
+        }
+      }
+      if (!account) {
+        account = await store.createUser({
+          username: await uniqueUsername(store, identity.name),
+          email: identity.email?.toLowerCase() ?? `${identity.provider}.${identity.subject}@players.local`,
+          passwordHash: await hashPassword(randomUUID()),
+          providers: [{ provider: identity.provider, subject: identity.subject }],
+        });
+      }
+      const token = await issueSession(store, toPublicUser(account));
+      const back = new URL(pending.returnTo);
+      back.searchParams.set('auth_code', parkExchange(token));
+      response.redirect(back.toString());
+    } catch (error) {
+      fail(error instanceof Error ? error.message : 'Không đăng nhập được.');
+    }
+  });
+  app.get('/api/auth/social/callback', socialCallback);
+  app.post('/api/auth/social/callback', socialCallback);
 
   app.get(
     '/api/me',
@@ -261,6 +405,21 @@ function toPublicCup(cup: Cup) {
     championName: cup.champion?.username ?? null,
     rewardTitle: cup.rewardTitle,
   };
+}
+
+async function uniqueUsername(store: AccountStore, name: string): Promise<string> {
+  const base = name.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 12) || 'nguoi';
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const candidate = `${base}_${randomUUID().slice(0, 4)}`.slice(0, 20);
+    if (!(await store.findUserByUsername(candidate))) return candidate;
+  }
+  return `nguoi_${randomUUID().slice(0, 8)}`;
+}
+
+function providerLabel(provider: string): string {
+  if (provider === 'google') return 'Google';
+  if (provider === 'apple') return 'Apple';
+  return 'Facebook';
 }
 
 async function userFromRequest(store: AccountStore, request: Request, response: Response) {

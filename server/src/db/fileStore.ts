@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 import { freshStats, statsForRecord } from '../combat/stats.js';
 import { isNewerSave, saveSchema, type GameSave } from '../saves/schema.js';
-import type { AccountStore, CharacterInput, CharacterRecord, UserRecord } from '../domain.js';
+import type { AccountStore, CharacterInput, CharacterRecord, LinkResult, LinkedLogin, NewUser, SocialProvider, UserRecord } from '../domain.js';
 
 type AdventureRow = {
   userId: string;
@@ -26,15 +26,17 @@ export class FileAccountStore implements AccountStore {
 
   constructor(private readonly filePath: string) {}
 
-  createUser(input: { username: string; email: string; passwordHash: string }): Promise<UserRecord> {
+  createUser(input: NewUser): Promise<UserRecord> {
     return this.update((db) => {
       const user: UserRecord = {
         id: randomUUID(),
         username: input.username,
-        email: input.email,
+        email: input.email.toLowerCase(),
         passwordHash: input.passwordHash,
         createdAt: new Date().toISOString(),
         sessionId: '',
+        guest: Boolean(input.guest),
+        providers: input.providers ?? [],
       };
       db.users.push(user);
       return user;
@@ -51,6 +53,14 @@ export class FileAccountStore implements AccountStore {
 
   findUserById(id: string): Promise<UserRecord | null> {
     return this.read((db) => db.users.find((user) => user.id === id) ?? null);
+  }
+
+  findUserByProvider(provider: SocialProvider, subject: string): Promise<UserRecord | null> {
+    return this.read((db) => db.users.find((user) => (user.providers ?? []).some((entry) => entry.provider === provider && entry.subject === subject)) ?? null);
+  }
+
+  linkProvider(userId: string, login: LinkedLogin, email: string | null): Promise<LinkResult> {
+    return this.update((db) => linkOnto(db.users, userId, login, email));
   }
 
   setSession(userId: string, sessionId: string): Promise<void> {
@@ -157,4 +167,24 @@ export class FileAccountStore implements AccountStore {
       throw error;
     }
   }
+}
+
+function linkOnto(users: UserRecord[], userId: string, login: LinkedLogin, email: string | null): LinkResult {
+  const owner = users.find((user) => (user.providers ?? []).some((entry) => entry.provider === login.provider && entry.subject === login.subject));
+  if (owner && owner.id !== userId) return 'taken';
+  const user = users.find((entry) => entry.id === userId);
+  if (!user) return 'missing';
+  const nextEmail = email?.toLowerCase() ?? '';
+  const realEmail = nextEmail.includes('@') && !nextEmail.endsWith('@guest.local') && !nextEmail.endsWith('@players.local');
+  if (realEmail) {
+    const holder = users.find((entry) => entry.email === nextEmail);
+    if (holder && holder.id !== userId) return 'email_used';
+    if (user.guest) user.email = nextEmail;
+  }
+  user.providers = user.providers ?? [];
+  if (!user.providers.some((entry) => entry.provider === login.provider && entry.subject === login.subject)) {
+    user.providers.push(login);
+  }
+  if (user.guest && user.providers.length > 0) user.guest = false;
+  return 'linked';
 }

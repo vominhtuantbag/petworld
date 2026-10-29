@@ -2,10 +2,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { SessionReplacedModal } from '../components/SessionReplacedModal';
 import type { InitializedPlayer } from '../types/game';
-import { ApiError, fetchMe, fetchMyCharacter, isSessionReplaced, loginAccount, registerAccount, saveMyCharacter } from '../net/api';
-import type { PublicUser, ServerCharacter } from '../net/protocol';
+import { ApiError, exchangeSocialCode, fetchMe, fetchMyCharacter, isSessionReplaced, loginAccount, loginGuest, registerAccount, saveMyCharacter, startAccountLink, startSocialLogin } from '../net/api';
+import type { PublicUser, ServerCharacter, SocialProvider } from '../net/protocol';
 import { forgetKickedToken, kickedToken, onSessionReplaced, rememberKickedToken } from '../net/sessionKick';
-import { clearToken, readToken, saveToken, TOKEN_KEY } from '../net/tokenStore';
+import { clearToken, readToken, saveToken, tokenSubject, TOKEN_KEY } from '../net/tokenStore';
 import { clearSessionCache, readSessionCache, writeSessionCache } from './save/sessionCache';
 
 /**
@@ -23,6 +23,9 @@ type AuthContextValue = {
   character: ServerCharacter | null;
   register: (input: { username: string; email: string; password: string }) => Promise<void>;
   login: (input: { email: string; password: string }) => Promise<void>;
+  playAsGuest: () => Promise<void>;
+  beginSocial: (provider: SocialProvider) => Promise<void>;
+  linkSocial: (provider: SocialProvider) => Promise<void>;
   logout: () => Promise<void>;
   saveCharacter: (player: InitializedPlayer) => Promise<void>;
   refreshCharacter: () => Promise<void>;
@@ -68,88 +71,141 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onStorage = (event: StorageEvent) => {
-      const mine = tokenRef.current;
-      if (event.key !== TOKEN_KEY || !mine || event.newValue === mine) return;
-      if (kickedToken() === mine) return;
-      void saveToken(mine);
+      if (event.key !== TOKEN_KEY) return;
+      const next = event.newValue;
+      if (!next) {
+        const mine = tokenRef.current;
+        if (mine) void forceLogout(mine);
+        return;
+      }
+      if (next === tokenRef.current) return;
+      holdKick.current = true;
+      tokenRef.current = next;
+      void applySession(next).finally(() => {
+        holdKick.current = false;
+      });
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, []);
+  }, [applySession, forceLogout]);
 
   useEffect(() => {
     let cancelled = false;
-    readToken()
-      .then(async (stored) => {
-        if (!stored || cancelled) return;
-        if (stored === kickedToken()) {
-          if (!cancelled) setKicked(true);
-          return;
-        }
+    void (async () => {
+      const params = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
+      const authCode = params?.get('auth_code');
+      const notice = params?.get('auth_error') ?? params?.get('link_error');
+      if (notice && typeof sessionStorage !== 'undefined') sessionStorage.setItem('game-thu-gian.auth-error', notice);
+      if (authCode || notice || params?.get('linked')) stripAuthQuery();
+      if (authCode) {
         try {
-          await applySession(stored);
+          const result = await exchangeSocialCode(authCode);
+          if (cancelled) return;
+          await adopt(result);
         } catch (error) {
-          if (isSessionReplaced(error)) {
-            rememberKickedToken(stored);
-            if (!cancelled) setKicked(true);
-            await clearToken();
-            await clearSessionCache();
-            return;
-          }
-          const status = error instanceof ApiError ? error.status : 0;
-          const cached = await readSessionCache();
-          if (!cancelled && cached && (status === 0 || status === 401 || status >= 500)) {
-            setToken(stored);
-            setUser(cached.user);
-            setCharacter(cached.character);
-            return;
-          }
+          if (!cancelled) console.warn('[Game Thư Giãn] Không nhận được phiên mạng xã hội.', error);
+        }
+        if (!cancelled) setReady(true);
+        return;
+      }
+      const stored = await readToken();
+      if (!stored || cancelled) return;
+      if (stored === kickedToken()) {
+        if (!cancelled) setKicked(true);
+        return;
+      }
+      try {
+        await applySession(stored);
+      } catch (error) {
+        if (isSessionReplaced(error)) {
+          rememberKickedToken(stored);
+          if (!cancelled) setKicked(true);
           await clearToken();
           await clearSessionCache();
+          return;
         }
-      })
-      .finally(() => {
-        if (!cancelled) setReady(true);
-      });
+        const status = error instanceof ApiError ? error.status : 0;
+        const cached = await readSessionCache();
+        const subject = tokenSubject(stored);
+        const offline = status === 0 || status >= 500;
+        if (!cancelled && cached && subject && cached.user.id === subject && offline) {
+          tokenRef.current = stored;
+          setToken(stored);
+          setUser(cached.user);
+          setCharacter(cached.character);
+          return;
+        }
+        await clearToken();
+        await clearSessionCache();
+      }
+    })().finally(() => {
+      if (!cancelled) setReady(true);
+    });
     return () => {
       cancelled = true;
     };
   }, [applySession]);
 
-  const register = useCallback(
-    async (input: { username: string; email: string; password: string }) => {
+  const adopt = useCallback(
+    async (result: { token: string; user: PublicUser }) => {
       holdKick.current = true;
       forgetKickedToken();
+      await clearSessionCache();
       try {
-        const result = await registerAccount(input);
         tokenRef.current = result.token;
         await saveToken(result.token);
         await applySession(result.token, result.user);
+      } catch (error) {
+        tokenRef.current = null;
+        await clearToken();
+        await clearSessionCache();
+        throw error;
       } finally {
         holdKick.current = false;
       }
     },
     [applySession],
+  );
+
+  const register = useCallback(
+    async (input: { username: string; email: string; password: string }) => {
+      await adopt(await registerAccount(input));
+    },
+    [adopt],
   );
 
   const login = useCallback(
     async (input: { email: string; password: string }) => {
-      holdKick.current = true;
-      forgetKickedToken();
-      try {
-        const result = await loginAccount(input);
-        tokenRef.current = result.token;
-        await saveToken(result.token);
-        await applySession(result.token, result.user);
-      } finally {
-        holdKick.current = false;
-      }
+      await adopt(await loginAccount(input));
     },
-    [applySession],
+    [adopt],
+  );
+
+  const playAsGuest = useCallback(async () => {
+    await adopt(await loginGuest());
+  }, [adopt]);
+
+  const beginSocial = useCallback(async (provider: SocialProvider) => {
+    if (typeof window === 'undefined') throw new Error('Đăng nhập mạng xã hội mở trên trình duyệt.');
+    const returnTo = `${window.location.origin}${window.location.pathname}`;
+    const started = await startSocialLogin(provider, returnTo);
+    window.location.assign(started.url);
+  }, []);
+
+  const linkSocial = useCallback(
+    async (provider: SocialProvider) => {
+      if (!token || typeof window === 'undefined') throw new Error('Hãy vào game trước khi liên kết.');
+      const returnTo = `${window.location.origin}${window.location.pathname}`;
+      const started = await startAccountLink(token, provider, returnTo);
+      window.location.assign(started.url);
+    },
+    [token],
   );
 
   const logout = useCallback(async () => {
     tokenRef.current = null;
+    forgetKickedToken();
+    setKicked(false);
     await clearToken();
     await clearSessionCache();
     setToken(null);
@@ -184,8 +240,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [token, user, character]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ ready, token, user, character, register, login, logout, saveCharacter, refreshCharacter }),
-    [ready, token, user, character, register, login, logout, saveCharacter, refreshCharacter],
+    () => ({ ready, token, user, character, register, login, playAsGuest, beginSocial, linkSocial, logout, saveCharacter, refreshCharacter }),
+    [ready, token, user, character, register, login, playAsGuest, beginSocial, linkSocial, logout, saveCharacter, refreshCharacter],
   );
 
   return (
@@ -194,6 +250,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       <SessionReplacedModal visible={kicked} onClose={() => setKicked(false)} />
     </AuthContext.Provider>
   );
+}
+
+function stripAuthQuery() {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  for (const key of ['auth_code', 'auth_error', 'link_error', 'linked']) url.searchParams.delete(key);
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
 export function useAuth(): AuthContextValue {

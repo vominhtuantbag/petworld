@@ -20,7 +20,7 @@ import { TournamentScreen } from './src/screens/TournamentScreen';
 import { TownScreen } from './src/screens/TownScreen';
 import { AuthProvider, useAuth } from './src/state/AuthContext';
 import { playerFromSave } from './src/state/save/gameSave';
-import { readDeviceSave, readLocalSave } from './src/state/save/localSave';
+import { readLocalSave } from './src/state/save/localSave';
 import { BattleProvider, useBattle } from './src/state/BattleContext';
 import { SetupProvider, useSetup } from './src/state/SetupContext';
 import { WorldProvider, useWorld } from './src/state/WorldContext';
@@ -141,7 +141,7 @@ function useSavedCharacter() {
     }
     let cancel = false;
     void (async () => {
-      const save = (await readLocalSave(userId)) ?? (await readDeviceSave());
+      const save = await readLocalSave(userId);
       if (cancel || hydratedUserId.current === userId) return;
       const player = save ? playerFromSave(save) : null;
       if (!player) return;
