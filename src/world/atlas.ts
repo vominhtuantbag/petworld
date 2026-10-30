@@ -193,10 +193,13 @@ export function isSpecialRegion(id: string): id is SpecialRegionId {
   return (SPECIAL_REGION_IDS as readonly string[]).includes(id);
 }
 
-/** Level band 1 (levels 1–10) may enter maps 1 and 2. Band 2 may enter maps 2 and 3. */
+/**
+ * Highest hunting map this level may enter, plus the next map as a look-ahead.
+ * Every lower map stays open so a high-level walker can always walk home.
+ */
 export function tierWindow(level: number): { low: number; high: number } {
   const band = Math.max(1, Math.min(MAP_TIERS, Math.ceil(Math.max(1, level) / TIER_LEVELS)));
-  return { low: band, high: Math.min(MAP_TIERS, band + 1) };
+  return { low: 1, high: Math.min(MAP_TIERS, band + 1) };
 }
 
 export function specialUnlockLevel(id: string): number | null {
@@ -217,23 +220,25 @@ function zoneProvinceId(zoneId: string): string {
 }
 
 /**
- * Hunting maps use a sliding pair: levels 1–10 may enter map 1 and map 2,
- * levels 11–20 may enter map 2 and map 3, and so on. Special regions stay
- * shut until their unlock level, and then the gate says so with `LOCKED_LAND`.
+ * Hunting maps stay open from map 1 up through the current band (and the next
+ * map). Higher-level players can always walk back through lower maps and into
+ * any ring town. Special regions stay shut until their unlock level.
  */
 export function entryBlock(adventureLevel: number, zoneId: string, homeProvince: string): string | null {
   const resolved = resolveZoneId(zoneId);
   const provinceId = zoneProvinceId(resolved);
+  if (resolved.startsWith('town:') || zoneId.startsWith('town:')) {
+    if (isSpecialRegion(provinceId) && !specialRegionOpen(provinceId, adventureLevel)) return LOCKED_LAND;
+    return null;
+  }
   if (isSpecialRegion(provinceId) && !specialRegionOpen(provinceId, adventureLevel)) return LOCKED_LAND;
 
   const tier = parseTier(resolved);
   if (tier) {
     const window = tierWindow(adventureLevel);
-    if (tier.tier >= window.low && tier.tier <= window.high) return null;
+    if (tier.tier <= window.high) return null;
     const place = `${tier.province.nameVi} bản đồ ${tier.tier}`;
-    if (adventureLevel < tier.levelMin) return `Cấp của bạn chưa đủ để vào ${place}.`;
-    const allowed = window.low === window.high ? `bản đồ ${window.low}` : `bản đồ ${window.low} và ${window.high}`;
-    return `Cấp của bạn không vào được ${place}. Bạn chỉ vào được ${allowed}.`;
+    return `Cấp của bạn chưa đủ để vào ${place}. Bạn vào được bản đồ 1 đến ${window.high}.`;
   }
 
   const sector = parseSector(resolved);

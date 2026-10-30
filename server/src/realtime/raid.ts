@@ -18,6 +18,7 @@ import type {
 
 const LOBBY_MS = 30_000;
 const TURN_MS = 30_000;
+const NPC_TURN_MS = 450;
 const TAME_MS = 15_000;
 const TAME_CAP = 30;
 const SLOTS = 5;
@@ -108,7 +109,8 @@ type Party = {
  * One waiting room per wilderness zone. Slots fill in arrival order.
  * The 30s clock starts with the first player and is not reset by later joins.
  * At zero, anyone still not ready is sent back to the map. Ready fighters
- * share one turn queue against two adds and a boss. Rewards are identical.
+ * share one arena against two adds and a boss. There are no extra floors.
+ * Foes take their turns on a short NPC clock. Rewards are identical.
  */
 export class DungeonRaids {
   private readonly lobbies = new Map<string, Lobby>();
@@ -315,7 +317,12 @@ export class DungeonRaids {
         continue;
       }
       if (room.resolving || now < room.deadline) continue;
-      const actor = room.units.find((unit) => unit.id === room.turnId);
+      const actor = room.units.find((unit) => unit.id === room.turnId && unit.hp > 0);
+      if (actor && isNpc(actor)) {
+        const swing = npcSwing(actor);
+        this.resolve(room, swing.action, swing.skill, undefined);
+        continue;
+      }
       room.log.push(`${actor?.name ?? 'Người chơi'} hết giờ và tự tấn công.`);
       this.resolve(room, 'attack', 0, undefined);
     }
@@ -380,15 +387,10 @@ export class DungeonRaids {
     this.resolveOpening(room);
   }
 
-  /** Foes that won the first speed roll act immediately, so the 30s clock always belongs to a hero. */
+  /** First snapshot. If a foe won speed, the 450ms NPC clock starts instead of the 30s hero clock. */
   private resolveOpening(room: RaidRoom) {
-    room.resolving = true;
-    while (room.status === 'active') {
-      const actor = room.units.find((unit) => unit.id === room.turnId && unit.hp > 0);
-      if (!actor || actor.kind === 'hero') break;
-      this.strike(room, actor, 'attack', 0, undefined);
-    }
-    room.resolving = false;
+    const actor = room.units.find((unit) => unit.id === room.turnId && unit.hp > 0);
+    if (actor && isNpc(actor)) room.deadline = Date.now() + NPC_TURN_MS;
     this.emitRoom(room);
   }
 
@@ -398,11 +400,6 @@ export class DungeonRaids {
     const actor = room.units.find((unit) => unit.id === room.turnId && unit.hp > 0);
     if (actor) this.strike(room, actor, action, skillIndex, targetId);
     else this.advance(room);
-    while (room.status === 'active') {
-      const next = room.units.find((unit) => unit.id === room.turnId && unit.hp > 0);
-      if (!next || next.kind === 'hero') break;
-      this.strike(room, next, 'attack', 0, undefined);
-    }
     room.resolving = false;
     this.emitRoom(room);
   }
@@ -440,14 +437,15 @@ export class DungeonRaids {
       const unit = room.units.find((entry) => entry.id === room.order[step]);
       if (!unit || unit.hp <= 0) continue;
       room.turnId = unit.id;
-      room.deadline = Date.now() + TURN_MS;
+      room.deadline = Date.now() + (isNpc(unit) ? NPC_TURN_MS : TURN_MS);
       room.log.push(`Tới lượt ${unit.name}.`);
       return;
     }
     room.round += 1;
     room.order = speedOrder(room.units);
     room.turnId = room.order[0] ?? room.turnId;
-    room.deadline = Date.now() + TURN_MS;
+    const lead = room.units.find((unit) => unit.id === room.turnId);
+    room.deadline = Date.now() + (lead && isNpc(lead) ? NPC_TURN_MS : TURN_MS);
     const actor = room.units.find((unit) => unit.id === room.turnId);
     room.log.push(`Hiệp ${room.round}. Tới lượt ${actor?.name ?? 'người chơi'}.`);
   }
@@ -751,7 +749,7 @@ function foeUnits(level: number): Unit[] {
     maxMp: 20 + level * 2,
     attack: addAtk,
     defense: addDef,
-    speed: 70 + level,
+    speed: 82 + level,
     tint,
     skills: [
       { name: 'Kỹ năng 1', power: 1.2 },
@@ -770,9 +768,9 @@ function foeUnits(level: number): Unit[] {
     maxHp: bossHp,
     mp: 40 + level * 3,
     maxMp: 40 + level * 3,
-    attack: Math.round(addAtk * 1.35),
+    attack: Math.round(addAtk * 1.45),
     defense: addDef + 4,
-    speed: 60 + level,
+    speed: 98 + level,
     tint: '#c4472f',
     skills: [
       { name: 'Kỹ năng 1', power: 1.4 },
@@ -780,6 +778,15 @@ function foeUnits(level: number): Unit[] {
     ],
   };
   return [add(0, 'Quái hầm ngục', '#8a5a42'), add(1, 'Quái hầm ngục', '#6a4a38'), boss];
+}
+
+function isNpc(unit: Unit): boolean {
+  return unit.kind !== 'hero';
+}
+
+function npcSwing(actor: Unit): { action: 'attack' | 'skill'; skill: 0 | 1 } {
+  if (actor.kind !== 'boss' || Math.random() < 0.35) return { action: 'attack', skill: 0 };
+  return { action: 'skill', skill: Math.random() < 0.5 ? 0 : 1 };
 }
 
 function foesOf(units: readonly Unit[], actor: Unit): Unit[] {

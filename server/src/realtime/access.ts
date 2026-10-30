@@ -2,8 +2,8 @@
  * Map entry rules. Keep the windows aligned with `src/world/atlas.ts`
  * `tierWindow` and `specialRegionOpen` in the Expo app.
  *
- * Levels 1–10 may enter map 1 and map 2. Levels 11–20 may enter map 2 and
- * map 3. Each later band shifts the pair up by one map.
+ * A level band may enter every hunting map from 1 up through its current
+ * map and the next one. Towns of unlocked ring regions are always open.
  */
 
 const MAP_TIERS = 10;
@@ -24,6 +24,10 @@ const SPECIAL_LEVEL: Record<string, number> = {
 export function entryDenial(level: number, zoneId: string): string | null {
   const provinceId = zoneId.startsWith('town:') ? zoneId.slice(5) : (zoneId.split(':')[0] ?? '');
   const unlock = SPECIAL_LEVEL[provinceId];
+  if (zoneId.startsWith('town:')) {
+    if (unlock != null && level < unlock) return LOCKED_LAND;
+    return null;
+  }
   if (unlock != null && level < unlock) return LOCKED_LAND;
 
   const parts = zoneId.split(':');
@@ -32,14 +36,11 @@ export function entryDenial(level: number, zoneId: string): string | null {
   const tier = Number(band.slice(1));
   if (!Number.isInteger(tier) || tier < 1 || tier > MAP_TIERS) return null;
   const window = tierWindow(level);
-  if (tier >= window.low && tier <= window.high) return null;
-  const levelMin = (tier - 1) * TIER_LEVELS + 1;
-  if (level < levelMin) return `Cấp của bạn chưa đủ để vào bản đồ ${tier}.`;
-  const allowed = window.low === window.high ? `bản đồ ${window.low}` : `bản đồ ${window.low} và ${window.high}`;
-  return `Cấp của bạn không vào được bản đồ ${tier}. Bạn chỉ vào được ${allowed}.`;
+  if (tier <= window.high) return null;
+  return `Cấp của bạn chưa đủ để vào bản đồ ${tier}. Bạn vào được bản đồ 1 đến ${window.high}.`;
 }
 
 function tierWindow(level: number): { low: number; high: number } {
   const band = Math.max(1, Math.min(MAP_TIERS, Math.ceil(Math.max(1, level) / TIER_LEVELS)));
-  return { low: band, high: Math.min(MAP_TIERS, band + 1) };
+  return { low: 1, high: Math.min(MAP_TIERS, band + 1) };
 }

@@ -183,11 +183,11 @@ function StorageRows() {
 function TravelRows() {
   const world = useWorld();
   const window = tierWindow(world.adventureLevel);
-  const allowed = window.low === window.high ? `bản đồ ${window.low}` : `bản đồ ${window.low} và ${window.high}`;
+  const allowed = window.high <= 1 ? 'bản đồ 1' : `bản đồ 1 đến ${window.high}`;
   const here = world.regionId;
   return (
     <>
-      <Text style={styles.copy}>Cấp {world.adventureLevel} vào được {allowed}. Cổng và dịch chuyển đều kiểm tra cấp.</Text>
+      <Text style={styles.copy}>Cấp {world.adventureLevel} vào được {allowed}. Thị trấn và bản đồ thấp hơn luôn mở. Cổng cao hơn vẫn kiểm tra cấp.</Text>
       {listStarterRegions().map((region) => (
         <Row
           key={region.id}

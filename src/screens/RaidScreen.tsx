@@ -23,9 +23,10 @@ const ARENA = require('../../assets/images/sandau_2.jpg');
 type Pick = 'attack' | 0 | 1;
 
 /**
- * Co-op raid on the PvP court: speed timeline, target row, and
- * Đánh thường → Kỹ năng 1 → Kỹ năng 2 → Xác nhận. Confirm resolves the turn
- * early. At 0 the server swings a basic attack. The boss is drawn at 2×.
+ * One co-op boss arena on the PvP court. No extra floors. Speed timeline,
+ * target row, and Đánh thường → Kỹ năng 1 → Kỹ năng 2 → Xác nhận. Confirm
+ * resolves the turn early. At 0 a hero auto-attacks. Foes swing on their own
+ * clock. The boss is drawn at 2×.
  */
 export function RaidScreen() {
   const battle = useBattle();

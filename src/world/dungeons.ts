@@ -25,6 +25,8 @@ export const RAID_MAX_PARTY = 5;
 
 const MINE_KIND = 'savannah-lion';
 const MINION_KIND = 'plains-boar';
+/** Temporary test scale so 10 floors × 5 waves can be cleared quickly. */
+const MINE_TEST_SCALE = 0.08;
 
 export function mineLabel(floor: number, wave: number): string {
   return `${clamp(floor, 1, MINE_FLOOR_COUNT)}-${clamp(wave, 1, MINE_WAVE_COUNT)}`;
@@ -109,20 +111,20 @@ function mineFoe(level: number, floor: number, wave: number, role: 'minion' | 'b
   const safe = Math.max(1, Math.min(200, Math.round(level)));
   const steps = safe + floor * 2 + wave + (role === 'boss' ? 6 : 2);
   const body = role === 'boss' ? 2.4 : 1.35 + wave * 0.12;
-  const hp = Math.round(((kind?.hp ?? 52) + steps * 12) * body);
+  const hp = Math.max(8, Math.round(((kind?.hp ?? 52) + steps * 12) * body * MINE_TEST_SCALE));
   const label = role === 'boss' ? `Tiểu boss hầm mỏ ${floor}-${wave}` : `Quái hầm mỏ ${floor}-${wave}${index > 1 ? ` ${index}` : ''}`;
   return {
     id: `mine-${floor}-${wave}-${role}-${index}`,
     kindId: kind?.id ?? (role === 'boss' ? MINE_KIND : MINION_KIND),
     name: label,
-    level: safe + floor + wave,
+    level: Math.max(1, floor),
     hp,
     maxHp: hp,
-    attack: Math.round(((kind?.attack ?? 16) + steps * 1.8) * (role === 'boss' ? 1.55 : 1.25)),
-    defense: (kind?.defense ?? 6) + Math.floor(steps * 0.7) + (role === 'boss' ? 4 : 0),
+    attack: Math.max(1, Math.round(((kind?.attack ?? 16) + steps * 1.8) * (role === 'boss' ? 1.55 : 1.25) * MINE_TEST_SCALE)),
+    defense: 0,
     tint: role === 'boss' ? '#c4472f' : (kind?.tint ?? '#8a5a42'),
     elite: role === 'boss',
-    speed: (kind?.speed ?? 70) + safe - (role === 'boss' ? 8 : 0),
+    speed: Math.max(20, Math.round(((kind?.speed ?? 70) + safe - (role === 'boss' ? 8 : 0)) * 0.5)),
   };
 }
 
