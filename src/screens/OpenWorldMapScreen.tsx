@@ -140,6 +140,7 @@ export function OpenWorldMapScreen() {
         testID="world-screen"
         zoom={worldZoom()}
         dungeonOpen={battle.goldenHour.active}
+        speedBonus={world.speed}
         playerFacesRight={portraitFacesRight(character?.professionId, character?.gender)}
         remotes={others.players.map((player) => ({
           id: player.userId,

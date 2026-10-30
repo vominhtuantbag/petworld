@@ -988,7 +988,7 @@ function lootSlots(rewards: BattleRewards): LootSlot[] {
     slots.push({
       id: `${drop.itemId}-${slots.length}`,
       label: lootLabel(drop.itemId),
-      detail: drop.itemId === 'berry' || drop.itemId === 'mana-fruit' || drop.itemId === 'hearty-fruit' ? ITEMS[drop.itemId].nameVi : `×${drop.qty}`,
+      detail: drop.itemId === 'banana' || drop.itemId === 'grape' || drop.itemId === 'apple' ? ITEMS[drop.itemId].nameVi : `×${drop.qty}`,
       tint: ITEMS[drop.itemId].tint,
     });
   }
@@ -996,9 +996,9 @@ function lootSlots(rewards: BattleRewards): LootSlot[] {
 }
 
 function lootLabel(itemId: string): string {
-  if (itemId === 'hp-potion') return 'Bình máu';
-  if (itemId === 'mana-potion') return 'Bình mana';
-  if (itemId === 'berry' || itemId === 'mana-fruit' || itemId === 'hearty-fruit') return 'Thức ăn';
+  if (itemId.startsWith('hp-potion')) return 'Bình máu';
+  if (itemId.startsWith('mana-potion')) return 'Bình mana';
+  if (itemId === 'banana' || itemId === 'grape' || itemId === 'apple') return 'Thức ăn';
   return 'Vật phẩm';
 }
 
@@ -1069,10 +1069,10 @@ function rawId(id: string): string {
 }
 
 function shortItem(itemId: ItemId): string {
-  if (itemId === 'hp-potion') return 'Máu';
-  if (itemId === 'mana-potion') return 'Mana';
+  if (itemId.startsWith('hp-potion')) return 'Máu';
+  if (itemId.startsWith('mana-potion')) return 'Mana';
   if (itemId === 'antidote') return 'Độc';
-  if (itemId === 'stamina-potion') return 'Lực';
+  if (itemId.startsWith('stamina-potion')) return 'Lực';
   return 'Bánh';
 }
 

@@ -3,16 +3,15 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useWorld } from '../../state/WorldContext';
 import { theme } from '../../theme/theme';
 import { useLayout } from '../../theme/useLayout';
-import { BAG_SLOTS, ITEMS } from '../../world/items';
-import type { ItemId } from '../../world/types';
+import { BAG_SLOTS, GEAR_SLOTS, ITEMS, RARITY_BORDER, gearRarity, itemBorder, shortItemName } from '../../world/items';
 
 type Props = { onClose: () => void };
 
 const COLUMNS = 16;
 
 /**
- * 64 stack slots. Empty cells stay visible so the bag's size is obvious.
- * Tapping a filled cell uses that stack.
+ * 64 stack slots plus five equipped gear cells. Empty bag cells stay visible.
+ * Tapping a filled cell uses or equips that stack.
  */
 export function InventoryModal({ onClose }: Props) {
   const world = useWorld();
@@ -21,7 +20,7 @@ export function InventoryModal({ onClose }: Props) {
   const rows = BAG_SLOTS / COLUMNS;
   const pad = s(10);
   const innerW = width - 16 - pad * 2;
-  const innerH = height - 16 - pad * 2 - s(46);
+  const innerH = height - 16 - pad * 2 - s(86);
   const cell = Math.max(
     14,
     Math.min(
@@ -31,6 +30,7 @@ export function InventoryModal({ onClose }: Props) {
     ),
   );
   const cells = Array.from({ length: BAG_SLOTS }, (_, index) => world.bag[index] ?? null);
+  const slotW = Math.max(48, Math.floor((innerW - gap * 4) / 5));
 
   return (
     <View style={styles.scrim}>
@@ -43,11 +43,42 @@ export function InventoryModal({ onClose }: Props) {
           </Pressable>
         </View>
         <Text style={[styles.copy, { fontSize: font(11) }]} numberOfLines={1}>
-          {BAG_SLOTS} ô. Thuốc dùng cho bạn. Trái cây dùng cho quái đã thu phục. Hồi thành chú đưa về thị trấn.
+          {BAG_SLOTS} ô. Thuốc dùng cho bạn. Trái cây dùng cho quái đã thu phục. Teleport đưa về thị trấn.
         </Text>
+        <View style={[styles.gearRow, { gap }]}>
+          {GEAR_SLOTS.map(({ slot, label }) => {
+            const piece = world[slot];
+            const rarity = piece ? gearRarity(piece.itemId) : 'normal';
+            return (
+              <Pressable
+                key={slot}
+                accessibilityRole="button"
+                accessibilityLabel={piece ? ITEMS[piece.itemId].nameVi : label}
+                disabled={!piece}
+                onPress={() => piece && world.unequip(slot)}
+                style={[
+                  styles.gearCell,
+                  {
+                    width: slotW,
+                    borderColor: piece ? RARITY_BORDER[rarity] : 'rgba(246,241,231,0.28)',
+                    backgroundColor: piece ? ITEMS[piece.itemId].tint : 'rgba(0,0,0,0.18)',
+                  },
+                ]}
+              >
+                <Text style={[styles.gearSlot, { fontSize: font(9) }]}>{label}</Text>
+                <Text style={[styles.cellName, { fontSize: font(10) }]} numberOfLines={1}>
+                  {piece ? shortItemName(piece.itemId) : '—'}
+                </Text>
+                {piece ? (
+                  <Text style={[styles.qty, { fontSize: font(9) }]}>+{piece.plus}</Text>
+                ) : null}
+              </Pressable>
+            );
+          })}
+        </View>
         <View style={[styles.grid, { width: COLUMNS * cell + gap * (COLUMNS - 1), gap }]}>
           {cells.map((stack, index) => {
-            const name = stack ? shortName(stack.itemId) : '';
+            const name = stack ? shortItemName(stack.itemId) : '';
             return (
               <Pressable
                 key={stack ? stack.itemId : `empty-${index}`}
@@ -55,7 +86,15 @@ export function InventoryModal({ onClose }: Props) {
                 accessibilityLabel={stack ? ITEMS[stack.itemId].nameVi : 'Ô trống'}
                 disabled={!stack}
                 onPress={() => stack && world.useBagItem(stack.itemId)}
-                style={[styles.cell, { width: cell, height: cell, backgroundColor: stack ? ITEMS[stack.itemId].tint : 'rgba(0,0,0,0.18)' }]}
+                style={[
+                  styles.cell,
+                  {
+                    width: cell,
+                    height: cell,
+                    backgroundColor: stack ? ITEMS[stack.itemId].tint : 'rgba(0,0,0,0.18)',
+                    borderColor: stack ? itemBorder(stack.itemId) : 'rgba(246,241,231,0.28)',
+                  },
+                ]}
               >
                 {stack ? (
                   <>
@@ -72,24 +111,6 @@ export function InventoryModal({ onClose }: Props) {
       </View>
     </View>
   );
-}
-
-function shortName(itemId: ItemId): string {
-  if (itemId === 'hp-potion') return 'Máu';
-  if (itemId === 'mana-potion') return 'Mana';
-  if (itemId === 'stamina-potion') return 'Lực';
-  if (itemId === 'town-scroll') return 'Hồi';
-  if (itemId === 'antidote') return 'Độc';
-  if (itemId === 'berry') return 'Dại';
-  if (itemId === 'mana-fruit') return 'Q.mana';
-  if (itemId === 'hearty-fruit') return 'Bồi';
-  if (itemId === 'net') return 'Lưới';
-  if (itemId === 'sword') return 'Kiếm';
-  if (itemId === 'armor') return 'Giáp';
-  if (itemId === 'mine-ticket') return 'Vé';
-  if (itemId === 'evo-shard') return 'Mảnh';
-  if (itemId === 'might-blade') return 'Sức';
-  return 'Bánh';
 }
 
 const styles = StyleSheet.create({
@@ -111,8 +132,17 @@ const styles = StyleSheet.create({
   close: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: theme.goldDeep },
   closeLabel: { color: theme.ink, fontWeight: '800' },
   copy: { color: theme.muted },
+  gearRow: { flexDirection: 'row' },
+  gearCell: {
+    borderRadius: 8,
+    borderWidth: 2,
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+  },
+  gearSlot: { color: '#1b140c', fontWeight: '700' },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
-  cell: { borderRadius: 6, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(246,241,231,0.28)' },
+  cell: { borderRadius: 6, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
   cellName: { color: '#1b140c', fontWeight: '800' },
   qty: { color: '#1b140c', fontWeight: '700' },
 });

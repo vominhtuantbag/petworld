@@ -193,7 +193,7 @@ export function SquadSetupScreen() {
         </View>
         <View style={styles.pane}>
           <Text style={[styles.paneTitle, { fontSize: font(14) }]}>Vật phẩm</Text>
-          <Text style={[styles.copy, { fontSize: font(11) }]}>Chỉ thuốc máu, thuốc mana, và giải độc.</Text>
+          <Text style={[styles.copy, { fontSize: font(11) }]}>Thuốc máu, thuốc mana (mọi cỡ), và giải độc.</Text>
           {supplies.length === 0 ? (
             <Text style={[styles.copy, { fontSize: font(12) }]}>Túi không có món nào trong ba loại này.</Text>
           ) : (

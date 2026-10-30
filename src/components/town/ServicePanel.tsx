@@ -8,15 +8,22 @@ import { isRingTown, LOCKED_LAND, SPECIAL_REGION_IDS, specialRegionOpen, tierWin
 import { TIER_MAP_H, TIER_MAP_W } from '../../world/grid';
 import { entrancePad, MAP_TIERS, tierRange, tierZoneId } from '../../world/tiers';
 import {
+  GEAR_SLOTS,
+  grocerPrice,
+  grocerWeekendSale,
   INN_COST,
+  isGearItem,
   ITEMS,
+  RARITY_LABEL,
   SMITH_STOCK,
   STORE_STOCK,
   UPGRADE_CAP,
-  armorDefense,
+  equippedBonuses,
+  gearBonuses,
+  gearRarity,
   upgradeCost,
-  weaponAttack,
 } from '../../world/items';
+import { evoCost, evoStageOf, evoTitle, MAX_EVO_STAGE, redundantPets, shardForKind, shardLabel } from '../../world/evolution';
 import type { ServiceId } from '../../world/types';
 
 type PanelId = ServiceId | 'bag';
@@ -72,17 +79,27 @@ export function ServicePanel({ panel, onClose }: Props) {
 
 function StoreRows() {
   const world = useWorld();
+  const sale = grocerWeekendSale();
   return (
     <>
-      {STORE_STOCK.map((itemId) => (
-        <Row
-          key={itemId}
-          title={`${ITEMS[itemId].nameVi} · ${ITEMS[itemId].price} vàng`}
-          detail={ITEMS[itemId].blurb}
-          action="Mua"
-          onPress={() => world.buy(itemId)}
-        />
-      ))}
+      <Text style={styles.copy}>
+        {sale
+          ? 'Thứ 6–Chủ nhật: giảm 15% mọi mặt hàng tạp hóa.'
+          : 'Thứ 2–Thứ 5: giá gốc. Cuối tuần giảm 15%.'}
+      </Text>
+      {STORE_STOCK.map((itemId) => {
+        const price = grocerPrice(itemId);
+        const full = ITEMS[itemId].price;
+        return (
+          <Row
+            key={itemId}
+            title={`${ITEMS[itemId].nameVi} · ${price} vàng${sale && price !== full ? ` (gốc ${full})` : ''}`}
+            detail={ITEMS[itemId].blurb}
+            action="Mua"
+            onPress={() => world.buy(itemId, 'store')}
+          />
+        );
+      })}
       <BagRows />
     </>
   );
@@ -90,10 +107,13 @@ function StoreRows() {
 
 function SmithRows() {
   const world = useWorld();
+  const bonus = equippedBonuses(world);
+  const bagGear = world.bag.filter((stack) => isGearItem(stack.itemId));
   return (
     <>
       <Text style={styles.copy}>
-        Tấn công {world.attack} · Thủ {world.defense}
+        Tấn công {world.attack} · Thủ {world.defense} · Máu +{bonus.hp} · Mana +{bonus.mana} · Thể lực +{bonus.stamina} · Tốc độ +
+        {bonus.speed}
       </Text>
       {SMITH_STOCK.map((itemId) => (
         <Row
@@ -101,47 +121,48 @@ function SmithRows() {
           title={`${ITEMS[itemId].nameVi} · ${ITEMS[itemId].price} vàng`}
           detail={ITEMS[itemId].blurb}
           action="Mua"
-          onPress={() => world.buy(itemId)}
+          onPress={() => world.buy(itemId, 'smith')}
         />
       ))}
-      {world.bag.some((stack) => stack.itemId === 'sword') ? (
-        <Row title="Kiếm trong túi" detail="Trang bị để cộng tấn công." action="Đeo" onPress={() => world.equipFromBag('sword')} />
-      ) : null}
-      {world.bag.some((stack) => stack.itemId === 'armor') ? (
-        <Row title="Giáp trong túi" detail="Trang bị để cộng thủ." action="Đeo" onPress={() => world.equipFromBag('armor')} />
-      ) : null}
-      {world.bag.some((stack) => stack.itemId === 'might-blade') ? (
+      {bagGear.map((stack) => (
         <Row
-          title="Kiếm sức mạnh trong túi"
-          detail={world.weapon ? 'Ô vũ khí đang có đồ.' : 'Vũ khí hầm ngục. Tấn công cao hơn kiếm thường.'}
+          key={`wear-${stack.itemId}`}
+          title={`${ITEMS[stack.itemId].nameVi} trong túi`}
+          detail={`${RARITY_LABEL[gearRarity(stack.itemId)]}. ${ITEMS[stack.itemId].blurb}`}
           action="Đeo"
-          onPress={() => world.equipFromBag('might-blade')}
+          onPress={() => world.equipFromBag(stack.itemId)}
         />
-      ) : null}
-      {world.weapon ? (
-        <Row
-          title={`${ITEMS[world.weapon.itemId].nameVi} +${world.weapon.plus}`}
-          detail={
-            world.weapon.plus >= UPGRADE_CAP
-              ? `Tấn công +${weaponAttack(world.weapon.plus, world.weapon.itemId === 'might-blade' ? 'might-blade' : 'sword')}.`
-              : `Tấn công +${weaponAttack(world.weapon.plus, world.weapon.itemId === 'might-blade' ? 'might-blade' : 'sword')}. Nâng cấp ${upgradeCost(world.weapon.plus)} vàng.`
-          }
-          action="Nâng"
-          onPress={() => world.upgrade('weapon')}
-        />
-      ) : null}
-      {world.armor ? (
-        <Row
-          title={`Giáp +${world.armor.plus}`}
-          detail={
-            world.armor.plus >= UPGRADE_CAP
-              ? `Thủ +${armorDefense(world.armor.plus)}.`
-              : `Thủ +${armorDefense(world.armor.plus)}. Nâng cấp ${upgradeCost(world.armor.plus)} vàng.`
-          }
-          action="Nâng"
-          onPress={() => world.upgrade('armor')}
-        />
-      ) : null}
+      ))}
+      {GEAR_SLOTS.map(({ slot, label }) => {
+        const piece = world[slot];
+        if (!piece) return null;
+        const stats = gearBonuses(piece);
+        const cap = piece.plus >= UPGRADE_CAP;
+        return (
+          <Row
+            key={`up-${slot}`}
+            title={`${label}: ${ITEMS[piece.itemId].nameVi} +${piece.plus}`}
+            detail={
+              cap
+                ? gearStatLine(stats)
+                : `${gearStatLine(stats)} Nâng cấp ${upgradeCost(piece.plus)} vàng.`
+            }
+            action="Nâng"
+            onPress={() => world.upgrade(slot)}
+          />
+        );
+      })}
+      {GEAR_SLOTS.map(({ slot, label }) =>
+        world[slot] ? (
+          <Row
+            key={`off-${slot}`}
+            title={`Tháo ${label}`}
+            detail={ITEMS[world[slot]!.itemId].nameVi}
+            action="Tháo"
+            onPress={() => world.unequip(slot)}
+          />
+        ) : null,
+      )}
     </>
   );
 }
@@ -235,6 +256,8 @@ function TravelRows() {
 
 function InnRows() {
   const world = useWorld();
+  const extras = redundantPets(world.tamed);
+  const evolving = world.tamed.filter((monster) => evoStageOf(monster) < MAX_EVO_STAGE);
   return (
     <>
       <Text style={styles.copy}>
@@ -245,13 +268,39 @@ function InnRows() {
         {world.pet.maxStamina}
       </Text>
       <Row title="Nghỉ ngơi" detail={`${INN_COST} vàng`} action="Nghỉ" onPress={world.rest} />
+      <Text style={styles.copy}>Đổi thú trùng lấy 3–5 mảnh tiến hoá của vùng đó. Giữ lại con mạnh nhất.</Text>
+      {extras.length === 0 ? <Text style={styles.copy}>Không có thú trùng để đổi.</Text> : null}
+      {extras.map((monster) => (
+        <Row
+          key={`trade-${monster.id}`}
+          title={evoTitle(monster)}
+          detail={`Cấp ${monster.level}. Đổi lấy ${shardLabel(shardForKind(monster.kindId))}.`}
+          action="Đổi mảnh"
+          onPress={() => world.tradePet(monster.id)}
+        />
+      ))}
+      <Text style={styles.copy}>Tiến hoá thú. Mảnh 7 màu và mảnh tiến hoá thay được mảnh vùng.</Text>
+      {evolving.length === 0 ? <Text style={styles.copy}>Chưa có thú để tiến hoá.</Text> : null}
+      {evolving.map((monster) => {
+        const cost = evoCost(monster);
+        if (!cost) return null;
+        return (
+          <Row
+            key={`evo-${monster.id}`}
+            title={evoTitle(monster)}
+            detail={`Cấp ${monster.level}/${cost.level}. Cần ${cost.shards} ${shardLabel(cost.shardId)}.`}
+            action="Tiến hoá"
+            onPress={() => world.evolvePet(monster.id)}
+          />
+        );
+      })}
     </>
   );
 }
 
 function BagRows() {
   const world = useWorld();
-  const usable = world.bag.filter((stack) => stack.itemId !== 'sword' && stack.itemId !== 'armor');
+  const usable = world.bag.filter((stack) => !isGearItem(stack.itemId));
   if (usable.length === 0) return <Text style={styles.copy}>Không có vật phẩm dùng ngay.</Text>;
   return (
     <>
@@ -266,6 +315,18 @@ function BagRows() {
       ))}
     </>
   );
+}
+
+function gearStatLine(stats: { attack: number; defense: number; hp: number; mana: number; stamina: number; speed: number }): string {
+  const parts = [
+    stats.attack ? `Tấn công +${stats.attack}` : '',
+    stats.defense ? `Thủ +${stats.defense}` : '',
+    stats.hp ? `Máu +${stats.hp}` : '',
+    stats.mana ? `Mana +${stats.mana}` : '',
+    stats.stamina ? `Thể lực +${stats.stamina}` : '',
+    stats.speed ? `Tốc độ +${stats.speed}` : '',
+  ].filter(Boolean);
+  return parts.join(' · ') || 'Không có chỉ số.';
 }
 
 function Row({ title, detail, action, onPress }: { title: string; detail: string; action: string; onPress: () => void }) {

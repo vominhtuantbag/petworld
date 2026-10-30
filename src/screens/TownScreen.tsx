@@ -74,6 +74,7 @@ export function TownScreen() {
         onEvent={onEvent}
         canTake={(loot) => lootFits(world.bag, loot)}
         paused={panel !== null || menu !== null || customizing || chatFocused}
+        speedBonus={world.speed}
         testID="town-screen"
         zoom={worldZoom()}
         playerFacesRight={portraitFacesRight(character?.professionId, character?.gender)}

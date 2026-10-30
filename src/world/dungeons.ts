@@ -61,10 +61,20 @@ export function mineWaveExp(level: number, floor: number, wave: number): number 
 
 /** Random items plus a 40% dungeon ticket. Used only after wave 1-5. */
 export function mineClearDrops(rng: () => number = Math.random): BattleDrop[] {
-  const pool: ItemId[] = ['hp-potion', 'mana-potion', 'ration', 'berry', 'evo-shard', 'stamina-potion'];
+  const pool: ItemId[] = [
+    'hp-potion',
+    'hp-potion-m',
+    'mana-potion',
+    'mana-potion-m',
+    'stamina-potion',
+    'banana',
+    'grape',
+    'apple',
+    'evo-shard',
+  ];
   const drops: BattleDrop[] = [{ itemId: pool[Math.floor(rng() * pool.length)] ?? 'hp-potion', qty: 1 }];
   if (rng() < 0.5) {
-    const extra = pool[Math.floor(rng() * pool.length)] ?? 'ration';
+    const extra = pool[Math.floor(rng() * pool.length)] ?? 'banana';
     if (extra !== drops[0].itemId) drops.push({ itemId: extra, qty: 1 });
     else drops[0] = { ...drops[0], qty: 2 };
   }

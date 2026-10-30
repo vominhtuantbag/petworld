@@ -26,6 +26,8 @@ type Props = {
   remotes?: FieldRemote[];
   /** Golden hour. Wilderness gains the mine and raid gates for this step. */
   dungeonOpen?: boolean;
+  /** Added to the 230 px/s walk speed. Shoes feed this. */
+  speedBonus?: number;
   children?: ReactNode;
 };
 
@@ -33,7 +35,7 @@ type Props = {
  * Shared loop for the town and the wilderness. `paused` freezes the player
  * while a shop is open; monsters still advance so the world does not nap.
  */
-export function FieldStage({ field, onField, onEvent, canTake, paused, playerLevel = 1, stamina, testID, player, playerFacesRight = true, zoom = 1, remotes, dungeonOpen = false, children }: Props) {
+export function FieldStage({ field, onField, onEvent, canTake, paused, playerLevel = 1, stamina, testID, player, playerFacesRight = true, zoom = 1, remotes, dungeonOpen = false, speedBonus = 0, children }: Props) {
   const insets = useSafeAreaInsets();
   const { s, height } = useLayout();
   const pad = Math.round(Math.min(height * 0.34, Math.max(96, s(118))));
@@ -54,6 +56,7 @@ export function FieldStage({ field, onField, onEvent, canTake, paused, playerLev
   const levelRef = useRef(playerLevel);
   const staminaRef = useRef(stamina ?? Number.POSITIVE_INFINITY);
   const dungeonRef = useRef(dungeonOpen);
+  const speedRef = useRef(speedBonus);
   const marchClock = useRef(0);
   const marched = useRef(0);
   onEventRef.current = onEvent;
@@ -63,12 +66,22 @@ export function FieldStage({ field, onField, onEvent, canTake, paused, playerLev
   levelRef.current = playerLevel;
   staminaRef.current = stamina ?? Number.POSITIVE_INFINITY;
   dungeonRef.current = dungeonOpen;
+  speedRef.current = speedBonus;
 
   useEffect(() => listenKeys(keys.current), []);
 
   useGameLoop(true, (dt) => {
     const axes = pausedRef.current ? { x: 0, y: 0 } : combine(stick.current, keys.current);
-    const stepped = stepField(sim.current, axes, dt, canTakeRef.current, levelRef.current, staminaRef.current, dungeonRef.current);
+    const stepped = stepField(
+      sim.current,
+      axes,
+      dt,
+      canTakeRef.current,
+      levelRef.current,
+      staminaRef.current,
+      dungeonRef.current,
+      speedRef.current,
+    );
     sim.current = stepped.state;
     onFieldRef.current(stepped.state);
     for (const event of stepped.events) {

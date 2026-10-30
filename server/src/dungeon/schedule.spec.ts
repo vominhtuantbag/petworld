@@ -23,6 +23,7 @@ const never = raidPayout(10, () => 0.99);
 assert.equal(always.exp, (8 + 10 * 3) * 3);
 assert.deepEqual(always.drops, [
   { itemId: 'evo-shard', qty: 10 },
+  { itemId: 'rainbow-shard', qty: 1 },
   { itemId: 'might-blade', qty: 1 },
 ]);
 assert.deepEqual(never.drops, []);

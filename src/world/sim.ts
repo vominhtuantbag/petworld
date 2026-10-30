@@ -8,8 +8,8 @@ import { dropChance } from './progression';
 import { zoneIndexAt } from './tiers';
 import type { ChunkRecord, FieldEvent, FieldState, LootActor, MonsterActor, Rect, Sensor, Vec } from './types';
 
-const PLAYER_SPEED = 230;
-const LOOT_CAP = 12;
+export const PLAYER_SPEED = 230;
+const LOOT_CAP = 96;
 const PICKUP_R = 24;
 /** How long the map stays safe after the player runs from a fight. */
 export const FLEE_PEACE_SEC = 3;
@@ -30,6 +30,7 @@ export function stepField(
   playerLevel = 1,
   stamina = Number.POSITIVE_INFINITY,
   dungeonOpen = false,
+  speedBonus = 0,
 ): { state: FieldState; events: FieldEvent[] } {
   const awake = withDungeonGates(syncChunks(field), dungeonOpen);
   const events: FieldEvent[] = [];
@@ -43,7 +44,7 @@ export function stepField(
     awake.player.y,
     awake.player.r,
     moveAxes,
-    PLAYER_SPEED * mudSlow(awake, awake.player.x, awake.player.y, true) * pace,
+    (PLAYER_SPEED + Math.max(0, speedBonus)) * mudSlow(awake, awake.player.x, awake.player.y, true) * pace,
     dt,
     awake,
   );
@@ -53,7 +54,7 @@ export function stepField(
   let loot = awake.loot;
   const dropped = monsters.flatMap((monster) => monster.dropped);
   if (dropped.length > 0) {
-    loot = [...loot, ...dropped].slice(-LOOT_CAP);
+    loot = [...loot, ...dropped].slice(0, LOOT_CAP);
   }
 
   const picked: LootActor[] = [];

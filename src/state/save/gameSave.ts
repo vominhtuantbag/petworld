@@ -3,12 +3,12 @@ import { getCharacter, PROFESSIONS } from '../../data/characters';
 import { getRegion } from '../../data/regions';
 import type { InitializedPlayer, RegionId } from '../../types/game';
 import { professionPools } from '../../world/growth';
-import { BAG_SLOTS, ITEMS, UPGRADE_CAP } from '../../world/items';
+import { BAG_SLOTS, canonicalItemId, gearSlot, isGearItem, ITEMS, UPGRADE_CAP } from '../../world/items';
 import { speciesById } from '../../world/monsters';
 import { ADVENTURE_LEVEL_CAP } from '../../world/progression';
 import { emptyQuests, normalizeQuests, type QuestTrack } from '../../world/quests';
 import { townZoneId } from '../../world/catalog';
-import type { FieldScene, Gear, ItemId, Pet, Stack, Vitals } from '../../world/types';
+import type { FieldScene, Gear, GearSlot, ItemId, Pet, Stack, Vitals } from '../../world/types';
 import type { TamedMonster } from '../../world/combat';
 import type { HeroSkillLoadout } from '../../world/combat/kits';
 
@@ -66,6 +66,9 @@ export type GameSave = {
     storage: Stack[];
     weapon: Gear | null;
     armor: Gear | null;
+    helm: Gear | null;
+    shoes: Gear | null;
+    ring: Gear | null;
   };
   roster: TamedMonster[];
   quests: QuestTrack;
@@ -103,6 +106,9 @@ export type SaveSource = {
   storage: Stack[];
   weapon: Gear | null;
   armor: Gear | null;
+  helm: Gear | null;
+  shoes: Gear | null;
+  ring: Gear | null;
   baseAttack: number;
   baseDefense: number;
   innReadyAt: number;
@@ -130,6 +136,9 @@ export type WorldSnapshot = {
   storage: Stack[];
   weapon: Gear | null;
   armor: Gear | null;
+  helm: Gear | null;
+  shoes: Gear | null;
+  ring: Gear | null;
   baseAttack: number;
   baseDefense: number;
   innReadyAt: number;
@@ -219,6 +228,9 @@ export function captureGameSave(state: SaveSource, player: InitializedPlayer, av
       storage: state.storage,
       weapon: state.weapon,
       armor: state.armor,
+      helm: state.helm,
+      shoes: state.shoes,
+      ring: state.ring,
     },
     roster: state.tamed,
     quests: state.quests,
@@ -282,6 +294,9 @@ export function applyGameSave(save: GameSave): WorldSnapshot {
     storage: save.inventory.storage,
     weapon: save.inventory.weapon,
     armor: save.inventory.armor,
+    helm: save.inventory.helm,
+    shoes: save.inventory.shoes,
+    ring: save.inventory.ring,
     baseAttack: save.world.baseAttack,
     baseDefense: save.world.baseDefense,
     innReadyAt: save.world.innReadyAt,
@@ -326,13 +341,16 @@ export function createStarterWorld(player: InitializedPlayer): WorldSnapshot {
       { itemId: 'mana-potion', qty: 1 },
       { itemId: 'antidote', qty: 1 },
       { itemId: 'town-scroll', qty: 1 },
-      { itemId: 'berry', qty: 2 },
+      { itemId: 'banana', qty: 2 },
       { itemId: 'ration', qty: 1 },
       { itemId: 'net', qty: 3 },
     ],
     storage: [],
     weapon: null,
     armor: null,
+    helm: null,
+    shoes: null,
+    ring: null,
     baseAttack: pools.attack,
     baseDefense: pools.defense,
     innReadyAt: 0,
@@ -385,7 +403,12 @@ export function isNewerSave(left: GameSave, right: GameSave): boolean {
 
 /** Higher means more adventure progress. Gold and item counts are left out so spending them is not treated as a reset. */
 export function progressScore(save: GameSave): number {
-  const gear = (save.inventory.weapon ? 1 : 0) + (save.inventory.armor ? 1 : 0);
+  const gear =
+    (save.inventory.weapon ? 1 : 0) +
+    (save.inventory.armor ? 1 : 0) +
+    (save.inventory.helm ? 1 : 0) +
+    (save.inventory.shoes ? 1 : 0) +
+    (save.inventory.ring ? 1 : 0);
   return (
     save.profile.level * 1_000_000 +
     save.roster.length * 100_000 +
@@ -518,33 +541,40 @@ function parseInventory(value: unknown): GameSave['inventory'] {
   return {
     bag: parseStacks(row.bag),
     storage: parseStacks(row.storage),
-    weapon: parseWeapon(row.weapon),
-    armor: parseGear(row.armor, 'armor'),
+    weapon: parseEquipped(row.weapon, 'weapon'),
+    armor: parseEquipped(row.armor, 'armor'),
+    helm: parseEquipped(row.helm, 'helm'),
+    shoes: parseEquipped(row.shoes, 'shoes'),
+    ring: parseEquipped(row.ring, 'ring'),
   };
 }
 
 function parseStacks(value: unknown): Stack[] {
   if (!Array.isArray(value)) return [];
-  const merged = new Map<ItemId, number>();
-  const order: ItemId[] = [];
+  const stacks: Stack[] = [];
   for (const entry of value) {
-    if (!isRecord(entry) || typeof entry.itemId !== 'string' || !(entry.itemId in ITEMS)) continue;
-    const itemId = entry.itemId as ItemId;
+    if (!isRecord(entry) || typeof entry.itemId !== 'string') continue;
+    const itemId = canonicalItemId(entry.itemId);
+    if (!itemId) continue;
     const qty = int(entry.qty, 1, 999, 1);
-    if (!merged.has(itemId)) order.push(itemId);
-    merged.set(itemId, (merged.get(itemId) ?? 0) + qty);
+    if (!ITEMS[itemId].stack) {
+      if (stacks.some((stack) => stack.itemId === itemId)) continue;
+      stacks.push({ itemId, qty: 1, plus: int(entry.plus, 0, UPGRADE_CAP, 0) });
+    } else {
+      const existing = stacks.find((stack) => stack.itemId === itemId);
+      if (existing) existing.qty = Math.min(999, existing.qty + qty);
+      else stacks.push({ itemId, qty });
+    }
+    if (stacks.length >= BAG_SLOTS) break;
   }
-  return order.slice(0, BAG_SLOTS).map((itemId) => ({ itemId, qty: Math.min(999, merged.get(itemId) ?? 1) }));
+  return stacks;
 }
 
-function parseWeapon(value: unknown): Gear | null {
-  if (!isRecord(value) || (value.itemId !== 'sword' && value.itemId !== 'might-blade')) return null;
-  return { itemId: value.itemId, plus: int(value.plus, 0, UPGRADE_CAP, 0) };
-}
-
-function parseGear(value: unknown, slot: 'sword' | 'armor'): Gear | null {
-  if (!isRecord(value) || value.itemId !== slot) return null;
-  return { itemId: slot, plus: int(value.plus, 0, UPGRADE_CAP, 0) };
+function parseEquipped(value: unknown, slot: GearSlot): Gear | null {
+  if (!isRecord(value) || typeof value.itemId !== 'string') return null;
+  const itemId = canonicalItemId(value.itemId);
+  if (!itemId || !isGearItem(itemId) || gearSlot(itemId) !== slot) return null;
+  return { itemId, plus: int(value.plus, 0, UPGRADE_CAP, 0) };
 }
 
 function parseRoster(value: unknown): TamedMonster[] {
@@ -589,6 +619,7 @@ function parseTamed(value: unknown): TamedMonster | null {
     speed: int(value.speed, 0, 9_999, kind.speed),
     ...(basicId ? { basicId } : {}),
     ...(skillIds && skillIds.length > 0 ? { skillIds } : {}),
+    evoStage: int(value.evoStage, 0, 2, 0),
   };
 }
 

@@ -29,25 +29,71 @@ const REGION_IDS = [
 
 const ITEM_IDS = [
   'hp-potion',
+  'hp-potion-m',
+  'hp-potion-l',
   'mana-potion',
+  'mana-potion-m',
+  'mana-potion-l',
   'stamina-potion',
+  'stamina-potion-m',
+  'stamina-potion-l',
   'ration',
   'town-scroll',
   'antidote',
-  'berry',
-  'mana-fruit',
-  'hearty-fruit',
+  'banana',
+  'grape',
+  'apple',
   'net',
   'sword',
+  'sword-rare',
+  'sword-special',
+  'might-blade',
   'armor',
+  'armor-rare',
+  'armor-special',
+  'helm',
+  'helm-rare',
+  'helm-special',
+  'shoes',
+  'shoes-rare',
+  'shoes-special',
+  'ring',
+  'ring-rare',
+  'ring-special',
   'mine-ticket',
   'evo-shard',
-  'might-blade',
+  'rainbow-shard',
+  'shard-plains',
+  'shard-mountains',
+  'shard-forest',
+  'shard-swamp',
+  'shard-beach',
+  'shard-ocean',
+  'shard-tundra',
+  'shard-savannah',
+  'shard-volcano',
+  'shard-desert',
 ] as const;
+
+const ITEM_ALIASES: Record<string, (typeof ITEM_IDS)[number]> = {
+  berry: 'banana',
+  'mana-fruit': 'grape',
+  'hearty-fruit': 'apple',
+};
+
+const GEAR_IDS = ITEM_IDS.filter((id) =>
+  /^(sword|might-blade|armor|helm|shoes|ring)/.test(id),
+) as [(typeof ITEM_IDS)[number], ...(typeof ITEM_IDS)[number][]];
 
 const stackSchema = z.object({
   itemId: z.enum(ITEM_IDS),
   qty: z.number().int().min(1).max(999),
+  plus: z.number().int().min(0).max(5).optional(),
+});
+
+const gearSchema = z.object({
+  itemId: z.enum(GEAR_IDS),
+  plus: z.number().int().min(0).max(5),
 });
 
 const tamedSchema = z.object({
@@ -66,6 +112,7 @@ const tamedSchema = z.object({
   speed: z.number().int().min(0).max(9_999),
   basicId: z.string().regex(/^[a-z0-9:_-]{1,80}$/i).optional(),
   skillIds: z.array(z.string().regex(/^[a-z0-9:_-]{1,80}$/i)).max(4).optional(),
+  evoStage: z.number().int().min(0).max(2).optional(),
 });
 
 export const saveSchema = z.object({
@@ -94,8 +141,11 @@ export const saveSchema = z.object({
   inventory: z.object({
     bag: z.array(stackSchema).max(64),
     storage: z.array(stackSchema).max(64),
-    weapon: z.object({ itemId: z.enum(['sword', 'might-blade']), plus: z.number().int().min(0).max(5) }).nullable(),
-    armor: z.object({ itemId: z.literal('armor'), plus: z.number().int().min(0).max(5) }).nullable(),
+    weapon: gearSchema.nullable(),
+    armor: gearSchema.nullable(),
+    helm: gearSchema.nullable().optional(),
+    shoes: gearSchema.nullable().optional(),
+    ring: gearSchema.nullable().optional(),
   }),
   roster: z.array(tamedSchema).max(200),
   quests: z.object({
@@ -163,6 +213,7 @@ export function coerceSaveInput(body: unknown): unknown {
   if (!source) return body.save;
   const save: Record<string, unknown> = { ...source };
   if (isRecord(save.status)) save.status = aliasMana(save.status);
+  if (isRecord(save.inventory)) save.inventory = remapInventory(save.inventory);
   if (isRecord(save.world)) {
     const world: Record<string, unknown> = { ...save.world };
     if (isRecord(world.pet)) world.pet = aliasMana(world.pet);
@@ -175,6 +226,26 @@ export function coerceSaveInput(body: unknown): unknown {
     }
   }
   return save;
+}
+
+function remapInventory(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...row,
+    bag: remapStacks(row.bag),
+    storage: remapStacks(row.storage),
+    helm: row.helm ?? null,
+    shoes: row.shoes ?? null,
+    ring: row.ring ?? null,
+  };
+}
+
+function remapStacks(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((entry) => {
+    if (!isRecord(entry) || typeof entry.itemId !== 'string') return entry;
+    const itemId = ITEM_ALIASES[entry.itemId] ?? entry.itemId;
+    return { ...entry, itemId };
+  });
 }
 
 function aliasMana(row: Record<string, unknown>): Record<string, unknown> {
@@ -220,6 +291,9 @@ export function sampleSave(updatedAt: string, gold: number, revision = 1): GameS
       storage: [],
       weapon: null,
       armor: null,
+      helm: null,
+      shoes: null,
+      ring: null,
     },
     roster: [],
     quests: { day: '2026-10-23', winsToday: 1, feedsToday: 0, scrollsToday: 0, totalWins: 1, claimed: [] },

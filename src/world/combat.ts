@@ -61,6 +61,8 @@ export type TamedMonster = {
   /** Chosen in Kỹ Năng. Missing values use the roll from this monster's id. */
   basicId?: string;
   skillIds?: string[];
+  /** 0 wild form. 1–2 after spending evolution shards at the inn. */
+  evoStage?: number;
 };
 
 export type BattleDrop = { itemId: ItemId; qty: number };
@@ -164,9 +166,29 @@ export function skillReady(fighter: Fighter, skill: Skill): boolean {
   return fighter.mp >= skill.mana && (fighter.cooldowns[skill.id] ?? 0) <= 0;
 }
 
-export const COMBAT_ITEMS: ItemId[] = ['hp-potion', 'mana-potion', 'antidote', 'stamina-potion', 'ration'];
+export const COMBAT_ITEMS: ItemId[] = [
+  'hp-potion',
+  'hp-potion-m',
+  'hp-potion-l',
+  'mana-potion',
+  'mana-potion-m',
+  'mana-potion-l',
+  'antidote',
+  'stamina-potion',
+  'stamina-potion-m',
+  'stamina-potion-l',
+  'ration',
+];
 /** Brought from the squad screen. Other consumables stay in the bag. */
-export const SQUAD_ITEMS: ItemId[] = ['hp-potion', 'mana-potion', 'antidote'];
+export const SQUAD_ITEMS: ItemId[] = [
+  'hp-potion',
+  'hp-potion-m',
+  'hp-potion-l',
+  'mana-potion',
+  'mana-potion-m',
+  'mana-potion-l',
+  'antidote',
+];
 
 /**
  * `allies` are Pets: tamed units fighting on the player team.
@@ -428,6 +450,7 @@ export function actTame(state: BattleState, foeId: string, bonuses: number[], ro
     attack: foe.attack,
     defense: foe.defense,
     speed: foe.speed,
+    evoStage: 0,
   };
   const foes = state.foes.map((entry) => (entry.id === foe.id ? { ...entry, hp: 0 } : entry));
   return after(
@@ -485,7 +508,7 @@ export function actAutoPlayer(state: BattleState, foeId: string | null): BattleS
   return actBasic(state, foe.id);
 }
 
-const PET_FOOD: ItemId[] = ['berry', 'mana-fruit', 'hearty-fruit'];
+const PET_FOOD: ItemId[] = ['banana', 'grape', 'apple'];
 
 function rollIndex(rng: () => number, length: number): number {
   const raw = rng();

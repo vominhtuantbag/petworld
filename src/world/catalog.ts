@@ -19,6 +19,7 @@ import { omitHazardsOnPads } from './hazards';
 import { locomotion } from './gait';
 import { monsterMana } from './growth';
 import { ITEMS } from './items';
+import { withGroundLoot } from './scatterLoot';
 import { expansionSpecies, MAP1_ROSTER_VERSION, townSpecies, type MonsterSpecies } from './monsters';
 import { generatePlains, hitsSolid, PLAINS_GRASS, plainsNeedsVista } from './plainsDecor';
 import { generateSavannah, SAVANNAH_GRASS } from './savannahDecor';
@@ -335,7 +336,7 @@ function createTierMap(zoneId: string): FieldState {
     ...(tier < MAP_TIERS ? [ascentReturnPad(map.zoneId, width, height)] : []),
     ...sensors.map((sensor) => ({ x: sensor.x, y: sensor.y })),
   ];
-  return {
+  const built: FieldState = {
     zoneId: map.zoneId,
     regionId: province.regionId,
     title: `${province.nameVi} · bản đồ ${tier}/${MAP_TIERS}`,
@@ -367,7 +368,9 @@ function createTierMap(zoneId: string): FieldState {
     tier,
     zones,
     quietSpawn: entrance,
+    groundLoot: 0,
   };
+  return withGroundLoot(built);
 }
 
 function dressMap(provinceId: string, zoneId: string, width: number, height: number): { ground: string | null; soft: Rect[]; solids: Rect[] } {
@@ -490,20 +493,58 @@ export function createChunk(field: FieldState, cx: number, cy: number): { monste
 /** Relative weights. Gold and food are common. Gear is a rare find from level 6 up. */
 export function lootTable(level: number): LootWeight[] {
   const table: LootWeight[] = [
-    { weight: 50, kind: 'gold', min: 3 + level, max: 8 + level * 2 },
-    { weight: 22, kind: 'item', itemId: 'ration' },
-    { weight: 14, kind: 'item', itemId: 'hp-potion' },
-    { weight: 8, kind: 'item', itemId: 'antidote' },
-    { weight: 10, kind: 'item', itemId: 'berry' },
-    { weight: 6, kind: 'item', itemId: 'net' },
+    { weight: 44, kind: 'gold', min: 3 + level, max: 8 + level * 2 },
+    { weight: 12, kind: 'item', itemId: 'hp-potion' },
+    { weight: 8, kind: 'item', itemId: 'mana-potion' },
     { weight: 8, kind: 'item', itemId: 'stamina-potion' },
+    { weight: 10, kind: 'item', itemId: 'banana' },
+    { weight: 6, kind: 'item', itemId: 'net' },
+    { weight: 6, kind: 'item', itemId: 'ration' },
+    { weight: 6, kind: 'item', itemId: 'antidote' },
   ];
   if (level >= 2) table.push({ weight: 4, kind: 'item', itemId: 'town-scroll' });
-  if (level >= 4) table.push({ weight: 8, kind: 'item', itemId: 'mana-potion' });
-  if (level >= 5) table.push({ weight: 6, kind: 'item', itemId: 'mana-fruit' });
-  if (level >= 6) table.push({ weight: 3, kind: 'item', itemId: 'sword' });
-  if (level >= 8) table.push({ weight: 4, kind: 'item', itemId: 'hearty-fruit' });
-  if (level >= 10) table.push({ weight: 3, kind: 'item', itemId: 'armor' });
+  if (level >= 4) table.push({ weight: 6, kind: 'item', itemId: 'hp-potion-m' }, { weight: 5, kind: 'item', itemId: 'grape' });
+  if (level >= 6) {
+    table.push(
+      { weight: 4, kind: 'item', itemId: 'mana-potion-m' },
+      { weight: 4, kind: 'item', itemId: 'stamina-potion-m' },
+      { weight: 3, kind: 'item', itemId: 'sword' },
+      { weight: 3, kind: 'item', itemId: 'shoes' },
+    );
+  }
+  if (level >= 8) {
+    table.push(
+      { weight: 4, kind: 'item', itemId: 'apple' },
+      { weight: 3, kind: 'item', itemId: 'helm' },
+      { weight: 3, kind: 'item', itemId: 'armor' },
+      { weight: 3, kind: 'item', itemId: 'ring' },
+    );
+  }
+  if (level >= 10) {
+    table.push(
+      { weight: 3, kind: 'item', itemId: 'hp-potion-l' },
+      { weight: 3, kind: 'item', itemId: 'mana-potion-l' },
+      { weight: 2, kind: 'item', itemId: 'stamina-potion-l' },
+    );
+  }
+  if (level >= 14) {
+    table.push(
+      { weight: 2, kind: 'item', itemId: 'sword-rare' },
+      { weight: 2, kind: 'item', itemId: 'armor-rare' },
+      { weight: 2, kind: 'item', itemId: 'helm-rare' },
+      { weight: 2, kind: 'item', itemId: 'shoes-rare' },
+      { weight: 2, kind: 'item', itemId: 'ring-rare' },
+    );
+  }
+  if (level >= 18) {
+    table.push(
+      { weight: 1, kind: 'item', itemId: 'sword-special' },
+      { weight: 1, kind: 'item', itemId: 'armor-special' },
+      { weight: 1, kind: 'item', itemId: 'helm-special' },
+      { weight: 1, kind: 'item', itemId: 'shoes-special' },
+      { weight: 1, kind: 'item', itemId: 'ring-special' },
+    );
+  }
   return table;
 }
 

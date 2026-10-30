@@ -22,14 +22,29 @@ import {
   UPGRADE_CAP,
   addStack,
   applyConsumable,
-  armorDefense,
+  equippedBonuses,
   fruitRestore,
   fullRestore,
+  gearSlot,
+  grocerPrice,
+  isGearItem,
   lootFits,
   removeOne,
+  takeStack,
   upgradeCost,
-  weaponAttack,
 } from '../world/items';
+import {
+  consumeEvolutionShards,
+  evoCost,
+  evoMultiplier,
+  evoStageOf,
+  grantShards,
+  MAX_EVO_STAGE,
+  redundantPets,
+  rollTradeShards,
+  shardForKind,
+} from '../world/evolution';
+import { withGroundLoot } from '../world/scatterLoot';
 import type { RaidRewardView } from '../net/protocol';
 import type { BattleResult, TamedMonster } from '../world/combat';
 import { useWorldPersistence } from './save/useWorldPersistence';
@@ -41,7 +56,21 @@ import {
   resolvePetLoadout,
   type HeroSkillLoadout,
 } from '../world/combat/kits';
-import type { Encounter, FieldScene, FieldState, Gear, ItemId, LootActor, MonsterActor, Pet, ServiceId, Stack, Vec, Vitals } from '../world/types';
+import type {
+  Encounter,
+  FieldScene,
+  FieldState,
+  Gear,
+  GearSlot,
+  ItemId,
+  LootActor,
+  MonsterActor,
+  Pet,
+  ServiceId,
+  Stack,
+  Vec,
+  Vitals,
+} from '../world/types';
 
 /**
  * Exploration session for the signed-in character. Progress is written to
@@ -67,6 +96,9 @@ export type WorldState = {
   storage: Stack[];
   weapon: Gear | null;
   armor: Gear | null;
+  helm: Gear | null;
+  shoes: Gear | null;
+  ring: Gear | null;
   baseAttack: number;
   baseDefense: number;
   innReadyAt: number;
@@ -95,14 +127,18 @@ export type WorldState = {
 type WorldContextValue = WorldState & {
   attack: number;
   defense: number;
+  speed: number;
   openService: (service: ServiceId) => void;
   returnToTown: () => void;
   travelTo: (toZone: string, arrive?: Vec, unlock?: RegionId) => void;
   fastTravel: (regionId: RegionId) => void;
-  buy: (itemId: ItemId) => void;
-  upgrade: (slot: 'weapon' | 'armor') => void;
-  equipFromBag: (itemId: 'sword' | 'armor' | 'might-blade') => void;
+  buy: (itemId: ItemId, source?: 'store' | 'smith') => void;
+  upgrade: (slot: GearSlot) => void;
+  equipFromBag: (itemId: ItemId) => void;
+  unequip: (slot: GearSlot) => void;
   useBagItem: (itemId: ItemId) => void;
+  tradePet: (monsterId: string) => void;
+  evolvePet: (monsterId: string) => void;
   claimQuest: (id: string) => void;
   touchQuests: () => void;
   stash: (itemId: ItemId) => void;
@@ -149,6 +185,9 @@ const EMPTY: WorldState = {
   storage: [],
   weapon: null,
   armor: null,
+  helm: null,
+  shoes: null,
+  ring: null,
   baseAttack: 10,
   baseDefense: 4,
   innReadyAt: 0,
@@ -207,8 +246,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       }
       return fresh;
     }
-    if (saved) return JSON.parse(JSON.stringify(saved)) as FieldState;
-    return createField(zoneId);
+    if (saved) return withGroundLoot(JSON.parse(JSON.stringify(saved)) as FieldState);
+    return withGroundLoot(createField(zoneId));
   }, [state.fields]);
 
   const clearArrival = useCallback(() => {
@@ -304,39 +343,26 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const buy = useCallback((itemId: ItemId) => {
+  const buy = useCallback((itemId: ItemId, source: 'store' | 'smith' = 'store') => {
     setState((current) => {
       const item = ITEMS[itemId];
-      if (current.gold < item.price) return { ...current, notice: 'Không đủ vàng.' };
-      if ((itemId === 'sword' && current.weapon) || (itemId === 'armor' && current.armor)) {
-        return { ...current, notice: 'Bạn đã có món này. Hãy nâng cấp.' };
-      }
+      const price = source === 'store' ? grocerPrice(itemId) : item.price;
+      if (current.gold < price) return { ...current, notice: 'Không đủ vàng.' };
       const bag = addStack(current.bag, itemId);
       if (!bag) return { ...current, notice: `Túi đã đầy (${BAG_SLOTS}).` };
-      return { ...current, gold: current.gold - item.price, bag, notice: `Đã mua ${item.nameVi}.` };
+      return { ...current, gold: current.gold - price, bag, notice: `Đã mua ${item.nameVi}.` };
     });
   }, []);
 
-  const equipFromBag = useCallback((itemId: 'sword' | 'armor' | 'might-blade') => {
-    setState((current) => {
-      if (itemId === 'armor' && current.armor) return { ...current, notice: 'Món này đang được trang bị.' };
-      if ((itemId === 'sword' || itemId === 'might-blade') && current.weapon) {
-        return { ...current, notice: 'Ô vũ khí đang có đồ.' };
-      }
-      const bag = removeOne(current.bag, itemId);
-      if (!bag) return { ...current, notice: 'Không có trong túi.' };
-      const gear = { itemId, plus: 0 } as Gear;
-      return {
-        ...current,
-        bag,
-        weapon: itemId === 'armor' ? current.weapon : gear,
-        armor: itemId === 'armor' ? gear : current.armor,
-        notice: `Đã trang bị ${ITEMS[itemId].nameVi}.`,
-      };
-    });
+  const equipFromBag = useCallback((itemId: ItemId) => {
+    setState((current) => equipItem(current, itemId, professionRef.current));
   }, []);
 
-  const upgrade = useCallback((slot: 'weapon' | 'armor') => {
+  const unequip = useCallback((slot: GearSlot) => {
+    setState((current) => unequipItem(current, slot, professionRef.current));
+  }, []);
+
+  const upgrade = useCallback((slot: GearSlot) => {
     setState((current) => {
       const gear = current[slot];
       if (!gear) return { ...current, notice: 'Hãy mua và trang bị trước.' };
@@ -344,12 +370,51 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       const cost = upgradeCost(gear.plus);
       if (current.gold < cost) return { ...current, notice: `Cần ${cost} vàng.` };
       const next = { ...gear, plus: gear.plus + 1 };
+      return fitVitals(
+        { ...current, gold: current.gold - cost, [slot]: next, notice: `${ITEMS[gear.itemId].nameVi} +${next.plus}.` },
+        professionRef.current,
+      );
+    });
+  }, []);
+
+  const tradePet = useCallback((monsterId: string) => {
+    setState((current) => {
+      const extras = redundantPets(current.tamed);
+      const pet = extras.find((monster) => monster.id === monsterId);
+      if (!pet) return { ...current, notice: 'Chỉ đổi được thú trùng. Giữ lại một con mạnh nhất.' };
+      const qty = rollTradeShards();
+      const shardId = shardForKind(pet.kindId);
+      const bag = grantShards(current.bag, shardId, qty);
+      if (!bag) return { ...current, notice: `Túi đã đầy (${BAG_SLOTS}).` };
       return {
         ...current,
-        gold: current.gold - cost,
-        weapon: slot === 'weapon' ? next : current.weapon,
-        armor: slot === 'armor' ? next : current.armor,
-        notice: `${ITEMS[gear.itemId].nameVi} +${next.plus}.`,
+        bag,
+        tamed: current.tamed.filter((monster) => monster.id !== pet.id),
+        notice: `Đã đổi ${pet.name} lấy ${qty} ${ITEMS[shardId].nameVi}.`,
+      };
+    });
+  }, []);
+
+  const evolvePet = useCallback((monsterId: string) => {
+    setState((current) => {
+      const pet = current.tamed.find((monster) => monster.id === monsterId);
+      if (!pet) return { ...current, notice: 'Không tìm thấy thú này.' };
+      const cost = evoCost(pet);
+      if (!cost) return { ...current, notice: `${pet.name} đã tiến hoá tối đa.` };
+      if (pet.level < cost.level) return { ...current, notice: `${pet.name} cần cấp ${cost.level} để tiến hoá.` };
+      const bag = consumeEvolutionShards(current.bag, cost.shardId, cost.shards);
+      if (!bag) {
+        return {
+          ...current,
+          notice: `Cần ${cost.shards} ${ITEMS[cost.shardId].nameVi} (mảnh 7 màu hoặc mảnh tiến hoá được dùng thay).`,
+        };
+      }
+      const next = applyEvoStage(pet, evoStageOf(pet) + 1);
+      return {
+        ...current,
+        bag,
+        tamed: current.tamed.map((monster) => (monster.id === pet.id ? next : monster)),
+        notice: `${next.name} tiến hoá lần ${next.evoStage}.`,
       };
     });
   }, []);
@@ -357,28 +422,28 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const useBagItem = useCallback((itemId: ItemId) => {
     setState((current) => {
       const quests = readQuests(current.quests);
+      if (isGearItem(itemId)) return { ...equipItem(current, itemId, professionRef.current), quests };
       if (itemId === 'net') return { ...current, quests, notice: 'Lưới dùng trong trận để thu phục quái.' };
       if (itemId === 'mine-ticket') return { ...current, quests, notice: 'Vé hầm ngục. Cần 2–5 người tại cửa hầm trong giờ vàng.' };
-      if (itemId === 'evo-shard') return { ...current, quests, notice: 'Mảnh tiến hóa thú. Giữ trong túi.' };
-      if (itemId === 'might-blade') {
-        if (current.weapon) return { ...current, quests, notice: 'Ô vũ khí đang có đồ. Kiếm sức mạnh nằm trong túi.' };
-        const bag = removeOne(current.bag, itemId);
-        if (!bag) return { ...current, quests, notice: 'Không còn trong túi.' };
-        return { ...current, quests, bag, weapon: { itemId: 'might-blade', plus: 0 }, notice: 'Đã trang bị Kiếm sức mạnh.' };
+      if (itemId === 'evo-shard' || itemId.startsWith('shard-')) {
+        return { ...current, quests, notice: 'Mảnh tiến hoá. Đổi thú trùng hoặc tiến hoá tại nhà nghỉ.' };
+      }
+      if (itemId === 'rainbow-shard') {
+        return { ...current, quests, notice: 'Mảnh 7 màu. Thay mọi mảnh tiến hoá thú tại nhà nghỉ.' };
       }
       if (itemId === 'town-scroll') {
         if (current.scene === 'town') return { ...current, quests, notice: 'Bạn đang ở thị trấn.' };
-        const bag = removeOne(current.bag, itemId);
-        if (!bag) return { ...current, quests, notice: 'Không còn hồi thành chú.' };
+        const taken = takeStack(current.bag, itemId);
+        if (!taken) return { ...current, quests, notice: 'Không còn Teleport.' };
         return {
           ...current,
-          bag,
+          bag: taken.bag,
           quests: { ...quests, scrollsToday: quests.scrollsToday + 1 },
           scene: 'town',
           zoneId: townZoneId(current.regionId),
           encounter: null,
           arrival: null,
-          notice: 'Hồi thành chú đưa bạn về thị trấn.',
+          notice: 'Teleport đưa bạn về thị trấn.',
         };
       }
       const fruit = fruitRestore(itemId);
@@ -781,13 +846,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<WorldContextValue>(() => {
-    const weaponKind = state.weapon?.itemId === 'might-blade' ? 'might-blade' : 'sword';
-    const attack = state.baseAttack + (state.weapon ? weaponAttack(state.weapon.plus, weaponKind) : 0);
-    const defense = state.baseDefense + (state.armor ? armorDefense(state.armor.plus) : 0);
+    const bonus = equippedBonuses(state);
     return {
       ...state,
-      attack,
-      defense,
+      attack: state.baseAttack + bonus.attack,
+      defense: state.baseDefense + bonus.defense,
+      speed: bonus.speed,
       openService,
       returnToTown,
       travelTo,
@@ -795,7 +859,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       buy,
       upgrade,
       equipFromBag,
+      unequip,
       useBagItem,
+      tradePet,
+      evolvePet,
       claimQuest,
       touchQuests,
       stash,
@@ -836,7 +903,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     buy,
     upgrade,
     equipFromBag,
+    unequip,
     useBagItem,
+    tradePet,
+    evolvePet,
     claimQuest,
     touchQuests,
     stash,
@@ -901,13 +971,16 @@ function growTamed(monster: TamedMonster, gained: number, hp: number, mp: number
     level += 1;
     if (!species) continue;
     const stats = monsterStats(species, level);
-    const hpGain = Math.max(0, stats.hp - maxHp);
-    const mpGain = Math.max(0, stats.mp - maxMp);
-    maxHp = stats.hp;
-    maxMp = stats.mp;
-    attack = stats.attack;
-    defense = stats.defense;
-    speed = species.speed + (level - 1);
+    const mult = evoMultiplier(evoStageOf(monster));
+    const nextHpMax = Math.round(stats.hp * mult);
+    const nextMpMax = Math.round(stats.mp * mult);
+    const hpGain = Math.max(0, nextHpMax - maxHp);
+    const mpGain = Math.max(0, nextMpMax - maxMp);
+    maxHp = nextHpMax;
+    maxMp = nextMpMax;
+    attack = Math.round(stats.attack * mult);
+    defense = Math.round(stats.defense * mult);
+    speed = Math.round((species.speed + (level - 1)) * mult);
     nextHp += hpGain;
     nextMp += mpGain;
   }
@@ -942,20 +1015,7 @@ function applyExp(current: WorldState, amount: number, professionId?: string): W
 
 function growWithProfession(current: WorldState, professionId: string | undefined): WorldState {
   const pools = professionPools(professionId, current.adventureLevel);
-  const vitals = current.vitals;
-  return {
-    ...current,
-    baseAttack: pools.attack,
-    baseDefense: pools.defense,
-    vitals: {
-      hp: Math.min(pools.hp, vitals.hp + Math.max(0, pools.hp - vitals.maxHp)),
-      maxHp: pools.hp,
-      mana: Math.min(pools.mp, vitals.mana + Math.max(0, pools.mp - vitals.maxMana)),
-      maxMana: pools.mp,
-      stamina: Math.min(pools.stamina, vitals.stamina + Math.max(0, pools.stamina - vitals.maxStamina)),
-      maxStamina: pools.stamina,
-    },
-  };
+  return fitVitals({ ...current, baseAttack: pools.attack, baseDefense: pools.defense }, professionId);
 }
 
 function hungriest(tamed: TamedMonster[]): TamedMonster | null {
@@ -1010,9 +1070,9 @@ function rememberSpecies(list: string[], id: string): string[] {
 function moveStack(current: WorldState, from: 'bag' | 'storage', to: 'bag' | 'storage', itemId: ItemId): WorldState {
   const source = removeOne(current[from], itemId);
   if (!source) return { ...current, notice: 'Không có món này.' };
-  if ((itemId === 'sword' || itemId === 'might-blade' || itemId === 'armor') && from === 'bag') {
-    const equipped = itemId === 'armor' ? current.armor?.itemId : current.weapon?.itemId;
-    if (equipped === itemId) return { ...current, notice: 'Hãy tháo trang bị trước khi cất.' };
+  if (isGearItem(itemId) && from === 'bag') {
+    const slot = gearSlot(itemId);
+    if (slot && current[slot]?.itemId === itemId) return { ...current, notice: 'Hãy tháo trang bị trước khi cất.' };
   }
   const dest = addStack(current[to], itemId);
   if (!dest) return { ...current, notice: to === 'bag' ? 'Túi đầy.' : 'Kho đầy.' };
@@ -1022,4 +1082,80 @@ function moveStack(current: WorldState, from: 'bag' | 'storage', to: 'bag' | 'st
     [to]: dest,
     notice: to === 'storage' ? `Đã cất ${ITEMS[itemId].nameVi}.` : `Đã lấy ${ITEMS[itemId].nameVi}.`,
   };
+}
+
+function equipItem(current: WorldState, itemId: ItemId, professionId: string | undefined): WorldState {
+  const slot = gearSlot(itemId);
+  if (!slot) return { ...current, notice: 'Không thể trang bị món này.' };
+  const taken = takeStack(current.bag, itemId);
+  if (!taken) return { ...current, notice: 'Không có trong túi.' };
+  let bag = taken.bag;
+  const wearing = current[slot];
+  if (wearing) {
+    const stored = addStack(bag, wearing.itemId, 1, wearing.plus);
+    if (!stored) return { ...current, notice: 'Túi đầy, không đổi được trang bị.' };
+    bag = stored;
+  }
+  return fitVitals(
+    { ...current, bag, [slot]: { itemId, plus: taken.plus }, notice: `Đã trang bị ${ITEMS[itemId].nameVi}.` },
+    professionId,
+  );
+}
+
+function unequipItem(current: WorldState, slot: GearSlot, professionId: string | undefined): WorldState {
+  const wearing = current[slot];
+  if (!wearing) return { ...current, notice: 'Ô này đang trống.' };
+  const bag = addStack(current.bag, wearing.itemId, 1, wearing.plus);
+  if (!bag) return { ...current, notice: `Túi đã đầy (${BAG_SLOTS}).` };
+  return fitVitals(
+    { ...current, bag, [slot]: null, notice: `Đã tháo ${ITEMS[wearing.itemId].nameVi}.` },
+    professionId,
+  );
+}
+
+function fitVitals(current: WorldState, professionId: string | undefined): WorldState {
+  const pools = professionPools(professionId, current.adventureLevel);
+  const bonus = equippedBonuses(current);
+  const maxHp = pools.hp + bonus.hp;
+  const maxMana = pools.mp + bonus.mana;
+  const maxStamina = pools.stamina + bonus.stamina;
+  const vitals = current.vitals;
+  return {
+    ...current,
+    vitals: {
+      hp: clampPool(vitals.hp + Math.max(0, maxHp - vitals.maxHp), maxHp),
+      maxHp,
+      mana: clampPool(vitals.mana + Math.max(0, maxMana - vitals.maxMana), maxMana),
+      maxMana,
+      stamina: clampPool(vitals.stamina + Math.max(0, maxStamina - vitals.maxStamina), maxStamina),
+      maxStamina,
+    },
+  };
+}
+
+function applyEvoStage(monster: TamedMonster, stage: number): TamedMonster {
+  const nextStage = Math.max(0, Math.min(MAX_EVO_STAGE, stage));
+  const species = speciesById(monster.kindId);
+  const mult = evoMultiplier(nextStage);
+  if (!species) return { ...monster, evoStage: nextStage };
+  const stats = monsterStats(species, monster.level);
+  const maxHp = Math.round(stats.hp * mult);
+  const maxMp = Math.round(stats.mp * mult);
+  const hpGain = Math.max(0, maxHp - monster.maxHp);
+  const mpGain = Math.max(0, maxMp - monster.maxMp);
+  return {
+    ...monster,
+    evoStage: nextStage,
+    maxHp,
+    maxMp,
+    hp: Math.min(maxHp, monster.hp + hpGain),
+    mp: Math.min(maxMp, monster.mp + mpGain),
+    attack: Math.round(stats.attack * mult),
+    defense: Math.round(stats.defense * mult),
+    speed: Math.round((species.speed + (monster.level - 1)) * mult),
+  };
+}
+
+function clampPool(value: number, max: number): number {
+  return Math.max(0, Math.min(max, value));
 }

@@ -7,20 +7,53 @@ import type { RegionId } from '../types/game';
 
 export type ItemId =
   | 'hp-potion'
+  | 'hp-potion-m'
+  | 'hp-potion-l'
   | 'mana-potion'
+  | 'mana-potion-m'
+  | 'mana-potion-l'
   | 'stamina-potion'
+  | 'stamina-potion-m'
+  | 'stamina-potion-l'
   | 'ration'
   | 'town-scroll'
   | 'antidote'
-  | 'berry'
-  | 'mana-fruit'
-  | 'hearty-fruit'
+  | 'banana'
+  | 'grape'
+  | 'apple'
   | 'net'
   | 'sword'
+  | 'sword-rare'
+  | 'sword-special'
+  | 'might-blade'
   | 'armor'
+  | 'armor-rare'
+  | 'armor-special'
+  | 'helm'
+  | 'helm-rare'
+  | 'helm-special'
+  | 'shoes'
+  | 'shoes-rare'
+  | 'shoes-special'
+  | 'ring'
+  | 'ring-rare'
+  | 'ring-special'
   | 'mine-ticket'
   | 'evo-shard'
-  | 'might-blade';
+  | 'rainbow-shard'
+  | 'shard-plains'
+  | 'shard-mountains'
+  | 'shard-forest'
+  | 'shard-swamp'
+  | 'shard-beach'
+  | 'shard-ocean'
+  | 'shard-tundra'
+  | 'shard-savannah'
+  | 'shard-volcano'
+  | 'shard-desert';
+
+export type GearSlot = 'weapon' | 'armor' | 'helm' | 'shoes' | 'ring';
+export type GearRarity = 'normal' | 'rare' | 'special';
 
 export type ServiceId = 'store' | 'smith' | 'storage' | 'travel' | 'inn' | 'pvp' | 'cup';
 
@@ -85,9 +118,9 @@ export type Rect = {
   slow?: number;
 };
 
-export type Stack = { itemId: ItemId; qty: number };
+export type Stack = { itemId: ItemId; qty: number; plus?: number };
 
-export type Gear = { itemId: 'sword' | 'might-blade' | 'armor'; plus: number };
+export type Gear = { itemId: ItemId; plus: number };
 
 export type Vitals = {
   hp: number;
@@ -259,6 +292,8 @@ export type FieldState = {
   zones: MapZone[];
   /** Chunk that contains this point stays empty so the arrival pad is safe. */
   quietSpawn: Vec | null;
+  /** 1 once hunting-map ground consumables have been scattered. */
+  groundLoot?: number;
   /** Seconds left after Bỏ chạy. Monsters do not chase or start a fight for 3 seconds. */
   peace?: number;
 };
