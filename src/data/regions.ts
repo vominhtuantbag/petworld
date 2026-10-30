@@ -141,7 +141,7 @@ export const REGION_CATALOG = {
   },
   savannah: {
     name: 'Wild Savannah',
-    nameVi: 'Thảo Nguyên Hoang Dã',
+    nameVi: 'Thảo Nguyên',
     description: 'Cỏ vàng, cây thưa, gió dài.',
     status: 'available',
     catalog: 'starter',

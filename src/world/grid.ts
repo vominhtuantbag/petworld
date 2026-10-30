@@ -7,7 +7,7 @@
  *
  * The ten town maps are `MAP_SCALE` times a reference landscape viewport
  * on each axis, then snapped up to a whole number of chunks. That is the
- * long grind: about ten screens across and ten screens tall.
+ * long grind: about twenty screens across and twenty screens tall.
  *
  * Locked expansion provinces still use `SECTOR_COLS` / `SECTOR_ROWS` in
  * `atlas.ts`. Raising those adds sectors without a new screen.
@@ -23,7 +23,7 @@ export const SECTOR_SIZE = CHUNK_SIZE * SECTOR_CHUNKS;
 export const REFERENCE_VIEW_W = 844;
 export const REFERENCE_VIEW_H = 390;
 /** Each axis of a town hunting map, in viewports. */
-export const MAP_SCALE = 10;
+export const MAP_SCALE = 20;
 
 function snapToChunk(px: number): number {
   return Math.ceil(px / CHUNK_SIZE) * CHUNK_SIZE;

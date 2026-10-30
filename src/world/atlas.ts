@@ -7,7 +7,7 @@ import { MAP_TIERS, TIER_LEVELS, tierRange, tierZoneId } from './tiers';
  *
  * Town ring — the ten starter regions, in road order:
  *   1 Đồng bằng, 2 Núi non, 3 Rừng rậm, 4 Đầm lầy, 5 Bãi biển,
- *   6 Đại dương, 7 Băng giá, 8 Thảo Nguyên Hoang Dã, 9 Núi lửa, 10 Sa mạc.
+ *   6 Đại dương, 7 Băng giá, 8 Thảo Nguyên, 9 Núi lửa, 10 Sa mạc.
  * Each town has `MAP_TIERS` hunting maps (`town:m1` … `town:m10`) covering
  * levels 1–100. West and east gates stay on the same tier and walk the
  * ring: map 1 of Đồng bằng meets Núi non and Sa mạc. The far gate climbs
@@ -47,7 +47,7 @@ export const PROVINCES: ProvinceDef[] = [
   { id: 'plains', regionId: 'plains', nameVi: 'Đồng bằng', fauna: 'plains', levelMin: 1, levelMax: 100, endgame: false, ground: '#6ea24e' },
   { id: 'beach', regionId: 'beach', nameVi: 'Bãi biển', fauna: 'beach', levelMin: 1, levelMax: 100, endgame: false, ground: '#e6d2a8' },
   { id: 'swamp', regionId: 'swamp', nameVi: 'Đầm lầy', fauna: 'swamp', levelMin: 1, levelMax: 100, endgame: false, ground: '#2a3a2c' },
-  { id: 'savannah', regionId: 'savannah', nameVi: 'Thảo Nguyên Hoang Dã', fauna: 'savannah', levelMin: 1, levelMax: 100, endgame: false, ground: '#c6a15a' },
+  { id: 'savannah', regionId: 'savannah', nameVi: 'Thảo Nguyên', fauna: 'savannah', levelMin: 1, levelMax: 100, endgame: false, ground: '#c6a15a' },
   { id: 'desert', regionId: 'desert', nameVi: 'Sa mạc', fauna: 'desert', levelMin: 1, levelMax: 100, endgame: false, ground: '#e2c48a' },
   { id: 'mountains', regionId: 'mountains', nameVi: 'Núi non', fauna: 'mountains', levelMin: 1, levelMax: 100, endgame: false, ground: '#5c6b73' },
   { id: 'ocean', regionId: 'ocean', nameVi: 'Đại dương', fauna: 'ocean', levelMin: 1, levelMax: 100, endgame: false, ground: '#134868' },
@@ -99,7 +99,6 @@ export function isRingTown(id: string): id is ProvinceId {
 }
 
 export function gateLabel(province: ProvinceDef): string {
-  if (province.id === 'savannah') return 'Hoang dã';
   return province.nameVi;
 }
 

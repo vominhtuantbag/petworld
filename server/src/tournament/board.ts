@@ -40,7 +40,7 @@ const REGION_NAMES: Record<string, string> = {
   plains: 'Đồng bằng',
   tundra: 'Băng giá',
   swamp: 'Đầm lầy',
-  savannah: 'Thảo Nguyên Hoang Dã',
+  savannah: 'Thảo Nguyên',
 };
 
 export class TournamentBoard {
