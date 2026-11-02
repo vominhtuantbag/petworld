@@ -9,7 +9,7 @@ import { connectMongo, MongoAccountStore } from './db/mongoStore.js';
 import type { AccountStore } from './domain.js';
 import { createApp } from './http/app.js';
 import { startGoldenHour } from './dungeon/clock.js';
-import { ensureTestAccounts } from './seed/testAccounts.js';
+import { ensureArenaRosters, ensureTestAccounts } from './seed/testAccounts.js';
 import { Arena } from './realtime/arena.js';
 import { ProximityDuels } from './realtime/pvp.js';
 import { DungeonRaids } from './realtime/raid.js';
@@ -79,6 +79,7 @@ export async function startServer(port = config.port) {
 async function seedMissingTestAccounts(store: AccountStore): Promise<void> {
   try {
     const accounts = await ensureTestAccounts(store);
+    await ensureArenaRosters(store);
     const created = accounts.filter((account) => account.created);
     if (created.length === 0) {
       console.log('[Game Thư Giãn] test accounts already present');

@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 
 import { freshStats, statsForRecord } from '../combat/stats.js';
 import { isNewerSave, saveSchema, type GameSave } from '../saves/schema.js';
-import type { AccountStore, CharacterInput, CharacterRecord, LinkResult, LinkedLogin, NewUser, SocialProvider, UserRecord } from '../domain.js';
+import type { AccountStore, CharacterInput, CharacterRecord, LinkResult, LinkedLogin, NewUser, PlayerCard, SocialProvider, UserRecord } from '../domain.js';
+import { normalizeRank } from '../realtime/ranks.js';
 
 type AdventureRow = {
   userId: string;
@@ -71,13 +72,47 @@ export class FileAccountStore implements AccountStore {
   }
 
   findCharacterByUserId(userId: string): Promise<CharacterRecord | null> {
-    return this.read((db) => db.characters.find((character) => character.userId === userId) ?? null);
+    return this.read((db) => {
+      const character = db.characters.find((entry) => entry.userId === userId);
+      return character ? withRank(character) : null;
+    });
+  }
+
+  listPlayerCards(limit = 30): Promise<PlayerCard[]> {
+    return this.read((db) =>
+      db.characters
+        .map((character): PlayerCard => {
+          const user = db.users.find((entry) => entry.id === character.userId);
+          const rank = normalizeRank(character.stats);
+          return {
+            userId: character.userId,
+            username: user?.username ?? character.name,
+            name: character.name,
+            gender: character.gender === 'female' ? 'female' : 'male',
+            baseAvatarId: character.baseAvatarId,
+            hairColor: character.hairColor,
+            outfitColor: character.outfitColor,
+            rankIndex: rank.rankIndex,
+            stars: rank.stars,
+            mmr: rank.mmr,
+          };
+        })
+        .slice(0, Math.max(1, limit)),
+    );
   }
 
   setCharacterStats(userId: string, stats: CharacterRecord['stats']): Promise<void> {
     return this.update((db) => {
       const character = db.characters.find((entry) => entry.userId === userId);
-      if (character) character.stats = { ...stats };
+      if (!character) return;
+      const rank = normalizeRank(stats);
+      character.stats = {
+        ...stats,
+        stars: rank.stars,
+        rankIndex: rank.rankIndex,
+        mmr: rank.mmr,
+        matchHistory: Array.isArray(stats.matchHistory) ? stats.matchHistory : character.stats.matchHistory ?? [],
+      };
     });
   }
 
@@ -117,7 +152,7 @@ export class FileAccountStore implements AccountStore {
       if (!character || outcome === 'draw') return;
       const wins = character.stats.wins + (outcome === 'win' ? 1 : 0);
       const losses = character.stats.losses + (outcome === 'loss' ? 1 : 0);
-      character.stats = statsForRecord(wins, losses);
+      character.stats = statsForRecord(wins, losses, character.stats);
     });
   }
 
@@ -181,6 +216,17 @@ export class FileAccountStore implements AccountStore {
       throw error;
     }
   }
+}
+
+function withRank(character: CharacterRecord): CharacterRecord {
+  return {
+    ...character,
+    stats: {
+      ...character.stats,
+      ...normalizeRank(character.stats),
+      matchHistory: Array.isArray(character.stats.matchHistory) ? character.stats.matchHistory : [],
+    },
+  };
 }
 
 function linkOnto(users: UserRecord[], userId: string, login: LinkedLogin, email: string | null): LinkResult {

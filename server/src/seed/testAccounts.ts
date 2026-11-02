@@ -133,6 +133,29 @@ export async function ensureTestAccounts(store: AccountStore): Promise<SeededAcc
   return seedTestAccounts(store, { onlyMissing: true });
 }
 
+/**
+ * Ranked AI stand-ins need a real 4-pet roster. Existing test logins that
+ * were seeded with an empty adventure still get their account pets here.
+ */
+export async function ensureArenaRosters(store: AccountStore): Promise<void> {
+  for (const spec of TEST_ACCOUNTS) {
+    const user = await store.findUserByEmail(spec.email);
+    if (!user) continue;
+    const previous = await store.findAdventure(user.id);
+    if ((previous?.roster.length ?? 0) >= 4) continue;
+    const stats = statsAtLevel(TEST_LEVEL);
+    const save = testSave(spec, stats, previous);
+    if (previous) {
+      save.roster = [...previous.roster, ...testPets(spec.username, TEST_LEVEL)].slice(0, 8);
+      save.revision = previous.revision + 1;
+      save.inventory = previous.inventory;
+      save.world = previous.world;
+      save.profile = previous.profile;
+    }
+    await store.saveAdventure(user.id, save);
+  }
+}
+
 export async function openSeedStore(): Promise<AccountStore> {
   if (config.driver === 'mongo') {
     await connectMongo(config.mongoUri);
@@ -198,6 +221,7 @@ function testSave(spec: SeedSpec, stats: ReturnType<typeof statsAtLevel>, previo
     adventureExp: 0,
     mineFloor: 10,
   };
+  draft.roster = testPets(spec.username, TEST_LEVEL);
   draft.avatar = { kind: 'preset', characterId: spec.baseAvatarId };
   draft.quests = {
     day: now.slice(0, 10),
@@ -209,6 +233,38 @@ function testSave(spec: SeedSpec, stats: ReturnType<typeof statsAtLevel>, previo
     claimed: [],
   };
   return draft;
+}
+
+function testPets(username: string, level: number): GameSave['roster'] {
+  const kinds = [
+    { kindId: 'plains-rabbit', name: 'Thỏ đồng', tint: '#c4a574' },
+    { kindId: 'plains-boar', name: 'Heo rừng con', tint: '#8a5a42' },
+    { kindId: 'forest-jaguar', name: 'Báo đốm', tint: '#d4a017' },
+    { kindId: 'mountains-eagle', name: 'Đại Bàng vàng', tint: '#c9a227' },
+    { kindId: 'swamp-alligator', name: 'Cá sấu đầm lầy', tint: '#3e5a3a' },
+  ] as const;
+  return kinds.map((kind, index) => {
+    const petLevel = Math.max(1, level - 2 + (index % 3));
+    const maxHp = 36 + petLevel * 8;
+    const maxMp = 16 + petLevel * 3;
+    return {
+      id: `seed-${username}-pet-${index + 1}`,
+      kindId: kind.kindId,
+      name: kind.name,
+      level: petLevel,
+      exp: 0,
+      tint: kind.tint,
+      maxHp,
+      maxMp,
+      hp: maxHp,
+      mp: maxMp,
+      attack: 8 + petLevel * 2,
+      defense: 4 + petLevel,
+      speed: 40 + petLevel,
+      skillIds: [],
+      evoStage: 0,
+    };
+  });
 }
 
 const startedDirectly = process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href;

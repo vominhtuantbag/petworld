@@ -11,6 +11,7 @@ import { SetupFlow } from './src/game/SetupFlow';
 import { getRegion } from './src/data/regions';
 import type { ServerCharacter } from './src/net/protocol';
 import { ArenaScreen } from './src/screens/ArenaScreen';
+import { BanPickScreen } from './src/screens/BanPickScreen';
 import { RaidLobbyScreen } from './src/screens/RaidLobbyScreen';
 import { RaidScreen } from './src/screens/RaidScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
@@ -76,6 +77,7 @@ function GameRoot() {
   if (!auth.ready) screen = <View style={styles.fill} />;
   else if (!auth.token) screen = <AuthScreen />;
   else if (battle.raid) screen = <RaidScreen />;
+  else if (battle.draft) screen = <BanPickScreen />;
   else if (battle.battle) screen = <ArenaScreen />;
   else if (setup.step === 'gameplay' && setup.player) {
     screen = world.ready ? <FieldRoot /> : <View style={styles.fill} />;
@@ -84,7 +86,7 @@ function GameRoot() {
   return (
     <View style={styles.root} {...chrome.panHandlers}>
       {screen}
-      {battle.battle || battle.raid || world.scene === 'encounter' ? null : <DebugGrid />}
+      {battle.battle || battle.draft || battle.raid || world.scene === 'encounter' ? null : <DebugGrid />}
       {chrome.bar}
       <RotateToLandscape />
     </View>

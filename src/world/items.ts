@@ -74,7 +74,9 @@ export const ITEM_ALIASES: Record<string, ItemId> = {
   'hearty-fruit': 'apple',
 };
 
-export const BAG_SLOTS = 64;
+export const BAG_SLOTS = 60;
+export const BAG_COLUMNS = 6;
+export const BAG_ROWS = 10;
 export const INN_COST = 15;
 export const INN_COOLDOWN_MS = 20_000;
 export const TRAVEL_COST = 30;
@@ -235,14 +237,18 @@ export function addStack(bag: Stack[], itemId: ItemId, qty = 1, plus = 0): Stack
   if (!def.stack) {
     if (bag.some((stack) => stack.itemId === itemId)) return null;
     if (countSlots(bag, null) >= BAG_SLOTS) return null;
-    return [...bag, { itemId, qty: 1, plus }];
+    const slot = firstFreeSlot(bag);
+    if (slot == null) return null;
+    return [...bag, { itemId, qty: 1, plus, slot }];
   }
   const existing = bag.find((stack) => stack.itemId === itemId);
   if (existing) {
     return bag.map((stack) => (stack.itemId === itemId ? { ...stack, qty: stack.qty + qty } : stack));
   }
   if (bag.length >= BAG_SLOTS) return null;
-  return [...bag, { itemId, qty }];
+  const slot = firstFreeSlot(bag);
+  if (slot == null) return null;
+  return [...bag, { itemId, qty, slot }];
 }
 
 export function removeOne(bag: Stack[], itemId: ItemId): Stack[] | null {
@@ -386,6 +392,118 @@ export function itemBorder(itemId: ItemId): string {
   const rarity = ITEMS[itemId].rarity;
   if (!rarity) return 'rgba(246,241,231,0.28)';
   return RARITY_BORDER[rarity];
+}
+
+/** Fill missing bag indices so a 6×10 grid can keep holes between stacks. */
+export function withSlots(bag: Stack[]): Stack[] {
+  const used = new Set<number>();
+  const next = bag.map((stack) => {
+    const slot = stack.slot;
+    if (slot != null && slot >= 0 && slot < BAG_SLOTS && !used.has(slot)) {
+      used.add(slot);
+      return stack.slot === slot ? stack : { ...stack, slot };
+    }
+    return { ...stack, slot: undefined };
+  });
+  let cursor = 0;
+  return next.map((stack) => {
+    if (stack.slot != null) return stack;
+    while (used.has(cursor)) cursor += 1;
+    if (cursor >= BAG_SLOTS) return stack;
+    const slot = cursor;
+    used.add(slot);
+    cursor += 1;
+    return { ...stack, slot };
+  });
+}
+
+export function bagCells(bag: Stack[]): (Stack | null)[] {
+  const cells: (Stack | null)[] = Array.from({ length: BAG_SLOTS }, () => null);
+  for (const stack of withSlots(bag)) {
+    if (stack.slot != null && cells[stack.slot] == null) cells[stack.slot] = stack;
+  }
+  return cells;
+}
+
+export function firstFreeSlot(bag: Stack[]): number | null {
+  const cells = bagCells(bag);
+  for (let index = 0; index < cells.length; index += 1) {
+    if (!cells[index]) return index;
+  }
+  return null;
+}
+
+export function relocateBagItem(bag: Stack[], from: number, to: number): Stack[] {
+  if (from === to || from < 0 || to < 0 || from >= BAG_SLOTS || to >= BAG_SLOTS) return bag;
+  const slotted = withSlots(bag);
+  const source = slotted.find((stack) => stack.slot === from);
+  if (!source) return bag;
+  const dest = slotted.find((stack) => stack.slot === to);
+  return slotted.map((stack) => {
+    if (stack.slot === from) return { ...stack, slot: to };
+    if (dest && stack.slot === to) return { ...stack, slot: from };
+    return stack;
+  });
+}
+
+export function sortBag(bag: Stack[]): Stack[] {
+  return [...bag]
+    .sort((left, right) => {
+      const rank = itemSortRank(left.itemId) - itemSortRank(right.itemId);
+      if (rank !== 0) return rank;
+      return ITEMS[left.itemId].nameVi.localeCompare(ITEMS[right.itemId].nameVi, 'vi');
+    })
+    .map((stack, index) => ({ ...stack, slot: index }));
+}
+
+/** Potions, fruit, bread, antidote, and teleport. Gear uses a different path. */
+export function isConsumableItem(itemId: ItemId): boolean {
+  return applyConsumable({ hp: 0, maxHp: 1, mana: 0, maxMana: 1, stamina: 0, maxStamina: 1 }, itemId) != null
+    || fruitRestore(itemId) != null
+    || itemId === 'town-scroll';
+}
+
+export function applyItemToPet(
+  pet: { hp: number; maxHp: number; mp: number; maxMp: number },
+  itemId: ItemId,
+): { hp: number; mp: number } | null {
+  const fruit = fruitRestore(itemId);
+  const hpNow = pet.hp || pet.maxHp;
+  const mpNow = pet.mp || pet.maxMp;
+  if (fruit) {
+    const hp = Math.min(pet.maxHp, hpNow + fruit.hp);
+    const mp = Math.min(pet.maxMp || 1, mpNow + fruit.mp);
+    if (hp === hpNow && mp === mpNow) return null;
+    return { hp, mp };
+  }
+  const healed = applyConsumable(
+    { hp: hpNow, maxHp: pet.maxHp, mana: mpNow, maxMana: pet.maxMp, stamina: 0, maxStamina: 0 },
+    itemId,
+  );
+  if (!healed || (healed.hp === hpNow && healed.mana === mpNow)) return null;
+  return { hp: healed.hp, mp: healed.mana };
+}
+
+function itemSortRank(itemId: ItemId): number {
+  const rarity = ITEMS[itemId].rarity;
+  const rare = rarity === 'special' ? 0 : rarity === 'rare' ? 1 : rarity === 'normal' ? 2 : 3;
+  return itemFamily(itemId) * 10 + rare;
+}
+
+function itemFamily(itemId: ItemId): number {
+  if (itemId.startsWith('hp-potion') || itemId === 'ration' || itemId === 'antidote') return 0;
+  if (itemId.startsWith('mana-potion')) return 1;
+  if (itemId.startsWith('stamina-potion')) return 2;
+  if (fruitRestore(itemId)) return 3;
+  if (itemId === 'town-scroll' || itemId === 'net' || itemId === 'mine-ticket') return 4;
+  const slot = gearSlot(itemId);
+  if (slot === 'helm') return 5;
+  if (slot === 'armor') return 6;
+  if (slot === 'weapon') return 7;
+  if (slot === 'ring') return 8;
+  if (slot === 'shoes') return 9;
+  if (itemId.includes('shard')) return 10;
+  return 11;
 }
 
 function item(id: ItemId, nameVi: string, price: number, tint: string, blurb: string): ItemDef {

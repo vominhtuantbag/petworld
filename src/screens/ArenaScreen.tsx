@@ -5,6 +5,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { FloatingCombatText } from '../components/battle/FloatingCombatText';
 import { TurnTimeline } from '../components/battle/TurnTimeline';
 import { BATTLE_GRID_POSITIONS, feetInView } from '../components/battle/courtSlots';
+import { RankStars } from '../components/arena/RankStars';
 import { CharacterAvatar } from '../components/CharacterAvatar';
 import { CourtUnit, FaceArt, RoundButton, TimelineFace, styles as court, timelineFaceSize, type CourtActor } from '../components/battle/courtChrome';
 import { getCharacter } from '../data/characters';
@@ -12,6 +13,7 @@ import type { DuelUnitView } from '../net/protocol';
 import { useBattle } from '../state/BattleContext';
 import { theme } from '../theme/theme';
 import { useLayout } from '../theme/useLayout';
+import { rankTint, rankTitle } from '../world/ranks';
 
 const ARENA = require('../../assets/images/sandau_2.jpg');
 
@@ -85,7 +87,10 @@ export function ArenaScreen() {
   const yourTurn = snapshot.yourTurn && !finished;
   const youWon = snapshot.winnerId === snapshot.you.userId;
   const draw = finished && snapshot.winnerId === null;
-  const resultTitle = draw ? 'Hòa' : youWon ? 'Chiến thắng' : 'Thất bại';
+  const starNote = snapshot.rank?.starDelta ?? snapshot.starDelta;
+  const starLabel = starNote ? (starNote > 0 ? ' · +1 sao' : ' · −1 sao') : '';
+  const resultTitle = draw ? 'Hòa' : youWon ? `Chiến thắng${starLabel}` : `Thất bại${starLabel}`;
+  const resultRank = snapshot.rank;
   const seconds = Math.max(0, Math.ceil((snapshot.deadline - now) / 1000));
   const actor = units.find((unit) => unit.id === snapshot.turnId) ?? null;
   const queued = snapshot.queue ?? [];
@@ -133,7 +138,14 @@ export function ArenaScreen() {
         <View style={court.header}>
           <View style={court.headerLeft}>
             <RoundButton label={finished ? 'Hết' : `${seconds}s`} hint="Thời gian lượt" onPress={() => undefined} size={s(36)} width={s(72)} font={font(12)} />
-            <RoundButton label={`Hiệp ${snapshot.round}`} hint="Hiệp đấu" onPress={() => undefined} size={s(36)} width={s(78)} font={font(11)} />
+            <RoundButton
+              label={snapshot.ranked ? `${snapshot.boutScore?.you ?? 0}-${snapshot.boutScore?.opponent ?? 0}` : `Hiệp ${snapshot.round}`}
+              hint={snapshot.ranked ? `Set ${snapshot.bout ?? 1}/3` : 'Hiệp đấu'}
+              onPress={() => undefined}
+              size={s(36)}
+              width={s(78)}
+              font={font(11)}
+            />
           </View>
           <TurnTimeline
             ids={turnQueue}
@@ -330,6 +342,17 @@ export function ArenaScreen() {
         <View style={styles.overlay}>
           <View style={[styles.result, { borderRadius: s(18), padding: s(18), gap: s(8) }]}>
             <Text style={[styles.resultTitle, { fontSize: font(28) }]}>{resultTitle}</Text>
+            {resultRank ? (
+              <View style={{ alignItems: 'center', gap: 4 }}>
+                <Text style={[styles.resultCopy, { fontSize: font(14), color: rankTint(resultRank.rankIndex) }]}>
+                  {rankTitle(resultRank.rankIndex)} · {resultRank.stars}/5 sao
+                </Text>
+                <RankStars stars={resultRank.stars} tint={rankTint(resultRank.rankIndex)} size={font(16)} />
+                <Text style={[styles.resultCopy, { fontSize: font(12) }]}>
+                  {resultRank.wins} thắng · {resultRank.losses} thua
+                </Text>
+              </View>
+            ) : null}
             <Text style={[styles.resultCopy, { fontSize: font(14) }]}>
               {snapshot.you.name} {snapshot.you.hp}/{snapshot.you.maxHp} · {snapshot.opponent.name} {snapshot.opponent.hp}/{snapshot.opponent.maxHp}
             </Text>

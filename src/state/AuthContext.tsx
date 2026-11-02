@@ -29,6 +29,7 @@ type AuthContextValue = {
   logout: () => Promise<void>;
   saveCharacter: (player: InitializedPlayer) => Promise<void>;
   refreshCharacter: () => Promise<void>;
+  applyCombatStats: (patch: Partial<ServerCharacter['stats']>) => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -41,6 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [kicked, setKicked] = useState(false);
   const tokenRef = useRef<string | null>(null);
   const holdKick = useRef(false);
+  const bootRef = useRef<Promise<void> | null>(null);
 
   const applySession = useCallback(async (nextToken: string, nextUser?: PublicUser) => {
     tokenRef.current = nextToken;
@@ -149,6 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const adopt = useCallback(
     async (result: { token: string; user: PublicUser }) => {
       holdKick.current = true;
+      setKicked(false);
       forgetKickedToken();
       await clearSessionCache();
       try {
@@ -167,23 +170,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applySession],
   );
 
-  const register = useCallback(
-    async (input: { username: string; email: string; password: string }) => {
-      await adopt(await registerAccount(input));
+  const beginAuth = useCallback(
+    (factory: () => Promise<{ token: string; user: PublicUser }>) => {
+      if (bootRef.current) return bootRef.current;
+      const run = (async () => {
+        await adopt(await factory());
+      })();
+      bootRef.current = run;
+      return run.finally(() => {
+        if (bootRef.current === run) bootRef.current = null;
+      });
     },
     [adopt],
+  );
+
+  const register = useCallback(
+    async (input: { username: string; email: string; password: string }) => {
+      await beginAuth(() => registerAccount(input));
+    },
+    [beginAuth],
   );
 
   const login = useCallback(
     async (input: { email: string; password: string }) => {
-      await adopt(await loginAccount(input));
+      await beginAuth(() => loginAccount(input));
     },
-    [adopt],
+    [beginAuth],
   );
 
   const playAsGuest = useCallback(async () => {
-    await adopt(await loginGuest());
-  }, [adopt]);
+    await beginAuth(() => loginGuest());
+  }, [beginAuth]);
 
   const beginSocial = useCallback(async (provider: SocialProvider) => {
     if (typeof window === 'undefined') throw new Error('Đăng nhập mạng xã hội mở trên trình duyệt.');
@@ -231,8 +248,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshCharacter = useCallback(async () => {
     if (!token) return;
-    setCharacter(await fetchMyCharacter(token));
+    const fetched = await fetchMyCharacter(token);
+    setCharacter((current) => mergeCharacterStats(current, fetched));
   }, [token]);
+
+  const applyCombatStats = useCallback((patch: Partial<ServerCharacter['stats']>) => {
+    setCharacter((current) => {
+      if (!current) return current;
+      return { ...current, stats: { ...current.stats, ...patch } };
+    });
+  }, []);
 
   useEffect(() => {
     if (!token || !user) return;
@@ -240,8 +265,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [token, user, character]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ ready, token, user, character, register, login, playAsGuest, beginSocial, linkSocial, logout, saveCharacter, refreshCharacter }),
-    [ready, token, user, character, register, login, playAsGuest, beginSocial, linkSocial, logout, saveCharacter, refreshCharacter],
+    () => ({ ready, token, user, character, register, login, playAsGuest, beginSocial, linkSocial, logout, saveCharacter, refreshCharacter, applyCombatStats }),
+    [ready, token, user, character, register, login, playAsGuest, beginSocial, linkSocial, logout, saveCharacter, refreshCharacter, applyCombatStats],
   );
 
   return (
@@ -250,6 +275,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       <SessionReplacedModal visible={kicked} onClose={() => setKicked(false)} />
     </AuthContext.Provider>
   );
+}
+
+function mergeCharacterStats(current: ServerCharacter | null, next: ServerCharacter | null): ServerCharacter | null {
+  if (!next) return current;
+  if (!current) return next;
+  const incoming = next.stats ?? current.stats;
+  return {
+    ...next,
+    stats: {
+      ...current.stats,
+      ...incoming,
+      stars: incoming.stars ?? current.stats.stars,
+      rankIndex: incoming.rankIndex ?? current.stats.rankIndex,
+      mmr: incoming.mmr ?? current.stats.mmr,
+      matchHistory: incoming.matchHistory?.length ? incoming.matchHistory : current.stats.matchHistory,
+    },
+  };
 }
 
 function stripAuthQuery() {

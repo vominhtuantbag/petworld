@@ -89,6 +89,7 @@ const stackSchema = z.object({
   itemId: z.enum(ITEM_IDS),
   qty: z.number().int().min(1).max(999),
   plus: z.number().int().min(0).max(5).optional(),
+  slot: z.number().int().min(0).max(63).optional(),
 });
 
 const gearSchema = z.object({

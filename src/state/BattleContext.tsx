@@ -3,6 +3,9 @@ import type { Socket } from 'socket.io-client';
 
 import { holdBattleSocket, releaseBattleSocket } from '../net/battleSocket';
 import type {
+  ArenaDraftView,
+  ArenaFriendView,
+  ArenaRankView,
   BattleView,
   DuelPet,
   GoldenHourView,
@@ -43,12 +46,16 @@ type BattleContextValue = {
   socket: Socket | null;
   queue: QueueView;
   battle: BattleView | null;
+  draft: ArenaDraftView | null;
+  friends: ArenaFriendView[];
   notice: string | null;
   pvpIncoming: PvpInvite | null;
   pvpOutgoing: PvpOutgoing | null;
   prep: PvpPrep | null;
   findMatch: () => void;
   cancelMatch: () => void;
+  refreshArena: () => void;
+  readyDraft: (petIds: string[], banId: string | null) => void;
   sendAction: (action: 'attack' | 'skill', targetId: string, skill?: 0 | 1) => void;
   leaveBattle: () => void;
   sendChallenge: (toUserId: string) => void;
@@ -89,6 +96,8 @@ export function BattleProvider({ children }: { children: ReactNode }) {
   const [connection, setConnection] = useState<Connection>('offline');
   const [queue, setQueue] = useState<QueueView>({ state: 'idle', position: 0 });
   const [battle, setBattle] = useState<BattleView | null>(null);
+  const [draft, setDraft] = useState<ArenaDraftView | null>(null);
+  const [friends, setFriends] = useState<ArenaFriendView[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [pvpIncoming, setPvpIncoming] = useState<PvpInvite | null>(null);
   const [pvpOutgoing, setPvpOutgoing] = useState<PvpOutgoing | null>(null);
@@ -100,9 +109,15 @@ export function BattleProvider({ children }: { children: ReactNode }) {
   const [party, setParty] = useState<PartyMemberView[]>([]);
   const [raidCall, setRaidCall] = useState<string | null>(null);
   const prepRef = useRef<PvpPrep | null>(null);
+  const draftRef = useRef<ArenaDraftView | null>(null);
+  const sessionTokenRef = useRef(auth.token);
   const refreshRef = useRef(auth.refreshCharacter);
+  const applyRankRef = useRef(auth.applyCombatStats);
   prepRef.current = prep;
+  draftRef.current = draft;
+  sessionTokenRef.current = auth.token;
   refreshRef.current = auth.refreshCharacter;
+  applyRankRef.current = auth.applyCombatStats;
 
   useEffect(() => {
     if (!auth.token) {
@@ -114,6 +129,8 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       setConnection('offline');
       setQueue({ state: 'idle', position: 0 });
       setBattle(null);
+      setDraft(null);
+      setFriends([]);
       setPvpIncoming(null);
       setPvpOutgoing(null);
       setPrep(null);
@@ -134,6 +151,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       if (!alive || socketRef.current !== socket) return;
       setConnection('online');
       setNotice(null);
+      socket.emit('arena:hello');
       console.info(`[Game Thư Giãn] Socket connected`);
     };
     const onDisconnect = () => {
@@ -142,6 +160,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     };
     const onReplaced = () => {
       if (!alive || socketRef.current !== socket) return;
+      if (sessionTokenRef.current && sessionTokenRef.current !== token) return;
       socket.io.reconnection(false);
       socket.disconnect();
       reportSessionReplaced(token);
@@ -149,6 +168,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     const onConnectError = (error: Error) => {
       if (!alive || socketRef.current !== socket) return;
       if (error.message.includes('session_replaced')) {
+        if (sessionTokenRef.current && sessionTokenRef.current !== token) return;
         socket.io.reconnection(false);
         socket.close();
         reportSessionReplaced(token);
@@ -158,14 +178,49 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       setConnection('connecting');
     };
 
+    const applyRankPatch = (
+      rank: { stars: number; rankIndex: number; wins: number; losses: number; mmr?: number },
+      history?: BattleView['history'],
+    ) => {
+      applyRankRef.current({
+        stars: rank.stars,
+        rankIndex: rank.rankIndex,
+        wins: rank.wins,
+        losses: rank.losses,
+        mmr: rank.mmr,
+        matchHistory: history,
+      });
+    };
     const onQueue = (next: QueueView) => setQueue(next);
     const onBattle = (next: BattleView) => {
       setBattle(next);
+      setDraft(null);
       setPrep(null);
       setPvpIncoming(null);
       setPvpOutgoing(null);
       setQueue({ state: 'idle', position: 0 });
-      if (next.status === 'finished') void refreshRef.current();
+      if (next.status === 'finished') {
+        if (next.rank) applyRankPatch(next.rank, next.history);
+        void refreshRef.current();
+      }
+    };
+    const onRank = (payload: ArenaRankView) => {
+      if (!payload || typeof payload.stars !== 'number') return;
+      applyRankPatch(payload, payload.history);
+    };
+    const onDraft = (next: ArenaDraftView) => {
+      if (!next?.matchId || !next.you || !next.opponent) return;
+      setDraft(next);
+      setQueue({ state: 'idle', position: 0 });
+      setNotice(null);
+    };
+    const onDraftClear = () => setDraft(null);
+    const onDraftCancel = (payload: { message?: string }) => {
+      setDraft(null);
+      if (payload?.message) setNotice(payload.message);
+    };
+    const onFriends = (payload: { friends?: ArenaFriendView[] }) => {
+      setFriends(Array.isArray(payload?.friends) ? payload.friends : []);
     };
     const onBattleError = (payload: { message?: string }) => {
       setNotice(payload.message ?? 'Không thực hiện được thao tác.');
@@ -258,6 +313,11 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     socket.on('connect_error', onConnectError);
     socket.on('queue:status', onQueue);
     socket.on('battle:update', onBattle);
+    socket.on('arena:rank', onRank);
+    socket.on('arena:draft', onDraft);
+    socket.on('arena:draft_clear', onDraftClear);
+    socket.on('arena:draft_cancel', onDraftCancel);
+    socket.on('arena:friends', onFriends);
     socket.on('battle:error', onBattleError);
     socket.on('pvp_challenge', onPvpChallenge);
     socket.on('pvp_outgoing', onPvpOutgoing);
@@ -287,6 +347,11 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       socket.off('connect_error', onConnectError);
       socket.off('queue:status', onQueue);
       socket.off('battle:update', onBattle);
+      socket.off('arena:rank', onRank);
+      socket.off('arena:draft', onDraft);
+      socket.off('arena:draft_clear', onDraftClear);
+      socket.off('arena:draft_cancel', onDraftCancel);
+      socket.off('arena:friends', onFriends);
       socket.off('battle:error', onBattleError);
       socket.off('pvp_challenge', onPvpChallenge);
       socket.off('pvp_outgoing', onPvpOutgoing);
@@ -313,11 +378,23 @@ export function BattleProvider({ children }: { children: ReactNode }) {
 
   const findMatch = useCallback(() => {
     setNotice(null);
+    setQueue({ state: 'queued', position: 1, searchingFor: 0 });
     socketRef.current?.emit('queue:join');
   }, []);
 
   const cancelMatch = useCallback(() => {
+    setQueue({ state: 'idle', position: 0 });
     socketRef.current?.emit('queue:leave');
+  }, []);
+
+  const refreshArena = useCallback(() => {
+    socketRef.current?.emit('arena:hello');
+  }, []);
+
+  const readyDraft = useCallback((petIds: string[], banId: string | null) => {
+    const matchId = draftRef.current?.matchId;
+    if (!matchId) return;
+    socketRef.current?.emit('arena:draft_ready', { matchId, petIds, banId });
   }, []);
 
   const sendAction = useCallback((action: 'attack' | 'skill', targetId: string, skill?: 0 | 1) => {
@@ -326,7 +403,20 @@ export function BattleProvider({ children }: { children: ReactNode }) {
 
   const leaveBattle = useCallback(() => {
     socketRef.current?.emit('battle:leave');
-    setBattle(null);
+    setBattle((current) => {
+      if (current?.status === 'finished' && current.rank) {
+        applyRankRef.current({
+          stars: current.rank.stars,
+          rankIndex: current.rank.rankIndex,
+          wins: current.rank.wins,
+          losses: current.rank.losses,
+          mmr: current.rank.mmr,
+          matchHistory: current.history,
+        });
+      }
+      return null;
+    });
+    void refreshRef.current();
   }, []);
 
   const sendChallenge = useCallback((toUserId: string) => {
@@ -394,9 +484,9 @@ export function BattleProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!prep && !battle && !raid && !raidLobby) return;
+    if (!prep && !battle && !draft && !raid && !raidLobby) return;
     return holdPresence();
-  }, [prep, battle, raid, raidLobby]);
+  }, [prep, battle, draft, raid, raidLobby]);
 
   useEffect(() => {
     if (!prep) return;
@@ -414,12 +504,16 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       socket,
       queue,
       battle,
+      draft,
+      friends,
       notice,
       pvpIncoming,
       pvpOutgoing,
       prep,
       findMatch,
       cancelMatch,
+      refreshArena,
+      readyDraft,
       sendAction,
       leaveBattle,
       sendChallenge,
@@ -447,12 +541,16 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       socket,
       queue,
       battle,
+      draft,
+      friends,
       notice,
       pvpIncoming,
       pvpOutgoing,
       prep,
       findMatch,
       cancelMatch,
+      refreshArena,
+      readyDraft,
       sendAction,
       leaveBattle,
       sendChallenge,

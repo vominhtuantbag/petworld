@@ -118,7 +118,7 @@ export type Rect = {
   slow?: number;
 };
 
-export type Stack = { itemId: ItemId; qty: number; plus?: number };
+export type Stack = { itemId: ItemId; qty: number; plus?: number; slot?: number };
 
 export type Gear = { itemId: ItemId; plus: number };
 

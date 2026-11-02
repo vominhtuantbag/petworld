@@ -2,7 +2,7 @@ import http from 'node:http';
 
 import { io } from 'socket.io-client';
 
-import { SESSION_REPLACED_MESSAGE } from './auth/sessions.js';
+import { acceptToken, SESSION_REPLACED_MESSAGE } from './auth/sessions.js';
 import { strike } from './combat/rules.js';
 import { startServer } from './index.js';
 import { sampleSave } from './saves/schema.js';
@@ -28,6 +28,8 @@ async function main() {
     if (!dodgeCheck.dodged || dodgeCheck.damage !== 0) {
       throw new Error('Defend did not dodge when the roll is zero.');
     }
+    checkAcceptTokenRules();
+    console.log('[smoke] a fresh sid is accepted even when memory already has another token string');
 
     const lan = await register(base, `lan_${stamp}`, `lan_${stamp}@example.com`);
     const bao = await register(base, `bao_${stamp}`, `bao_${stamp}@example.com`);
@@ -72,6 +74,10 @@ async function main() {
     }
 
     console.log('[smoke] auth, matchmaking, and one combat round passed');
+    await checkRankedStars(base, stamp);
+    console.log('[smoke] ranked Ban & Pick awarded +1 star and wrote history');
+    await checkStandInAccount(base, stamp);
+    console.log('[smoke] 12s fallback used a real account under Smart AI');
     left.socket.emit('battle:leave');
     right.socket.emit('battle:leave');
     await delay(80);
@@ -89,6 +95,8 @@ async function main() {
     console.log('[smoke] a second login kicked the previous session');
     await checkSameTabHandshake(base, liveToken);
     console.log('[smoke] a same-tab handshake retry did not kick the live socket');
+    await checkGuestHandshakeStays(base);
+    console.log('[smoke] a guest stay on the first socket through a handshake retry');
   } finally {
     await server.close();
   }
@@ -121,27 +129,64 @@ async function checkSingleSession(base: string, email: string, token: string) {
   return again.token;
 }
 
-/** Two sockets with the same login: the older tab must be replaced. */
+/** Two sockets with the same JWT: the newer engine takes over without the other-device alarm. */
 async function checkSecondTab(base: string, token: string) {
-  const first = connect(base, token);
+  const first = connect(base, token, 'tab-one');
   await first.ready;
-  const kicked = new Promise<string>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('A second tab with the same account was not kicked.')), 4000);
-    const finish = (payload: { message?: string }) => {
-      first.socket.io.reconnection(false);
-      clearTimeout(timer);
-      resolve(payload.message ?? '');
-    };
-    first.socket.on('session:replaced', finish);
-    first.socket.on('session_replaced', finish);
+  let replaced = false;
+  first.socket.on('session:replaced', () => {
+    replaced = true;
   });
-  const second = connect(base, token);
+  first.socket.on('session_replaced', () => {
+    replaced = true;
+  });
+  const second = connect(base, token, 'tab-two');
   await second.ready;
-  const message = await kicked;
-  if (message !== SESSION_REPLACED_MESSAGE) throw new Error(`Second tab notice was wrong: ${message}`);
+  await delay(400);
+  if (replaced) throw new Error('A same-login handshake retry was treated as another device.');
   if (!second.socket.connected) throw new Error('The newer tab was disconnected.');
   first.socket.close();
   second.socket.close();
+}
+
+function checkAcceptTokenRules() {
+  const userId = 'user-fresh';
+  if (acceptToken(userId, 'token-a', 'sid-a', '') !== 'ok') {
+    throw new Error('A new account with an empty stored sid was rejected.');
+  }
+  if (acceptToken(userId, 'token-b', 'sid-a', 'sid-a') !== 'ok') {
+    throw new Error('The same login sid was treated as another device because memory had an older token string.');
+  }
+  if (acceptToken(userId, 'token-c', 'sid-c', 'sid-a') !== 'replaced') {
+    throw new Error('An older sid was still accepted after the account moved.');
+  }
+}
+
+/** Guest / first login must survive the second engine that React and Render often open ~2s later. */
+async function checkGuestHandshakeStays(base: string) {
+  const created = await requestJson(`${base}/api/auth/guest`, { method: 'POST', body: {} });
+  if (created.status !== 201) throw new Error(`Guest create failed: ${JSON.stringify(created.json)}`);
+  const token = (created.json as { token?: string }).token;
+  if (!token) throw new Error('Guest create returned no token.');
+  const first = connect(base, token, 'tab-guest');
+  await first.ready;
+  let replaced = false;
+  first.socket.on('session:replaced', () => {
+    replaced = true;
+  });
+  first.socket.on('session_replaced', () => {
+    replaced = true;
+  });
+  await delay(2200);
+  const retry = connect(base, token, 'tab-guest');
+  await retry.ready;
+  await delay(400);
+  const me = await requestJson(`${base}/api/me`, { method: 'GET', token });
+  if (replaced) throw new Error('A guest handshake retry fired the other-device kick.');
+  if (me.status !== 200) throw new Error('The guest token was rejected during character creation.');
+  if (!retry.socket.connected) throw new Error('The live guest socket dropped.');
+  first.socket.close();
+  retry.socket.close();
 }
 
 /** Overlapping handshakes from the same tab must not fire the other-device notice. */
@@ -556,24 +601,53 @@ function requestJson(
 }
 
 type SmokeBattle = {
-  you: { name: string; hp: number; maxHp: number };
+  you: { name: string; hp: number; maxHp: number; userId?: string };
+  opponent?: { name?: string; userId?: string };
   yourTurn?: boolean;
   turnId?: string;
   queue?: string[];
   status?: string;
+  winnerId?: string | null;
+  ranked?: boolean;
+  rank?: { stars: number; rankIndex: number; starDelta: number; wins: number; losses: number };
+  history?: { outcome: string; starDelta: number }[];
+};
+
+type SmokeDraft = {
+  matchId?: string;
+  phase?: 'pick' | 'ban';
+  you?: { name?: string; userId?: string; pets?: { id: string }[] };
+  opponent?: { name?: string; userId?: string; pets?: { id: string }[] };
 };
 
 function connect(base: string, token: string, clientId?: string) {
   const socket = io(base, { auth: { token, ...(clientId ? { clientId } : {}) }, transports: ['websocket', 'polling'] });
   const battles: SmokeBattle[] = [];
+  const drafts: SmokeDraft[] = [];
+  const ranks: { stars: number; starDelta: number; history?: unknown[] }[] = [];
   let wake: (() => void) | null = null;
+  let draftWake: (() => void) | null = null;
   socket.on('battle:update', (snapshot: SmokeBattle) => {
     battles.push(snapshot);
     wake?.();
     wake = null;
   });
+  socket.on('arena:rank', (payload: { stars: number; starDelta: number; history?: unknown[] }) => {
+    ranks.push(payload);
+  });
+  socket.on('arena:draft', (payload: SmokeDraft) => {
+    drafts.push(payload);
+    draftWake?.();
+    draftWake = null;
+    socket.emit('arena:draft_ready', {
+      matchId: payload.matchId,
+      petIds: (payload.you?.pets ?? []).slice(0, 4).map((pet) => pet.id),
+      banId: payload.opponent?.pets?.[0]?.id ?? null,
+    });
+  });
   return {
     socket,
+    ranks,
     ready: new Promise<void>((resolve, reject) => {
       socket.on('connect', () => resolve());
       socket.on('connect_error', (error) => reject(error));
@@ -588,7 +662,95 @@ function connect(base: string, token: string, clientId?: string) {
         };
       });
     },
+    nextDraft(): Promise<SmokeDraft> {
+      const existing = drafts.shift();
+      if (existing) return Promise.resolve(existing);
+      return new Promise((resolve) => {
+        draftWake = () => {
+          const next = drafts.shift();
+          if (next) resolve(next);
+        };
+      });
+    },
   };
+}
+
+async function checkRankedStars(base: string, stamp: string) {
+  const leftAuth = await register(base, `star_l_${stamp}`, `star_l_${stamp}@example.com`);
+  const rightAuth = await register(base, `star_r_${stamp}`, `star_r_${stamp}@example.com`);
+  await saveCharacter(base, leftAuth.token, 'SaoTrai', 'f-archer', 'forest');
+  await saveCharacter(base, rightAuth.token, 'SaoPhai', 'm-monk', 'beach');
+  const before = await loadStars(base, leftAuth.token);
+  const left = connect(base, leftAuth.token);
+  const right = connect(base, rightAuth.token);
+  await Promise.all([left.ready, right.ready]);
+  const draftWait = Promise.all([left.nextDraft(), right.nextDraft()]);
+  left.socket.emit('queue:join');
+  right.socket.emit('queue:join');
+  const [leftDraft] = await draftWait;
+  if (!leftDraft.matchId || (leftDraft.phase && leftDraft.phase !== 'pick' && leftDraft.phase !== 'ban')) {
+    throw new Error('Ranked match skipped Ban & Pick.');
+  }
+  let leftSnap = await left.nextBattle();
+  let rightSnap = await right.nextBattle();
+  const started = Date.now();
+  while (leftSnap.status !== 'finished' && rightSnap.status !== 'finished' && Date.now() - started < 20_000) {
+    if (leftSnap.yourTurn) left.socket.emit('battle:action', { action: 'attack' });
+    if (rightSnap.yourTurn) right.socket.emit('battle:action', { action: 'attack' });
+    const [nextLeft, nextRight] = await Promise.all([left.nextBattle(), right.nextBattle()]);
+    leftSnap = nextLeft;
+    rightSnap = nextRight;
+  }
+  const finished = leftSnap.status === 'finished' ? leftSnap : rightSnap;
+  if (finished.status !== 'finished') throw new Error('Ranked star fight did not finish.');
+  const winner = leftSnap.winnerId === leftSnap.you.userId ? left : right;
+  const winnerSnap = winner === left ? leftSnap : rightSnap;
+  if (!winnerSnap.rank || winnerSnap.rank.starDelta !== 1 || winnerSnap.rank.stars < before + 1) {
+    throw new Error(`Winner stars were not +1: ${JSON.stringify(winnerSnap.rank)}`);
+  }
+  if (!winnerSnap.history?.some((row) => row.outcome === 'win' && row.starDelta === 1)) {
+    throw new Error('Match history missed the ranked win.');
+  }
+  const stored = await loadStars(base, winner === left ? leftAuth.token : rightAuth.token);
+  if (stored < before + 1) throw new Error(`Database stars stayed at ${stored}.`);
+  if (winner.ranks[0]?.starDelta !== 1) throw new Error('arena:rank did not push +1 star.');
+  left.socket.emit('battle:leave');
+  right.socket.emit('battle:leave');
+  left.socket.close();
+  right.socket.close();
+}
+
+async function checkStandInAccount(base: string, stamp: string) {
+  const solo = await register(base, `solo_${stamp}`, `solo_${stamp}@example.com`);
+  await saveCharacter(base, solo.token, 'MotMinh', 'm-wanderer', 'plains');
+  const client = connect(base, solo.token);
+  await client.ready;
+  const draftWait = client.nextDraft();
+  client.socket.emit('queue:join');
+  const draft = await Promise.race([
+    draftWait,
+    delay(15_000).then(() => {
+      throw new Error('12s real-account fallback never opened Ban & Pick.');
+    }),
+  ]);
+  const foeId = draft.opponent?.userId ?? '';
+  if (!draft.opponent?.name) throw new Error('Stand-in draft had no opponent account.');
+  if (foeId.startsWith('bot:') || foeId.startsWith('ghost:')) {
+    throw new Error(`Stand-in used a dummy id: ${foeId}`);
+  }
+  if (!foeId.startsWith('ai:')) throw new Error(`Stand-in was not a real account under AI: ${foeId}`);
+  const battle = await client.nextBattle();
+  if (!battle.opponent?.name || (battle.opponent.userId ?? '').startsWith('bot:')) {
+    throw new Error('Stand-in battle did not use the real account.');
+  }
+  client.socket.emit('battle:leave');
+  client.socket.close();
+}
+
+async function loadStars(base: string, token: string): Promise<number> {
+  const loaded = await requestJson(`${base}/api/characters/me`, { method: 'GET', token });
+  const body = loaded.json as { character?: { stats?: { stars?: number } } };
+  return body.character?.stats?.stars ?? 0;
 }
 
 main().catch((error: unknown) => {

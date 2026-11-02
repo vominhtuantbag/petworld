@@ -35,6 +35,15 @@ export type PublicUser = {
   providers: SocialProvider[];
 };
 
+export type MatchHistoryEntry = {
+  at: string;
+  outcome: 'win' | 'loss' | 'draw';
+  opponent: string;
+  starDelta: number;
+  stars: number;
+  rankIndex: number;
+};
+
 export type CharacterStats = {
   /** Max hit points. The live duel copies this at match start. */
   hp: number;
@@ -43,6 +52,27 @@ export type CharacterStats = {
   level: number;
   wins: number;
   losses: number;
+  /** Filled stars in the current ranked tier (0–5). */
+  stars: number;
+  /** Index into Đồng → Huyền thoại. */
+  rankIndex: number;
+  /** Matchmaking rating. Starts at 1000. */
+  mmr: number;
+  /** Newest ranked result first. Capped at 20. */
+  matchHistory?: MatchHistoryEntry[];
+};
+
+export type PlayerCard = {
+  userId: string;
+  username: string;
+  name: string;
+  gender: Gender;
+  baseAvatarId: string;
+  hairColor: string;
+  outfitColor: string;
+  rankIndex: number;
+  stars: number;
+  mmr: number;
 };
 
 export type CharacterRecord = {
@@ -101,6 +131,7 @@ export interface AccountStore {
   linkProvider(userId: string, login: LinkedLogin, email: string | null): Promise<LinkResult>;
   setSession(userId: string, sessionId: string): Promise<void>;
   findCharacterByUserId(userId: string): Promise<CharacterRecord | null>;
+  listPlayerCards(limit?: number): Promise<PlayerCard[]>;
   upsertCharacter(userId: string, input: CharacterInput): Promise<CharacterRecord>;
   setCharacterStats(userId: string, stats: CharacterStats): Promise<void>;
   setPasswordHash(userId: string, passwordHash: string): Promise<void>;

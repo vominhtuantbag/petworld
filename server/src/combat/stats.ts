@@ -1,4 +1,5 @@
 import type { CharacterStats } from '../domain.js';
+import { normalizeRank } from '../realtime/ranks.js';
 
 /**
  * Stat curve. Raise the per-level numbers here when you want longer fights
@@ -9,7 +10,11 @@ export function levelForWins(wins: number): number {
   return 1 + Math.floor(Math.max(0, wins) / 2);
 }
 
-export function statsForRecord(wins: number, losses: number): CharacterStats {
+export function statsForRecord(
+  wins: number,
+  losses: number,
+  keep?: { stars?: number; rankIndex?: number; mmr?: number; matchHistory?: CharacterStats['matchHistory'] } | null,
+): CharacterStats {
   const level = levelForWins(wins);
   return {
     level,
@@ -18,6 +23,8 @@ export function statsForRecord(wins: number, losses: number): CharacterStats {
     hp: 80 + level * 20,
     attack: 10 + level * 3,
     defense: 4 + level * 2,
+    ...normalizeRank(keep),
+    matchHistory: Array.isArray(keep?.matchHistory) ? keep.matchHistory : [],
   };
 }
 

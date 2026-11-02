@@ -22,6 +22,7 @@ import {
   UPGRADE_CAP,
   addStack,
   applyConsumable,
+  applyItemToPet,
   equippedBonuses,
   fruitRestore,
   fullRestore,
@@ -29,7 +30,9 @@ import {
   grocerPrice,
   isGearItem,
   lootFits,
+  relocateBagItem,
   removeOne,
+  sortBag,
   takeStack,
   upgradeCost,
 } from '../world/items';
@@ -136,7 +139,9 @@ type WorldContextValue = WorldState & {
   upgrade: (slot: GearSlot) => void;
   equipFromBag: (itemId: ItemId) => void;
   unequip: (slot: GearSlot) => void;
-  useBagItem: (itemId: ItemId) => void;
+  useBagItem: (itemId: ItemId, target?: { kind: 'hero' } | { kind: 'pet'; id: string }) => void;
+  moveBagSlot: (from: number, to: number) => void;
+  sortInventory: () => void;
   tradePet: (monsterId: string) => void;
   evolvePet: (monsterId: string) => void;
   claimQuest: (id: string) => void;
@@ -419,7 +424,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const useBagItem = useCallback((itemId: ItemId) => {
+  const useBagItem = useCallback((itemId: ItemId, target?: { kind: 'hero' } | { kind: 'pet'; id: string }) => {
     setState((current) => {
       const quests = readQuests(current.quests);
       if (isGearItem(itemId)) return { ...equipItem(current, itemId, professionRef.current), quests };
@@ -446,22 +451,36 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           notice: 'Teleport đưa bạn về thị trấn.',
         };
       }
+      const chosenPet = target?.kind === 'pet'
+        ? current.tamed.find((monster) => monster.id === target.id) ?? null
+        : null;
+      if (chosenPet) {
+        const fed = applyItemToPet(chosenPet, itemId);
+        if (!fed) return { ...current, quests, notice: `${chosenPet.name} không dùng được món này lúc này.` };
+        const bag = removeOne(current.bag, itemId);
+        if (!bag) return { ...current, quests, notice: 'Không còn trong túi.' };
+        const fruit = fruitRestore(itemId);
+        return {
+          ...current,
+          bag,
+          quests: fruit ? { ...quests, feedsToday: quests.feedsToday + 1 } : quests,
+          tamed: current.tamed.map((monster) => (monster.id === chosenPet.id ? { ...monster, hp: fed.hp, mp: fed.mp } : monster)),
+          notice: `${chosenPet.name} đã dùng ${ITEMS[itemId].nameVi}.`,
+        };
+      }
       const fruit = fruitRestore(itemId);
       if (fruit) {
         const pet = hungriest(current.tamed);
         if (!pet) return { ...current, quests, notice: 'Chưa có quái đã thu phục.' };
-        const hpNow = pet.hp || pet.maxHp;
-        const mpNow = pet.mp || pet.maxMp;
-        const hp = Math.min(pet.maxHp, hpNow + fruit.hp);
-        const mp = Math.min(pet.maxMp || 1, mpNow + fruit.mp);
-        if (hp === hpNow && mp === mpNow) return { ...current, quests, notice: `${pet.name} đã đầy máu và mana.` };
+        const fed = applyItemToPet(pet, itemId);
+        if (!fed) return { ...current, quests, notice: `${pet.name} đã đầy máu và mana.` };
         const bag = removeOne(current.bag, itemId);
         if (!bag) return { ...current, quests, notice: 'Không còn trái này.' };
         return {
           ...current,
           bag,
           quests: { ...quests, feedsToday: quests.feedsToday + 1 },
-          tamed: current.tamed.map((monster) => (monster.id === pet.id ? { ...monster, hp, mp } : monster)),
+          tamed: current.tamed.map((monster) => (monster.id === pet.id ? { ...monster, hp: fed.hp, mp: fed.mp } : monster)),
           notice: `${pet.name} đã ăn ${ITEMS[itemId].nameVi}.`,
         };
       }
@@ -471,6 +490,22 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       if (!bag) return { ...current, quests, notice: 'Không còn trong túi.' };
       return { ...current, quests, bag, vitals: healed, notice: `Đã dùng ${ITEMS[itemId].nameVi}.` };
     });
+  }, []);
+
+  const moveBagSlot = useCallback((from: number, to: number) => {
+    setState((current) => {
+      const bag = relocateBagItem(current.bag, from, to);
+      if (bag === current.bag) return current;
+      return { ...current, bag };
+    });
+  }, []);
+
+  const sortInventory = useCallback(() => {
+    setState((current) => ({
+      ...current,
+      bag: sortBag(current.bag),
+      notice: current.bag.length ? 'Đã sắp xếp túi đồ.' : 'Túi đang trống.',
+    }));
   }, []);
 
   const claimQuest = useCallback((id: string) => {
@@ -861,6 +896,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       equipFromBag,
       unequip,
       useBagItem,
+      moveBagSlot,
+      sortInventory,
       tradePet,
       evolvePet,
       claimQuest,
@@ -905,6 +942,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     equipFromBag,
     unequip,
     useBagItem,
+    moveBagSlot,
+    sortInventory,
     tradePet,
     evolvePet,
     claimQuest,

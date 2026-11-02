@@ -4,7 +4,24 @@ import { acceptToken, bindSessionKick, SESSION_REPLACED_MESSAGE } from '../auth/
 import { readToken } from '../auth/tokens.js';
 import type { AccountStore, CharacterRecord, UserRecord } from '../domain.js';
 import type { RegionId } from '../catalog.js';
-import type { BattleView, DuelPet, DuelSkillView, DuelUnitView, FighterView, QueueView } from './protocol.js';
+import type { GameSave } from '../saves/schema.js';
+import type {
+  ArenaDraftView,
+  ArenaFriendView,
+  ArenaRankView,
+  BattleView,
+  DraftPetView,
+  DraftPhase,
+  DuelPet,
+  DuelSkillView,
+  DuelUnitView,
+  FighterView,
+  QueueView,
+} from './protocol.js';
+import { statsForRecord } from '../combat/stats.js';
+import type { MatchHistoryEntry } from '../domain.js';
+import { applyStarResult, mmrBand, mmrClose, normalizeRank, rankTitle } from './ranks.js';
+import { banTarget, decideTurn, pickSquad } from './smartAi.js';
 
 export type DuelHint = {
   username: string;
@@ -19,6 +36,10 @@ export type DuelHint = {
 
 const TURN_MS = 30_000;
 const DISCONNECT_GRACE_MS = 12_000;
+const PICK_MS = 20_000;
+const BAN_MS = 15_000;
+const BOT_WAIT_MS = 12_000;
+const BOT_THINK_MS = 700;
 
 type Fighter = Omit<FighterView, 'hp' | 'ready'> & { attack: number; defense: number };
 
@@ -54,27 +75,69 @@ type Room = {
   order: string[];
   turnId: string;
   disconnectedAt: Record<string, number | undefined>;
+  ranked: boolean;
+  bout: number;
+  bouts: Record<string, number>;
+  rankedResults: Record<string, RankedResult>;
+};
+
+type RankedResult = {
+  stars: number;
+  rankIndex: number;
+  mmr: number;
+  starDelta: number;
+  wins: number;
+  losses: number;
+  history: MatchHistoryEntry[];
 };
 
 type QueuedPlayer = {
   userId: string;
   socketId: string;
+  mmr: number;
+  rankIndex: number;
+  stars: number;
+  joinedAt: number;
+};
+
+type DraftChoice = {
+  petIds: string[];
+  banId: string | null;
+  pickReady: boolean;
+  banReady: boolean;
+};
+
+type Draft = {
+  id: string;
+  deadline: number;
+  phase: DraftPhase;
+  resolving: boolean;
+  left: Fighter;
+  right: Fighter;
+  leftRoster: DraftPetView[];
+  rightRoster: DraftPetView[];
+  leftRank: { rankIndex: number; stars: number };
+  rightRank: { rankIndex: number; stars: number };
+  picks: Record<string, DraftChoice>;
 };
 
 /**
  * Matchmaking queue and in-memory duel rooms.
  *
- * Rooms are not written to the database. Wins and losses are. Heroes and pets
- * share one speed queue. The acting unit has 30 seconds; a confirm resolves
- * that turn immediately, and a timeout swings a basic attack.
+ * Ranked queue uses expanding MMR bands. After 12s with no human, a real
+ * stored account is played by Smart AI. Both sides then get a 20-second
+ * ban & pick, then a best-of-three. Proximity duels stay a single bout.
  */
 export class Arena {
   private readonly queue: QueuedPlayer[] = [];
   private readonly rooms = new Map<string, Room>();
+  private readonly drafts = new Map<string, Draft>();
   private readonly userRoom = new Map<string, string>();
+  private readonly userDraft = new Map<string, string>();
   /** The one live socket for each account. A newer connection replaces it. */
   private readonly activeSessions = new Map<string, string>();
   private readonly userSocket = new Map<string, string>();
+  private matching = false;
 
   constructor(
     private readonly io: Server,
@@ -101,7 +164,14 @@ export class Arena {
       });
       socket.on('queue:leave', () => {
         this.leaveQueue(userId);
+        if (this.draftFor(userId)) this.cancelDraftFor(userId, 'Đối thủ đã rời cửa sổ chọn tướng.');
         socket.emit('queue:status', { state: 'idle', position: 0 });
+      });
+      socket.on('arena:hello', () => {
+        void this.greet(socket, userId);
+      });
+      socket.on('arena:draft_ready', (payload: unknown) => {
+        void this.onDraftReady(socket, userId, payload);
       });
       socket.on('battle:action', (payload: unknown) => {
         void this.onAction(socket, userId, payload);
@@ -112,6 +182,7 @@ export class Arena {
         socket.emit('battle:update', this.view(room, userId));
       });
       socket.on('battle:leave', () => {
+        if (this.draftFor(userId)) this.cancelDraftFor(userId, 'Đối thủ đã rời cửa sổ chọn tướng.');
         this.closeRoomFor(userId);
         socket.emit('queue:status', { state: 'idle', position: 0 });
       });
@@ -120,10 +191,12 @@ export class Arena {
         this.activeSessions.delete(userId);
         this.userSocket.delete(userId);
         this.leaveQueue(userId);
+        if (this.draftFor(userId)) this.cancelDraftFor(userId, 'Đối thủ mất kết nối.');
         const active = this.roomFor(userId);
         if (active && active.status === 'active') {
           active.disconnectedAt[userId] = Date.now();
         }
+        void this.broadcastFriends();
       });
       void this.onConnection(socket, userId);
     });
@@ -150,16 +223,19 @@ export class Arena {
   }
 
   /**
-   * One live socket per account. A second tab or a new login is told the
-   * session moved. A handshake retry from the same tab (reconnect, transport
-   * upgrade, React remount) replaces the old engine silently.
+   * One live socket per account. A newer engine for the same login (same sid)
+   * takes over silently: reconnects, transport upgrades, React remounts, and
+   * a late handshake from a closed client are not other devices. The kick
+   * notice is only for a different sid, which issueSession already set.
    */
   private claim(socket: Socket, userId: string) {
     const previousId = this.activeSessions.get(userId);
     if (previousId && previousId !== socket.id) {
       const previous = this.io.sockets.sockets.get(previousId);
-      const sameTab = Boolean(previous?.data.clientId) && previous?.data.clientId === socket.data.clientId;
-      if (sameTab) this.dropSocket(previousId);
+      const sameSid = Boolean(previous?.data.sid && previous.data.sid === socket.data.sid);
+      const sameTab = Boolean(previous?.data.clientId && previous.data.clientId === socket.data.clientId);
+      const previousGone = !previous || !previous.connected;
+      if (sameSid || sameTab || previousGone) this.dropSocket(previousId);
       else this.kickSocket(previousId);
     }
     this.activeSessions.set(userId, socket.id);
@@ -214,12 +290,23 @@ export class Arena {
         socket.emit('battle:update', this.view(room, userId));
       }
     }
+    const draft = this.draftFor(userId);
+    if (draft) socket.emit('arena:draft', this.draftView(draft, userId));
     socket.emit('queue:status', this.queueView(userId));
+    socket.emit('arena:friends', { friends: await this.friendsFor(userId) });
+    void this.broadcastFriends();
   }
 
-  /** True while this account is inside a live duel. */
+  private async greet(socket: Socket, userId: string) {
+    socket.emit('queue:status', this.queueView(userId));
+    socket.emit('arena:friends', { friends: await this.friendsFor(userId) });
+    const draft = this.draftFor(userId);
+    if (draft) socket.emit('arena:draft', this.draftView(draft, userId));
+  }
+
+  /** True while this account is inside a live duel or a ranked draft. */
   busy(userId: string): boolean {
-    return this.roomFor(userId)?.status === 'active';
+    return this.roomFor(userId)?.status === 'active' || Boolean(this.draftFor(userId));
   }
 
   /** Extra reason to refuse the matchmaking queue, such as a dungeon raid. */
@@ -261,7 +348,7 @@ export class Arena {
     }
     left.pets = pets.get(leftId) ?? [];
     right.pets = pets.get(rightId) ?? [];
-    this.openRoom(left, right);
+    this.openRoom(left, right, { ranked: false });
     return true;
   }
 
@@ -269,6 +356,10 @@ export class Arena {
     const user = await this.store.findUserById(socket.data.userId as string);
     if (!user) {
       socket.emit('battle:error', { message: 'Phiên đăng nhập không còn hiệu lực.' });
+      return;
+    }
+    if (this.draftFor(user.id)) {
+      socket.emit('arena:draft', this.draftView(this.draftFor(user.id)!, user.id));
       return;
     }
     const existingRoom = this.roomFor(user.id);
@@ -291,35 +382,313 @@ export class Arena {
       return;
     }
     socket.data.character = character;
+    const rank = normalizeRank(character.stats);
 
     const already = this.queue.find((entry) => entry.userId === user.id);
     if (already) {
       already.socketId = socket.id;
+      already.mmr = rank.mmr;
+      already.rankIndex = rank.rankIndex;
+      already.stars = rank.stars;
     } else {
-      this.queue.push({ userId: user.id, socketId: socket.id });
+      this.queue.push({
+        userId: user.id,
+        socketId: socket.id,
+        mmr: rank.mmr,
+        rankIndex: rank.rankIndex,
+        stars: rank.stars,
+        joinedAt: Date.now(),
+      });
     }
     socket.emit('queue:status', this.queueView(user.id));
-    await this.pair();
+    socket.emit('arena:friends', { friends: await this.friendsFor(user.id) });
+    await this.matchSearch();
   }
 
-  private async pair() {
-    while (this.queue.length >= 2) {
-      const first = this.queue.shift();
-      const second = this.queue.shift();
-      if (!first || !second) return;
-      if (first.userId === second.userId) {
-        this.queue.unshift(second);
-        continue;
-      }
-      const left = await this.fighterFromQueue(first);
-      const right = await this.fighterFromQueue(second);
-      if (!left || !right) {
-        if (left) this.queue.unshift(first);
-        if (right) this.queue.unshift(second);
-        break;
-      }
-      this.openRoom(left, right);
+  private pulseQueue() {
+    for (const entry of this.queue) {
+      this.socketFor(entry.userId)?.emit('queue:status', this.queueView(entry.userId));
     }
+  }
+
+  private async matchSearch() {
+    if (this.matching) return;
+    this.matching = true;
+    try {
+      this.pulseQueue();
+      const now = Date.now();
+      const waiting = [...this.queue];
+      const claimed = new Set<string>();
+      for (const entry of waiting) {
+        if (claimed.has(entry.userId)) continue;
+        if (!this.queue.some((row) => row.userId === entry.userId)) continue;
+        const wait = now - entry.joinedAt;
+        const partner = waiting.find((other) => {
+          if (other.userId === entry.userId || claimed.has(other.userId)) return false;
+          const band = mmrBand(Math.max(wait, now - other.joinedAt));
+          return mmrClose(entry.mmr, other.mmr, band);
+        });
+        if (partner) {
+          claimed.add(entry.userId);
+          claimed.add(partner.userId);
+          this.leaveQueue(entry.userId);
+          this.leaveQueue(partner.userId);
+          const opened = await this.openRankedPair(entry, partner);
+          if (!opened) {
+            this.requeue(entry);
+            this.requeue(partner);
+          }
+          continue;
+        }
+        if (wait >= BOT_WAIT_MS) {
+          claimed.add(entry.userId);
+          this.leaveQueue(entry.userId);
+          const opened = await this.openStandInMatch(entry);
+          if (!opened) this.requeue(entry, false);
+        }
+      }
+    } finally {
+      this.matching = false;
+    }
+  }
+
+  private requeue(entry: QueuedPlayer, resetWait = true) {
+    if (this.queue.some((row) => row.userId === entry.userId)) return;
+    if (this.busy(entry.userId)) return;
+    this.queue.push({ ...entry, joinedAt: resetWait ? Date.now() : entry.joinedAt });
+  }
+
+  private async openRankedPair(first: QueuedPlayer, second: QueuedPlayer): Promise<boolean> {
+    const left = await this.fighterFromId(first.userId);
+    const right = await this.fighterFromId(second.userId);
+    if (!left || !right) return false;
+    const leftRoster = await this.rosterFor(first.userId);
+    const rightRoster = await this.rosterFor(second.userId);
+    this.openDraft({
+      left,
+      right,
+      leftRoster,
+      rightRoster,
+      leftRank: { rankIndex: first.rankIndex, stars: first.stars },
+      rightRank: { rankIndex: second.rankIndex, stars: second.stars },
+    });
+    return true;
+  }
+
+  private async openStandInMatch(entry: QueuedPlayer): Promise<boolean> {
+    const left = await this.fighterFromId(entry.userId);
+    if (!left) return false;
+    const standIn = await this.pickStandInAccount(entry);
+    if (!standIn) return false;
+    const leftRoster = await this.rosterFor(entry.userId);
+    this.openDraft({
+      left,
+      right: standIn.fighter,
+      leftRoster,
+      rightRoster: standIn.roster,
+      leftRank: { rankIndex: entry.rankIndex, stars: entry.stars },
+      rightRank: standIn.rank,
+    });
+    return true;
+  }
+
+  /**
+   * After 12s, play as a real registered account under Smart AI. Never
+   * invent a dummy name. The live owner is not kicked; fighter id is `ai:<userId>`.
+   */
+  private async pickStandInAccount(entry: QueuedPlayer): Promise<{
+    fighter: Fighter;
+    roster: DraftPetView[];
+    rank: { rankIndex: number; stars: number };
+  } | null> {
+    const cards = await this.store.listPlayerCards(500);
+    const blocked = new Set(this.queue.map((row) => row.userId));
+    blocked.add(entry.userId);
+    const pool = cards.filter((card) => card.userId !== entry.userId && !blocked.has(card.userId) && !this.busy(card.userId));
+    if (pool.length === 0) return null;
+    const offline = pool.filter((card) => !this.userSocket.has(card.userId));
+    const ranked = (offline.length > 0 ? offline : pool)
+      .slice()
+      .sort((left, right) => Math.abs(left.mmr - entry.mmr) - Math.abs(right.mmr - entry.mmr));
+    let fallback: { fighter: Fighter; roster: DraftPetView[]; rank: { rankIndex: number; stars: number } } | null = null;
+    for (const pick of ranked.slice(0, 24)) {
+      const user = await this.store.findUserById(pick.userId);
+      const character = await this.store.findCharacterByUserId(pick.userId);
+      if (!user || !character) continue;
+      const fighter = toFighter(user, character);
+      fighter.userId = `ai:${pick.userId}`;
+      const roster = await this.rosterFor(pick.userId);
+      const standIn = {
+        fighter,
+        roster,
+        rank: { rankIndex: pick.rankIndex, stars: pick.stars },
+      };
+      if (roster.length > 0) return standIn;
+      fallback ??= standIn;
+    }
+    return fallback;
+  }
+
+  private async rosterFor(userId: string): Promise<DraftPetView[]> {
+    const save = await this.store.findAdventure(userId);
+    return petsFromSave(save);
+  }
+
+  private openDraft(input: {
+    left: Fighter;
+    right: Fighter;
+    leftRoster: DraftPetView[];
+    rightRoster: DraftPetView[];
+    leftRank: { rankIndex: number; stars: number };
+    rightRank: { rankIndex: number; stars: number };
+  }) {
+    const draft: Draft = {
+      id: `draft-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      deadline: Date.now() + PICK_MS,
+      phase: 'pick',
+      resolving: false,
+      left: input.left,
+      right: input.right,
+      leftRoster: input.leftRoster,
+      rightRoster: input.rightRoster,
+      leftRank: input.leftRank,
+      rightRank: input.rightRank,
+      picks: {
+        [input.left.userId]: emptyChoice(),
+        [input.right.userId]: emptyChoice(),
+      },
+    };
+    this.drafts.set(draft.id, draft);
+    if (!isSynthetic(input.left.userId)) this.userDraft.set(input.left.userId, draft.id);
+    if (!isSynthetic(input.right.userId)) this.userDraft.set(input.right.userId, draft.id);
+    for (const fighter of [input.left, input.right]) {
+      if (isSynthetic(fighter.userId)) this.applyAiPick(draft, fighter.userId);
+    }
+    this.emitDraft(draft);
+  }
+
+  private applyAiPick(draft: Draft, botId: string) {
+    const own = draft.left.userId === botId ? draft.leftRoster : draft.rightRoster;
+    const current = draft.picks[botId] ?? emptyChoice();
+    draft.picks[botId] = { ...current, petIds: pickSquad(own, 4), pickReady: true };
+  }
+
+  private applyAiBan(draft: Draft, botId: string) {
+    const foe = lockedPets(draft, draft.left.userId === botId ? 'right' : 'left');
+    const current = draft.picks[botId] ?? emptyChoice();
+    draft.picks[botId] = { ...current, banId: banTarget(foe), banReady: true };
+  }
+
+  private async onDraftReady(socket: Socket, userId: string, payload: unknown) {
+    const draft = this.draftFor(userId);
+    if (!draft || draft.resolving) {
+      socket.emit('battle:error', { message: 'Không có cửa sổ chọn tướng.' });
+      return;
+    }
+    const body = payload && typeof payload === 'object' ? (payload as { matchId?: unknown; petIds?: unknown; banId?: unknown }) : {};
+    if (typeof body.matchId === 'string' && body.matchId !== draft.id) {
+      socket.emit('battle:error', { message: 'Cửa sổ chọn tướng đã đổi.' });
+      return;
+    }
+    const own = draft.left.userId === userId ? draft.leftRoster : draft.rightRoster;
+    const current = draft.picks[userId] ?? emptyChoice();
+    if (draft.phase === 'pick') {
+      const petIds = Array.isArray(body.petIds)
+        ? body.petIds.filter((id): id is string => typeof id === 'string' && own.some((pet) => pet.id === id)).slice(0, 4)
+        : current.petIds;
+      draft.picks[userId] = { ...current, petIds: petIds.length > 0 ? petIds : pickSquad(own, 4), pickReady: true };
+      this.emitDraft(draft);
+      if (this.pickLocked(draft)) this.enterBanPhase(draft);
+      return;
+    }
+    const foePets = lockedPets(draft, draft.left.userId === userId ? 'right' : 'left');
+    const banId = typeof body.banId === 'string' && foePets.some((pet) => pet.id === body.banId) ? body.banId : current.banId;
+    draft.picks[userId] = { ...current, banId: banId ?? banTarget(foePets), banReady: true };
+    this.emitDraft(draft);
+    if (this.banLocked(draft)) await this.beginDraft(draft);
+  }
+
+  private pickLocked(draft: Draft): boolean {
+    return this.humansOf(draft).every((fighter) => draft.picks[fighter.userId]?.pickReady);
+  }
+
+  private banLocked(draft: Draft): boolean {
+    return this.humansOf(draft).every((fighter) => draft.picks[fighter.userId]?.banReady);
+  }
+
+  private humansOf(draft: Draft): Fighter[] {
+    return [draft.left, draft.right].filter((fighter) => !isSynthetic(fighter.userId));
+  }
+
+  private enterBanPhase(draft: Draft) {
+    if (draft.phase === 'ban' || draft.resolving) return;
+    this.fillPicks(draft);
+    draft.phase = 'ban';
+    draft.deadline = Date.now() + BAN_MS;
+    for (const fighter of [draft.left, draft.right]) {
+      if (isSynthetic(fighter.userId)) this.applyAiBan(draft, fighter.userId);
+    }
+    this.emitDraft(draft);
+    if (this.banLocked(draft)) void this.beginDraft(draft);
+  }
+
+  private fillPicks(draft: Draft) {
+    for (const side of ['left', 'right'] as const) {
+      const ownerId = side === 'left' ? draft.left.userId : draft.right.userId;
+      const roster = side === 'left' ? draft.leftRoster : draft.rightRoster;
+      const current = draft.picks[ownerId] ?? emptyChoice();
+      const valid = current.petIds.filter((id) => roster.some((pet) => pet.id === id)).slice(0, 4);
+      draft.picks[ownerId] = { ...current, petIds: valid.length > 0 ? valid : pickSquad(roster, 4), pickReady: true };
+    }
+  }
+
+  private fillBans(draft: Draft) {
+    for (const side of ['left', 'right'] as const) {
+      const ownerId = side === 'left' ? draft.left.userId : draft.right.userId;
+      const foePets = lockedPets(draft, side === 'left' ? 'right' : 'left');
+      const current = draft.picks[ownerId] ?? emptyChoice();
+      const banId = current.banId && foePets.some((pet) => pet.id === current.banId) ? current.banId : banTarget(foePets);
+      draft.picks[ownerId] = { ...current, banId, banReady: true };
+    }
+  }
+
+  private async beginDraft(draft: Draft) {
+    if (draft.resolving || !this.drafts.has(draft.id)) return;
+    draft.resolving = true;
+    this.fillPicks(draft);
+    this.fillBans(draft);
+    draft.left.pets = resolveSide(draft, 'left');
+    draft.right.pets = resolveSide(draft, 'right');
+    this.clearDraft(draft);
+    this.openRoom(draft.left, draft.right, { ranked: true });
+  }
+
+  private emitDraft(draft: Draft) {
+    for (const fighter of [draft.left, draft.right]) {
+      if (isSynthetic(fighter.userId)) continue;
+      this.socketFor(fighter.userId)?.emit('arena:draft', this.draftView(draft, fighter.userId));
+    }
+  }
+
+  private draftView(draft: Draft, userId: string): ArenaDraftView {
+    const youLeft = draft.left.userId === userId;
+    const you = youLeft ? draft.left : draft.right;
+    const opponent = youLeft ? draft.right : draft.left;
+    const youRank = youLeft ? draft.leftRank : draft.rightRank;
+    const oppRank = youLeft ? draft.rightRank : draft.leftRank;
+    const youPets = youLeft ? draft.leftRoster : draft.rightRoster;
+    const oppPets = draft.phase === 'ban' ? lockedPets(draft, youLeft ? 'right' : 'left') : [];
+    const youReady = draft.phase === 'ban' ? Boolean(draft.picks[userId]?.banReady) : Boolean(draft.picks[userId]?.pickReady);
+    const oppReady = draft.phase === 'ban' ? Boolean(draft.picks[opponent.userId]?.banReady) : Boolean(draft.picks[opponent.userId]?.pickReady);
+    return {
+      matchId: draft.id,
+      deadline: draft.deadline,
+      phase: draft.phase,
+      you: toDraftFighter(you, draft.phase === 'ban' ? lockedPets(draft, youLeft ? 'left' : 'right') : youPets, youRank),
+      opponent: toDraftFighter(opponent, oppPets, oppRank),
+      confirmed: youReady,
+      opponentReady: oppReady,
+    };
   }
 
   private async fighterFromId(userId: string, hint?: DuelHint): Promise<Fighter | null> {
@@ -336,15 +705,7 @@ export class Arena {
     return fighterFromHint(userId, user?.username ?? hint.username, hint);
   }
 
-  private async fighterFromQueue(entry: QueuedPlayer): Promise<Fighter | null> {
-    const user = await this.store.findUserById(entry.userId);
-    const character = await this.store.findCharacterByUserId(entry.userId);
-    const socket = this.io.sockets.sockets.get(entry.socketId);
-    if (!user || !character || !socket) return null;
-    return toFighter(user, character);
-  }
-
-  private openRoom(left: Fighter, right: Fighter) {
+  private openRoom(left: Fighter, right: Fighter, options: { ranked: boolean }) {
     const units = [...unitsFor(left), ...unitsFor(right)];
     const order = duelOrder(units, 1);
     const turnId = order[0] ?? left.userId;
@@ -356,20 +717,28 @@ export class Arena {
       status: 'active',
       resolving: false,
       winnerId: null,
-      log: [`${left.name} gặp ${right.name}.`, `Tới lượt ${actor?.name ?? left.name}.`],
+      log: options.ranked
+        ? [`${left.name} gặp ${right.name}. Best of 3.`, `Tới lượt ${actor?.name ?? left.name}.`]
+        : [`${left.name} gặp ${right.name}.`, `Tới lượt ${actor?.name ?? left.name}.`],
       fighters: [left, right],
       units,
       order,
       turnId,
       disconnectedAt: {},
+      ranked: options.ranked,
+      bout: 1,
+      bouts: { [left.userId]: 0, [right.userId]: 0 },
+      rankedResults: {},
     };
     this.rooms.set(room.id, room);
-    this.userRoom.set(left.userId, room.id);
-    this.userRoom.set(right.userId, room.id);
+    if (!isSynthetic(left.userId)) this.userRoom.set(left.userId, room.id);
+    if (!isSynthetic(right.userId)) this.userRoom.set(right.userId, room.id);
     for (const fighter of room.fighters) {
+      if (isSynthetic(fighter.userId)) continue;
       const socket = this.socketFor(fighter.userId);
       socket?.join(room.id);
       socket?.emit('queue:status', { state: 'idle', position: 0 });
+      socket?.emit('arena:draft_clear', { matchId: room.id });
       socket?.emit('battle:update', this.view(room, fighter.userId));
     }
   }
@@ -397,6 +766,13 @@ export class Arena {
 
   private async tick() {
     const now = Date.now();
+    this.pulseQueue();
+    await this.matchSearch();
+    for (const draft of [...this.drafts.values()]) {
+      if (draft.resolving || now < draft.deadline) continue;
+      if (draft.phase === 'pick') this.enterBanPhase(draft);
+      else await this.beginDraft(draft);
+    }
     for (const room of this.rooms.values()) {
       if (room.status !== 'active') {
         if (room.status === 'finished' && now - (room.deadline ?? now) > 120_000) {
@@ -405,6 +781,7 @@ export class Arena {
         continue;
       }
       const dropped = room.fighters.find((fighter) => {
+        if (isSynthetic(fighter.userId)) return false;
         const since = room.disconnectedAt[fighter.userId];
         return since !== undefined && now - since > DISCONNECT_GRACE_MS;
       });
@@ -414,8 +791,17 @@ export class Arena {
         await this.finish(room, winner?.userId ?? null);
         continue;
       }
+      const actor = room.units.find((unit) => unit.id === room.turnId);
+      if (actor && isSynthetic(actor.ownerId) && !room.resolving) {
+        const elapsed = TURN_MS - (room.deadline - now);
+        if (elapsed >= BOT_THINK_MS) {
+          const foes = room.units.filter((unit) => unit.ownerId !== actor.ownerId && unit.hp > 0);
+          const choice = decideTurn(actor, foes);
+          await this.playTurn(room, choice.action, choice.skill, choice.targetId || undefined);
+          continue;
+        }
+      }
       if (now >= room.deadline && !room.resolving) {
-        const actor = room.units.find((unit) => unit.id === room.turnId);
         room.log.push(`${actor?.name ?? 'Người chơi'} hết giờ và tự tấn công.`);
         await this.playTurn(room, 'attack', 0, undefined);
       }
@@ -436,7 +822,7 @@ export class Arena {
     const foes = room.units.filter((unit) => unit.ownerId !== actor.ownerId && unit.hp > 0);
     const target = foes.find((unit) => unit.id === targetId) ?? foes[0];
     if (!target) {
-      await this.finish(room, actor.ownerId);
+      await this.closeBout(room, actor.ownerId);
       return;
     }
     const skill = action === 'skill' ? actor.skills[skillIndex] ?? actor.skills[0] : null;
@@ -450,11 +836,42 @@ export class Arena {
     const owners = [...new Set(room.units.map((unit) => unit.ownerId))];
     const livingOwners = owners.filter((id) => room.units.some((unit) => unit.ownerId === id && unit.hp > 0));
     if (livingOwners.length < 2) {
-      await this.finish(room, livingOwners[0] ?? null);
+      await this.closeBout(room, livingOwners[0] ?? null);
       return;
     }
     this.advance(room);
     room.resolving = false;
+    this.emitRoom(room);
+  }
+
+  private async closeBout(room: Room, winnerId: string | null) {
+    if (!room.ranked) {
+      await this.finish(room, winnerId);
+      return;
+    }
+    if (!winnerId) {
+      await this.finish(room, null);
+      return;
+    }
+    room.bouts[winnerId] = (room.bouts[winnerId] ?? 0) + 1;
+    const winner = room.fighters.find((fighter) => fighter.userId === winnerId);
+    room.log.push(`${winner?.name ?? 'Người chơi'} thắng hiệp ${room.bout}.`);
+    if ((room.bouts[winnerId] ?? 0) >= 2 || room.bout >= 3) {
+      await this.finish(room, winnerId);
+      return;
+    }
+    room.bout += 1;
+    for (const unit of room.units) {
+      unit.hp = unit.maxHp;
+      unit.mp = unit.maxMp;
+    }
+    room.round = 1;
+    room.order = duelOrder(room.units, 1);
+    room.turnId = room.order[0] ?? room.turnId;
+    room.deadline = Date.now() + TURN_MS;
+    room.resolving = false;
+    const [left, right] = room.fighters;
+    room.log.push(`Hiệp đấu ${room.bout}. Tỷ số ${room.bouts[left.userId] ?? 0}-${room.bouts[right.userId] ?? 0}.`);
     this.emitRoom(room);
   }
 
@@ -485,20 +902,84 @@ export class Arena {
     const [left, right] = room.fighters;
     if (!winnerId) {
       room.log.push('Hai bên cùng ngã. Trận hòa.');
-      await this.store.recordResult(left.userId, 'draw');
-      await this.store.recordResult(right.userId, 'draw');
+      room.rankedResults[left.userId] = await this.recordOutcome(left.userId, 'draw', right.name, room.ranked);
+      room.rankedResults[right.userId] = await this.recordOutcome(right.userId, 'draw', left.name, room.ranked);
     } else {
       const winner = room.fighters.find((fighter) => fighter.userId === winnerId);
       const loser = room.fighters.find((fighter) => fighter.userId !== winnerId);
       room.log.push(`${winner?.name ?? 'Người chơi'} thắng trận.`);
-      await this.store.recordResult(winnerId, 'win');
-      if (loser) await this.store.recordResult(loser.userId, 'loss');
+      room.rankedResults[winnerId] = await this.recordOutcome(winnerId, 'win', loser?.name ?? 'Đối thủ', room.ranked);
+      if (loser) room.rankedResults[loser.userId] = await this.recordOutcome(loser.userId, 'loss', winner?.name ?? 'Đối thủ', room.ranked);
+      const winRank = room.rankedResults[winnerId];
+      if (winRank && room.ranked && !isSynthetic(winnerId)) {
+        room.log.push(`+1 sao · ${rankTitle(winRank.rankIndex)} ${winRank.stars}/5.`);
+      }
     }
     this.emitRoom(room);
   }
 
+  private async recordOutcome(userId: string, outcome: 'win' | 'loss' | 'draw', opponent: string, ranked: boolean): Promise<RankedResult> {
+    const empty: RankedResult = { stars: 0, rankIndex: 0, mmr: 1000, starDelta: 0, wins: 0, losses: 0, history: [] };
+    if (isSynthetic(userId)) return empty;
+    const character = await this.store.findCharacterByUserId(userId);
+    if (!character) return empty;
+    const wins = character.stats.wins + (outcome === 'win' ? 1 : 0);
+    const losses = character.stats.losses + (outcome === 'loss' ? 1 : 0);
+    let stats = statsForRecord(wins, losses, character.stats);
+    const before = normalizeRank(stats);
+    const starDelta = ranked && outcome === 'win' ? 1 : ranked && outcome === 'loss' ? -1 : 0;
+    if (ranked && outcome !== 'draw') {
+      stats = { ...stats, ...applyStarResult(before, outcome) };
+    }
+    const after = normalizeRank(stats);
+    stats.stars = after.stars;
+    stats.rankIndex = after.rankIndex;
+    stats.mmr = after.mmr;
+    const entry: MatchHistoryEntry = {
+      at: new Date().toISOString(),
+      outcome,
+      opponent,
+      starDelta,
+      stars: stats.stars,
+      rankIndex: stats.rankIndex,
+    };
+    stats.matchHistory = [entry, ...(character.stats.matchHistory ?? [])].slice(0, 20);
+    await this.store.setCharacterStats(userId, stats);
+    const verify = await this.store.findCharacterByUserId(userId);
+    if (verify && (verify.stats.stars !== stats.stars || verify.stats.rankIndex !== stats.rankIndex)) {
+      await this.store.setCharacterStats(userId, { ...verify.stats, ...stats });
+    }
+    const persisted = (await this.store.findCharacterByUserId(userId))?.stats ?? stats;
+    const result: RankedResult = {
+      stars: persisted.stars,
+      rankIndex: persisted.rankIndex,
+      mmr: persisted.mmr,
+      starDelta,
+      wins: persisted.wins,
+      losses: persisted.losses,
+      history: persisted.matchHistory ?? stats.matchHistory,
+    };
+    this.pushRank(userId, {
+      stars: result.stars,
+      rankIndex: result.rankIndex,
+      mmr: result.mmr,
+      starDelta: result.starDelta,
+      wins: result.wins,
+      losses: result.losses,
+      outcome,
+      opponent,
+      history: result.history,
+    });
+    return result;
+  }
+
+  private pushRank(userId: string, payload: ArenaRankView) {
+    this.socketFor(userId)?.emit('arena:rank', payload);
+  }
+
   private emitRoom(room: Room) {
     for (const fighter of room.fighters) {
+      if (isSynthetic(fighter.userId)) continue;
       this.socketFor(fighter.userId)?.emit('battle:update', this.view(room, fighter.userId));
     }
   }
@@ -509,6 +990,8 @@ export class Arena {
     const actor = room.units.find((unit) => unit.id === room.turnId);
     const yourTurn = room.status === 'active' && actor?.ownerId === userId;
     const skillSource = (yourTurn ? actor : room.units.find((unit) => unit.id === you.userId)) ?? actor;
+    const result = room.rankedResults[userId];
+    const starDelta = result?.starDelta ?? (room.ranked && room.status === 'finished' && room.winnerId ? (room.winnerId === userId ? 1 : -1) : undefined);
     return {
       roomId: room.id,
       round: room.round,
@@ -523,18 +1006,67 @@ export class Arena {
       units: room.units.map((unit) => toUnitView(unit, userId)),
       skills: skillButtons(skillSource),
       yourTurn,
+      ranked: room.ranked,
+      bout: room.bout,
+      boutScore: {
+        you: room.bouts[you.userId] ?? 0,
+        opponent: room.bouts[opponent.userId] ?? 0,
+      },
+      starDelta,
+      rank: result
+        ? { stars: result.stars, rankIndex: result.rankIndex, starDelta: result.starDelta, wins: result.wins, losses: result.losses, mmr: result.mmr }
+        : undefined,
+      history: result?.history,
     };
   }
 
   private queueView(userId: string): QueueView {
     const index = this.queue.findIndex((entry) => entry.userId === userId);
     if (index < 0) return { state: 'idle', position: 0 };
-    return { state: 'queued', position: index + 1 };
+    const entry = this.queue[index];
+    const searchingFor = Date.now() - entry.joinedAt;
+    return {
+      state: 'queued',
+      position: index + 1,
+      searchingFor,
+      band: mmrBand(searchingFor),
+      rankIndex: entry.rankIndex,
+      stars: entry.stars,
+      mmr: entry.mmr,
+    };
+  }
+
+  private async friendsFor(userId: string): Promise<ArenaFriendView[]> {
+    const cards = await this.store.listPlayerCards(30);
+    const online = new Set(this.userSocket.keys());
+    return cards
+      .filter((card) => card.userId !== userId)
+      .map((card) => ({ ...card, online: online.has(card.userId) }))
+      .sort((left, right) => {
+        if (left.online !== right.online) return left.online ? -1 : 1;
+        return left.name.localeCompare(right.name, 'vi');
+      });
+  }
+
+  private async broadcastFriends() {
+    const ids = [...this.userSocket.keys()];
+    await Promise.all(
+      ids.map(async (userId) => {
+        const socket = this.socketFor(userId);
+        if (!socket) return;
+        socket.emit('arena:friends', { friends: await this.friendsFor(userId) });
+      }),
+    );
   }
 
   private roomFor(userId: string): Room | undefined {
     const roomId = this.userRoom.get(userId);
     return roomId ? this.rooms.get(roomId) : undefined;
+  }
+
+  private draftFor(userId: string): Draft | undefined {
+    const draftId = this.userDraft.get(userId);
+    return draftId ? this.drafts.get(draftId) : undefined;
   }
 
   private socketFor(userId: string): Socket | undefined {
@@ -547,12 +1079,32 @@ export class Arena {
     if (index >= 0) this.queue.splice(index, 1);
   }
 
+  private cancelDraftFor(userId: string, message: string) {
+    const draft = this.draftFor(userId);
+    if (!draft) return;
+    this.clearDraft(draft);
+    for (const fighter of [draft.left, draft.right]) {
+      if (isSynthetic(fighter.userId)) continue;
+      const socket = this.socketFor(fighter.userId);
+      socket?.emit('arena:draft_cancel', { message });
+      socket?.emit('arena:draft_clear', { matchId: draft.id });
+      socket?.emit('queue:status', { state: 'idle', position: 0 });
+    }
+  }
+
+  private clearDraft(draft: Draft) {
+    this.drafts.delete(draft.id);
+    for (const fighter of [draft.left, draft.right]) {
+      if (this.userDraft.get(fighter.userId) === draft.id) this.userDraft.delete(fighter.userId);
+    }
+  }
+
   private closeRoomFor(userId: string) {
     const room = this.roomFor(userId);
     if (!room) return;
     this.userRoom.delete(userId);
     const other = room.fighters.find((fighter) => fighter.userId !== userId);
-    if (!other || !this.userRoom.has(other.userId)) {
+    if (!other || isSynthetic(other.userId) || !this.userRoom.has(other.userId)) {
       this.rooms.delete(room.id);
     }
   }
@@ -603,6 +1155,69 @@ function fighterFromHint(userId: string, username: string, hint: DuelHint): Figh
     maxHp: clampStat(hint.maxHp, 1, 99999),
     pets: [],
   };
+}
+
+function petsFromSave(save: GameSave | null): DraftPetView[] {
+  if (!save) return [];
+  return save.roster
+    .filter((pet) => pet.maxHp > 0)
+    .slice(0, 8)
+    .map((pet) => ({
+      id: pet.id,
+      name: pet.name,
+      kindId: pet.kindId,
+      level: pet.level,
+      hp: pet.maxHp,
+      maxHp: pet.maxHp,
+    }));
+}
+
+function emptyChoice(): DraftChoice {
+  return { petIds: [], banId: null, pickReady: false, banReady: false };
+}
+
+function lockedPets(draft: Draft, side: 'left' | 'right'): DraftPetView[] {
+  const roster = side === 'left' ? draft.leftRoster : draft.rightRoster;
+  const ownerId = side === 'left' ? draft.left.userId : draft.right.userId;
+  const wanted = (draft.picks[ownerId]?.petIds ?? []).filter((id) => roster.some((pet) => pet.id === id));
+  const filled = (wanted.length > 0 ? wanted : pickSquad(roster, 4)).slice(0, 4);
+  return filled.flatMap((id) => roster.filter((pet) => pet.id === id));
+}
+
+function resolveSide(draft: Draft, side: 'left' | 'right'): DuelPet[] {
+  const own = side === 'left' ? draft.leftRoster : draft.rightRoster;
+  const ownerId = side === 'left' ? draft.left.userId : draft.right.userId;
+  const foeId = side === 'left' ? draft.right.userId : draft.left.userId;
+  const wanted = (draft.picks[ownerId]?.petIds ?? []).filter((id) => own.some((pet) => pet.id === id));
+  const filled = (wanted.length > 0 ? wanted : own.slice(0, 4).map((pet) => pet.id)).slice(0, 4);
+  const banned = draft.picks[foeId]?.banId;
+  return filled
+    .filter((id) => id !== banned)
+    .slice(0, 3)
+    .flatMap((id) => {
+      const pet = own.find((entry) => entry.id === id);
+      if (!pet) return [];
+      return [{ id: pet.id, name: pet.name, level: pet.level, hp: pet.hp, maxHp: pet.maxHp }];
+    });
+}
+
+function toDraftFighter(fighter: Fighter, pets: DraftPetView[], rank: { rankIndex: number; stars: number }) {
+  return {
+    userId: fighter.userId,
+    username: fighter.username,
+    name: fighter.name,
+    gender: fighter.gender,
+    baseAvatarId: fighter.baseAvatarId,
+    hairColor: fighter.hairColor,
+    outfitColor: fighter.outfitColor,
+    rankIndex: rank.rankIndex,
+    stars: rank.stars,
+    pets,
+  };
+}
+
+function isSynthetic(userId: string): boolean {
+  return userId.startsWith('bot:') || userId.startsWith('ghost:') || userId.startsWith('ai:');
 }
 
 function readClientId(socket: Socket): string {

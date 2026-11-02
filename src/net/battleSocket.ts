@@ -24,7 +24,9 @@ export function holdBattleSocket(token: string): Socket {
   }
   dropSlot();
   const socket = io(SOCKET_URL, {
-    auth: { token, clientId: clientInstanceId() },
+    auth: (cb) => {
+      cb({ token, clientId: clientInstanceId() });
+    },
     transports: ['websocket', 'polling'],
     forceNew: true,
     reconnection: true,
@@ -50,7 +52,7 @@ export function releaseBattleSocket(socket: Socket) {
     releaseTimer = null;
     if (slot !== dying || dying.holders > 0) return;
     dropSlot();
-  }, 50);
+  }, 400);
 }
 
 function dropSlot() {

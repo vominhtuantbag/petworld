@@ -3,7 +3,7 @@ import { getCharacter, PROFESSIONS } from '../../data/characters';
 import { getRegion } from '../../data/regions';
 import type { InitializedPlayer, RegionId } from '../../types/game';
 import { professionPools } from '../../world/growth';
-import { BAG_SLOTS, canonicalItemId, gearSlot, isGearItem, ITEMS, UPGRADE_CAP } from '../../world/items';
+import { BAG_SLOTS, canonicalItemId, gearSlot, isGearItem, ITEMS, UPGRADE_CAP, withSlots } from '../../world/items';
 import { speciesById } from '../../world/monsters';
 import { ADVENTURE_LEVEL_CAP } from '../../world/progression';
 import { emptyQuests, normalizeQuests, type QuestTrack } from '../../world/quests';
@@ -557,17 +557,18 @@ function parseStacks(value: unknown): Stack[] {
     const itemId = canonicalItemId(entry.itemId);
     if (!itemId) continue;
     const qty = int(entry.qty, 1, 999, 1);
+    const slot = typeof entry.slot === 'number' ? int(entry.slot, 0, BAG_SLOTS - 1, -1) : -1;
     if (!ITEMS[itemId].stack) {
       if (stacks.some((stack) => stack.itemId === itemId)) continue;
-      stacks.push({ itemId, qty: 1, plus: int(entry.plus, 0, UPGRADE_CAP, 0) });
+      stacks.push({ itemId, qty: 1, plus: int(entry.plus, 0, UPGRADE_CAP, 0), ...(slot >= 0 ? { slot } : {}) });
     } else {
       const existing = stacks.find((stack) => stack.itemId === itemId);
       if (existing) existing.qty = Math.min(999, existing.qty + qty);
-      else stacks.push({ itemId, qty });
+      else stacks.push({ itemId, qty, ...(slot >= 0 ? { slot } : {}) });
     }
     if (stacks.length >= BAG_SLOTS) break;
   }
-  return stacks;
+  return withSlots(stacks);
 }
 
 function parseEquipped(value: unknown, slot: GearSlot): Gear | null {

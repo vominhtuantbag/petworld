@@ -7,10 +7,71 @@ import type { Gender, RegionId } from '../catalog.js';
  */
 
 export type DuelPet = {
+  id?: string;
   name: string;
   level: number;
   hp: number;
   maxHp: number;
+};
+
+export type DraftPetView = {
+  id: string;
+  name: string;
+  kindId?: string;
+  level: number;
+  hp: number;
+  maxHp: number;
+};
+
+export type DraftFighterView = {
+  userId: string;
+  username: string;
+  name: string;
+  gender: Gender;
+  baseAvatarId: string;
+  hairColor: string;
+  outfitColor: string;
+  rankIndex: number;
+  stars: number;
+  pets: DraftPetView[];
+};
+
+export type DraftPhase = 'pick' | 'ban';
+
+export type ArenaDraftView = {
+  matchId: string;
+  deadline: number;
+  phase: DraftPhase;
+  you: DraftFighterView;
+  opponent: DraftFighterView;
+  confirmed: boolean;
+  opponentReady: boolean;
+};
+
+export type ArenaRankView = {
+  stars: number;
+  rankIndex: number;
+  mmr: number;
+  starDelta: number;
+  wins: number;
+  losses: number;
+  outcome: 'win' | 'loss' | 'draw';
+  opponent: string;
+  history: { at: string; outcome: 'win' | 'loss' | 'draw'; opponent: string; starDelta: number; stars: number; rankIndex: number }[];
+};
+
+export type ArenaFriendView = {
+  userId: string;
+  username: string;
+  name: string;
+  gender: Gender;
+  baseAvatarId: string;
+  hairColor: string;
+  outfitColor: string;
+  rankIndex: number;
+  stars: number;
+  mmr: number;
+  online: boolean;
 };
 
 export type DuelSkillView = {
@@ -73,11 +134,29 @@ export type BattleView = {
   /** The two skill buttons for the viewer's side. */
   skills: DuelSkillView[];
   yourTurn: boolean;
+  ranked?: boolean;
+  bout?: number;
+  boutScore?: { you: number; opponent: number };
+  starDelta?: number;
+  rank?: {
+    stars: number;
+    rankIndex: number;
+    starDelta: number;
+    wins: number;
+    losses: number;
+    mmr?: number;
+  };
+  history?: { at: string; outcome: 'win' | 'loss' | 'draw'; opponent: string; starDelta: number; stars: number; rankIndex: number }[];
 };
 
 export type QueueView = {
   state: 'idle' | 'queued';
   position: number;
+  searchingFor?: number;
+  band?: number;
+  rankIndex?: number;
+  stars?: number;
+  mmr?: number;
 };
 
 /** Arrival slot in a five-person raid lobby. `index` 0 is the first player through the gate. */

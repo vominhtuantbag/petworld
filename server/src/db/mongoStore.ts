@@ -1,7 +1,8 @@
 import mongoose, { Schema, type InferSchemaType } from 'mongoose';
 
 import { freshStats, statsForRecord } from '../combat/stats.js';
-import type { AccountStore, CharacterInput, CharacterRecord, LinkResult, LinkedLogin, NewUser, SocialProvider, UserRecord } from '../domain.js';
+import type { AccountStore, CharacterInput, CharacterRecord, LinkResult, LinkedLogin, NewUser, PlayerCard, SocialProvider, UserRecord } from '../domain.js';
+import { normalizeRank } from '../realtime/ranks.js';
 import { isNewerSave, saveSchema, type GameSave } from '../saves/schema.js';
 
 /**
@@ -41,6 +42,10 @@ const characterSchema = new Schema(
       level: { type: Number, required: true },
       wins: { type: Number, required: true },
       losses: { type: Number, required: true },
+      stars: { type: Number, default: 0 },
+      rankIndex: { type: Number, default: 0 },
+      mmr: { type: Number, default: 1000 },
+      matchHistory: { type: Array, default: [] },
     },
   },
   { versionKey: false },
@@ -84,6 +89,7 @@ function asUser(doc: UserDoc & { passwordHash?: string }): UserRecord {
 }
 
 function asCharacter(doc: CharacterDoc): CharacterRecord {
+  const raw = (doc.stats ?? freshStats()) as CharacterRecord['stats'];
   return {
     id: doc._id.toString(),
     userId: doc.userId.toString(),
@@ -93,7 +99,11 @@ function asCharacter(doc: CharacterDoc): CharacterRecord {
     hairColor: doc.hairColor,
     outfitColor: doc.outfitColor,
     startingRegion: doc.startingRegion as CharacterRecord['startingRegion'],
-    stats: doc.stats ?? freshStats(),
+    stats: {
+      ...raw,
+      ...normalizeRank(raw),
+      matchHistory: Array.isArray(raw.matchHistory) ? raw.matchHistory : [],
+    },
   };
 }
 
@@ -164,9 +174,49 @@ export class MongoAccountStore implements AccountStore {
     return doc ? asCharacter(doc as unknown as CharacterDoc) : null;
   }
 
+  async listPlayerCards(limit = 30): Promise<PlayerCard[]> {
+    const docs = await CharacterModel.find().limit(Math.max(1, limit)).lean();
+    const userIds = docs.map((doc) => doc.userId);
+    const users = await UserModel.find({ _id: { $in: userIds } }).lean();
+    const names = new Map(users.map((user) => [String(user._id), user.username as string]));
+    return docs.map((doc) => {
+      const character = asCharacter(doc as unknown as CharacterDoc);
+      const rank = normalizeRank(character.stats);
+      return {
+        userId: character.userId,
+        username: names.get(character.userId) ?? character.name,
+        name: character.name,
+        gender: character.gender,
+        baseAvatarId: character.baseAvatarId,
+        hairColor: character.hairColor,
+        outfitColor: character.outfitColor,
+        rankIndex: rank.rankIndex,
+        stars: rank.stars,
+        mmr: rank.mmr,
+      };
+    });
+  }
+
   async setCharacterStats(userId: string, stats: CharacterRecord['stats']): Promise<void> {
     if (!mongoose.isValidObjectId(userId)) return;
-    await CharacterModel.updateOne({ userId }, { stats });
+    const rank = normalizeRank(stats);
+    await CharacterModel.updateOne(
+      { userId },
+      {
+        $set: {
+          'stats.hp': stats.hp,
+          'stats.attack': stats.attack,
+          'stats.defense': stats.defense,
+          'stats.level': stats.level,
+          'stats.wins': stats.wins,
+          'stats.losses': stats.losses,
+          'stats.stars': rank.stars,
+          'stats.rankIndex': rank.rankIndex,
+          'stats.mmr': rank.mmr,
+          'stats.matchHistory': Array.isArray(stats.matchHistory) ? stats.matchHistory : [],
+        },
+      },
+    );
   }
 
   async setPasswordHash(userId: string, passwordHash: string): Promise<void> {
@@ -196,7 +246,7 @@ export class MongoAccountStore implements AccountStore {
     if (!character) return;
     const wins = character.stats.wins + (outcome === 'win' ? 1 : 0);
     const losses = character.stats.losses + (outcome === 'loss' ? 1 : 0);
-    character.stats = statsForRecord(wins, losses);
+    character.stats = statsForRecord(wins, losses, character.stats);
     await character.save();
   }
 
