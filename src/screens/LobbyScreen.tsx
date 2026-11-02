@@ -28,22 +28,10 @@ export function LobbyScreen({ onLeave }: { onLeave?: () => void }) {
   const player = setup.player;
   const character = getCharacter(player?.baseCharacterId);
   const [pickedFriend, setPickedFriend] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const [searchStartedAt, setSearchStartedAt] = useState<number | null>(null);
 
   useEffect(() => {
     battle.refreshArena();
   }, [battle.refreshArena]);
-
-  useEffect(() => {
-    if (battle.queue.state !== 'queued') {
-      setSearchStartedAt(null);
-      return;
-    }
-    setSearchStartedAt((current) => current ?? Date.now() - (battle.queue.searchingFor ?? 0));
-    const timer = setInterval(() => setNow(Date.now()), 250);
-    return () => clearInterval(timer);
-  }, [battle.queue.searchingFor, battle.queue.state]);
 
   if (!player || !character) {
     return (
@@ -54,13 +42,13 @@ export function LobbyScreen({ onLeave }: { onLeave?: () => void }) {
   }
 
   const stats = auth.character?.stats;
-  const rankIndex = battle.queue.rankIndex ?? stats?.rankIndex ?? 0;
-  const stars = battle.queue.stars ?? stats?.stars ?? 0;
-  const mmr = battle.queue.mmr ?? stats?.mmr ?? 1000;
+  const rankIndex = stats?.rankIndex ?? battle.queue.rankIndex ?? 0;
+  const stars = stats?.stars ?? battle.queue.stars ?? 0;
+  const mmr = stats?.mmr ?? battle.queue.mmr ?? 1000;
   const tint = rankTint(rankIndex);
   const online = battle.connection === 'online';
   const queued = battle.queue.state === 'queued';
-  const waitSec = Math.max(0, Math.floor(((searchStartedAt ? now - searchStartedAt : battle.queue.searchingFor) ?? 0) / 1000));
+  const waitSec = Math.max(0, battle.queueWaitSec, battle.queue.waitSec ?? 0);
   const selected = battle.friends.find((friend) => friend.userId === pickedFriend && friend.online) ?? null;
 
   return (

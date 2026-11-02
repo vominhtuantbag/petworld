@@ -139,12 +139,12 @@ export function ArenaScreen() {
           <View style={court.headerLeft}>
             <RoundButton label={finished ? 'Hết' : `${seconds}s`} hint="Thời gian lượt" onPress={() => undefined} size={s(36)} width={s(72)} font={font(12)} />
             <RoundButton
-              label={snapshot.ranked ? `${snapshot.boutScore?.you ?? 0}-${snapshot.boutScore?.opponent ?? 0}` : `Hiệp ${snapshot.round}`}
-              hint={snapshot.ranked ? `Set ${snapshot.bout ?? 1}/3` : 'Hiệp đấu'}
+              label={snapshot.ranked ? `HIỆP ${snapshot.bout ?? 1}/3 · ${snapshot.boutScore?.you ?? 0}-${snapshot.boutScore?.opponent ?? 0}` : `Hiệp ${snapshot.round}`}
+              hint={snapshot.ranked ? 'Best of 3' : 'Hiệp đấu'}
               onPress={() => undefined}
               size={s(36)}
-              width={s(78)}
-              font={font(11)}
+              width={s(118)}
+              font={font(10)}
             />
           </View>
           <TurnTimeline

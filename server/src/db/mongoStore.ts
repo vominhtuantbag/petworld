@@ -200,7 +200,7 @@ export class MongoAccountStore implements AccountStore {
   async setCharacterStats(userId: string, stats: CharacterRecord['stats']): Promise<void> {
     if (!mongoose.isValidObjectId(userId)) return;
     const rank = normalizeRank(stats);
-    await CharacterModel.updateOne(
+    await CharacterModel.findOneAndUpdate(
       { userId },
       {
         $set: {
@@ -216,6 +216,7 @@ export class MongoAccountStore implements AccountStore {
           'stats.matchHistory': Array.isArray(stats.matchHistory) ? stats.matchHistory : [],
         },
       },
+      { new: true },
     );
   }
 

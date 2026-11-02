@@ -47,6 +47,8 @@ export type ArenaDraftView = {
   opponent: DraftFighterView;
   confirmed: boolean;
   opponentReady: boolean;
+  bout?: number;
+  boutScore?: { you: number; opponent: number };
 };
 
 export type ArenaRankView = {
@@ -153,6 +155,7 @@ export type QueueView = {
   state: 'idle' | 'queued';
   position: number;
   searchingFor?: number;
+  waitSec?: number;
   band?: number;
   rankIndex?: number;
   stars?: number;

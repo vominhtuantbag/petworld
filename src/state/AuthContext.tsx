@@ -281,6 +281,23 @@ function mergeCharacterStats(current: ServerCharacter | null, next: ServerCharac
   if (!next) return current;
   if (!current) return next;
   const incoming = next.stats ?? current.stats;
+  const localAt = Date.parse(current.stats.matchHistory?.[0]?.at ?? '');
+  const nextAt = Date.parse(incoming.matchHistory?.[0]?.at ?? '');
+  const localNewer = Number.isFinite(localAt) && (!Number.isFinite(nextAt) || localAt > nextAt);
+  if (localNewer) {
+    return {
+      ...next,
+      stats: {
+        ...incoming,
+        stars: current.stats.stars,
+        rankIndex: current.stats.rankIndex,
+        mmr: current.stats.mmr,
+        wins: current.stats.wins,
+        losses: current.stats.losses,
+        matchHistory: current.stats.matchHistory,
+      },
+    };
+  }
   return {
     ...next,
     stats: {

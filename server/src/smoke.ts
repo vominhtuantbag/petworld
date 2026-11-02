@@ -694,7 +694,7 @@ async function checkRankedStars(base: string, stamp: string) {
   let leftSnap = await left.nextBattle();
   let rightSnap = await right.nextBattle();
   const started = Date.now();
-  while (leftSnap.status !== 'finished' && rightSnap.status !== 'finished' && Date.now() - started < 20_000) {
+  while (leftSnap.status !== 'finished' && rightSnap.status !== 'finished' && Date.now() - started < 45_000) {
     if (leftSnap.yourTurn) left.socket.emit('battle:action', { action: 'attack' });
     if (rightSnap.yourTurn) right.socket.emit('battle:action', { action: 'attack' });
     const [nextLeft, nextRight] = await Promise.all([left.nextBattle(), right.nextBattle()]);
@@ -729,8 +729,8 @@ async function checkStandInAccount(base: string, stamp: string) {
   client.socket.emit('queue:join');
   const draft = await Promise.race([
     draftWait,
-    delay(15_000).then(() => {
-      throw new Error('12s real-account fallback never opened Ban & Pick.');
+    delay(28_000).then(() => {
+      throw new Error('13–25s real-account fallback never opened Ban & Pick.');
     }),
   ]);
   const foeId = draft.opponent?.userId ?? '';

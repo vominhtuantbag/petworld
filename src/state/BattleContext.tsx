@@ -54,6 +54,7 @@ type BattleContextValue = {
   prep: PvpPrep | null;
   findMatch: () => void;
   cancelMatch: () => void;
+  queueWaitSec: number;
   refreshArena: () => void;
   readyDraft: (petIds: string[], banId: string | null) => void;
   sendAction: (action: 'attack' | 'skill', targetId: string, skill?: 0 | 1) => void;
@@ -112,6 +113,9 @@ export function BattleProvider({ children }: { children: ReactNode }) {
   const draftRef = useRef<ArenaDraftView | null>(null);
   const sessionTokenRef = useRef(auth.token);
   const refreshRef = useRef(auth.refreshCharacter);
+  const queueIntentRef = useRef(false);
+  const queueStartedAtRef = useRef<number | null>(null);
+  const [queueWaitSec, setQueueWaitSec] = useState(0);
   const applyRankRef = useRef(auth.applyCombatStats);
   prepRef.current = prep;
   draftRef.current = draft;
@@ -152,6 +156,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       setConnection('online');
       setNotice(null);
       socket.emit('arena:hello');
+      if (queueIntentRef.current) socket.emit('queue:join');
       console.info(`[Game Thư Giãn] Socket connected`);
     };
     const onDisconnect = () => {
@@ -191,17 +196,40 @@ export function BattleProvider({ children }: { children: ReactNode }) {
         matchHistory: history,
       });
     };
-    const onQueue = (next: QueueView) => setQueue(next);
+    const onQueue = (next: QueueView) => {
+      if (next.state === 'idle' && queueIntentRef.current) {
+        socket.emit('queue:join');
+        setQueue((current) => (current.state === 'queued' ? current : { state: 'queued', position: 1, waitSec: queueWaitSec }));
+        return;
+      }
+      if (next.state === 'queued') {
+        queueIntentRef.current = true;
+        if (queueStartedAtRef.current == null) {
+          queueStartedAtRef.current = Date.now() - (next.waitSec ?? 0) * 1000;
+        }
+        setQueueWaitSec((current) => Math.max(current, next.waitSec ?? 0, Math.floor((Date.now() - (queueStartedAtRef.current ?? Date.now())) / 1000)));
+      }
+      setQueue(next);
+    };
     const onBattle = (next: BattleView) => {
+      queueIntentRef.current = false;
+      queueStartedAtRef.current = null;
+      setQueueWaitSec(0);
+      setDraft((current) => {
+        if (current && next.status !== 'finished' && (current.bout ?? 1) > (next.bout ?? 1)) return current;
+        if (current && next.status === 'active' && (next.bout ?? 1) < (current.bout ?? 1)) return current;
+        return null;
+      });
       setBattle(next);
-      setDraft(null);
       setPrep(null);
       setPvpIncoming(null);
       setPvpOutgoing(null);
       setQueue({ state: 'idle', position: 0 });
       if (next.status === 'finished') {
         if (next.rank) applyRankPatch(next.rank, next.history);
-        void refreshRef.current();
+        setTimeout(() => {
+          void refreshRef.current();
+        }, 400);
       }
     };
     const onRank = (payload: ArenaRankView) => {
@@ -210,11 +238,23 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     };
     const onDraft = (next: ArenaDraftView) => {
       if (!next?.matchId || !next.you || !next.opponent) return;
+      queueIntentRef.current = false;
+      queueStartedAtRef.current = null;
+      setQueueWaitSec(0);
       setDraft(next);
+      if ((next.bout ?? 1) <= 1) setBattle(null);
       setQueue({ state: 'idle', position: 0 });
       setNotice(null);
     };
-    const onDraftClear = () => setDraft(null);
+    const onDraftClear = (payload?: { matchId?: string }) => {
+      setDraft((current) => {
+        if (!current) return null;
+        if (payload?.matchId && payload.matchId !== current.matchId && !String(payload.matchId).startsWith('duel-')) {
+          return current;
+        }
+        return null;
+      });
+    };
     const onDraftCancel = (payload: { message?: string }) => {
       setDraft(null);
       if (payload?.message) setNotice(payload.message);
@@ -378,11 +418,17 @@ export function BattleProvider({ children }: { children: ReactNode }) {
 
   const findMatch = useCallback(() => {
     setNotice(null);
-    setQueue({ state: 'queued', position: 1, searchingFor: 0 });
+    queueIntentRef.current = true;
+    if (queueStartedAtRef.current == null) queueStartedAtRef.current = Date.now();
+    setQueue({ state: 'queued', position: 1, waitSec: 0, searchingFor: 0 });
+    setQueueWaitSec(0);
     socketRef.current?.emit('queue:join');
   }, []);
 
   const cancelMatch = useCallback(() => {
+    queueIntentRef.current = false;
+    queueStartedAtRef.current = null;
+    setQueueWaitSec(0);
     setQueue({ state: 'idle', position: 0 });
     socketRef.current?.emit('queue:leave');
   }, []);
@@ -484,6 +530,15 @@ export function BattleProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (queue.state !== 'queued') return;
+    const timer = setInterval(() => {
+      const started = queueStartedAtRef.current ?? Date.now();
+      setQueueWaitSec((current) => Math.max(current, Math.floor((Date.now() - started) / 1000)));
+    }, 250);
+    return () => clearInterval(timer);
+  }, [queue.state]);
+
+  useEffect(() => {
     if (!prep && !battle && !draft && !raid && !raidLobby) return;
     return holdPresence();
   }, [prep, battle, draft, raid, raidLobby]);
@@ -512,6 +567,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       prep,
       findMatch,
       cancelMatch,
+      queueWaitSec,
       refreshArena,
       readyDraft,
       sendAction,
@@ -549,6 +605,7 @@ export function BattleProvider({ children }: { children: ReactNode }) {
       prep,
       findMatch,
       cancelMatch,
+      queueWaitSec,
       refreshArena,
       readyDraft,
       sendAction,

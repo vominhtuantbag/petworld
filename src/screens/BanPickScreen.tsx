@@ -27,6 +27,7 @@ export function BanPickScreen() {
   const [picked, setPicked] = useState<string[]>([]);
   const [banId, setBanId] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
+  const [timerArmed, setTimerArmed] = useState(false);
   const phase = draft?.phase ?? 'pick';
 
   useEffect(() => {
@@ -38,6 +39,7 @@ export function BanPickScreen() {
     setPicked([]);
     setBanId(null);
     setLocked(false);
+    setTimerArmed(false);
   }, [draft?.matchId]);
 
   useEffect(() => {
@@ -62,11 +64,15 @@ export function BanPickScreen() {
   };
 
   useEffect(() => {
-    if (!draft || draft.confirmed || locked) return;
+    if (seconds > 0) setTimerArmed(true);
+  }, [seconds]);
+
+  useEffect(() => {
+    if (!draft || draft.confirmed || locked || !timerArmed) return;
     if (seconds > 0) return;
     setLocked(true);
     battle.readyDraft(picked, banId);
-  }, [banId, battle, draft, locked, picked, seconds]);
+  }, [banId, battle, draft, locked, picked, seconds, timerArmed]);
 
   const togglePet = (id: string) => {
     if (!picking || locked || draft?.confirmed) return;
@@ -82,7 +88,9 @@ export function BanPickScreen() {
     if (draft.confirmed && draft.opponentReady && !picking) return 'Cả hai đã cấm. Vào trận...';
     if (draft.confirmed) return picking ? 'Đã khóa đội hình. Đợi đối thủ...' : 'Đã cấm. Đợi đối thủ...';
     if (draft.opponentReady) return picking ? 'Đối thủ đã khóa 4 thú.' : 'Đối thủ đã cấm.';
-    return picking ? `Chọn 4 thú · ${picked.length}/4` : 'Cấm 1 thú trong đội hình 4 thú của đối thủ';
+    return picking
+      ? `${(draft.bout ?? 1) > 1 ? `Chuẩn bị hiệp ${draft.bout} · ` : ''}Chọn 4 thú · ${picked.length}/4`
+      : 'Cấm 1 thú trong đội hình 4 thú của đối thủ';
   }, [draft, picked.length, picking]);
 
   if (!draft || !you || !foe) return <View style={styles.fill} />;
@@ -102,7 +110,9 @@ export function BanPickScreen() {
       ]}
     >
       <View style={styles.top}>
-        <Text style={[styles.kicker, { fontSize: font(12) }]}>{picking ? 'CHỌN ĐỘI HÌNH · 20 GIÂY' : 'CẤM THÚ ĐỐI PHƯƠNG · 15 GIÂY'}</Text>
+        <Text style={[styles.kicker, { fontSize: font(12) }]}>
+          {`HIỆP ${draft.bout ?? 1}/3 · ${draft.boutScore?.you ?? 0}-${draft.boutScore?.opponent ?? 0} · ${picking ? 'CHỌN ĐỘI HÌNH' : 'CẤM THÚ'}`}
+        </Text>
         <View style={[styles.timer, { borderColor: seconds <= 5 ? '#e7a3a3' : theme.gold }]}>
           <Text style={[styles.timerText, { fontSize: font(28), color: seconds <= 5 ? '#e7a3a3' : theme.gold }]}>{seconds}s</Text>
         </View>

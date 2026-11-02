@@ -38,7 +38,9 @@ const TURN_MS = 30_000;
 const DISCONNECT_GRACE_MS = 12_000;
 const PICK_MS = 20_000;
 const BAN_MS = 15_000;
-const BOT_WAIT_MS = 12_000;
+const HUMAN_ONLY_MS = 12_000;
+const AI_FALLBACK_MIN_MS = 13_000;
+const AI_FALLBACK_MAX_MS = 25_000;
 const BOT_THINK_MS = 700;
 
 type Fighter = Omit<FighterView, 'hp' | 'ready'> & { attack: number; defense: number };
@@ -62,6 +64,11 @@ type CombatUnit = {
   skills: [SkillCard, SkillCard];
 };
 
+type SeriesState = {
+  bout: number;
+  bouts: Record<string, number>;
+};
+
 type Room = {
   id: string;
   round: number;
@@ -79,6 +86,10 @@ type Room = {
   bout: number;
   bouts: Record<string, number>;
   rankedResults: Record<string, RankedResult>;
+  leftRoster: DraftPetView[];
+  rightRoster: DraftPetView[];
+  leftRank: { rankIndex: number; stars: number };
+  rightRank: { rankIndex: number; stars: number };
 };
 
 type RankedResult = {
@@ -98,6 +109,10 @@ type QueuedPlayer = {
   rankIndex: number;
   stars: number;
   joinedAt: number;
+  /** Epoch ms. Rolled once when the player enters the queue. Never re-rolled. */
+  aiAfter: number;
+  lastWaitSec: number;
+  disconnectedAt?: number;
 };
 
 type DraftChoice = {
@@ -119,14 +134,16 @@ type Draft = {
   leftRank: { rankIndex: number; stars: number };
   rightRank: { rankIndex: number; stars: number };
   picks: Record<string, DraftChoice>;
+  series: SeriesState;
+  disconnectedAt: Record<string, number | undefined>;
 };
 
 /**
  * Matchmaking queue and in-memory duel rooms.
  *
  * Ranked queue uses expanding MMR bands. After 12s with no human, a real
- * stored account is played by Smart AI. Both sides then get a 20-second
- * ban & pick, then a best-of-three. Proximity duels stay a single bout.
+ * stored account is played by Smart AI at a random 13–25s mark. Each bout
+ * is preceded by Ban & Pick. First to two bout wins takes the match.
  */
 export class Arena {
   private readonly queue: QueuedPlayer[] = [];
@@ -190,8 +207,10 @@ export class Arena {
         if (this.activeSessions.get(userId) !== socket.id) return;
         this.activeSessions.delete(userId);
         this.userSocket.delete(userId);
-        this.leaveQueue(userId);
-        if (this.draftFor(userId)) this.cancelDraftFor(userId, 'Đối thủ mất kết nối.');
+        const queued = this.queue.find((entry) => entry.userId === userId);
+        if (queued) queued.disconnectedAt = Date.now();
+        const draft = this.draftFor(userId);
+        if (draft) draft.disconnectedAt[userId] = Date.now();
         const active = this.roomFor(userId);
         if (active && active.status === 'active') {
           active.disconnectedAt[userId] = Date.now();
@@ -277,6 +296,11 @@ export class Arena {
     }
     if (this.activeSessions.get(userId) !== socket.id) return;
     socket.data.username = user.username;
+
+    const queued = this.queue.find((entry) => entry.userId === userId);
+    if (queued) queued.disconnectedAt = undefined;
+    const liveDraft = this.draftFor(userId);
+    if (liveDraft) liveDraft.disconnectedAt[userId] = undefined;
 
     const roomId = this.userRoom.get(userId);
     const room = roomId ? this.rooms.get(roomId) : undefined;
@@ -390,14 +414,20 @@ export class Arena {
       already.mmr = rank.mmr;
       already.rankIndex = rank.rankIndex;
       already.stars = rank.stars;
+      already.disconnectedAt = undefined;
+      already.lastWaitSec = already.lastWaitSec ?? 0;
+      if (!already.aiAfter) already.aiAfter = already.joinedAt + randomFallbackMs();
     } else {
+      const joinedAt = Date.now();
       this.queue.push({
         userId: user.id,
         socketId: socket.id,
         mmr: rank.mmr,
         rankIndex: rank.rankIndex,
         stars: rank.stars,
-        joinedAt: Date.now(),
+        joinedAt,
+        aiAfter: joinedAt + randomFallbackMs(),
+        lastWaitSec: 0,
       });
     }
     socket.emit('queue:status', this.queueView(user.id));
@@ -440,7 +470,7 @@ export class Arena {
           }
           continue;
         }
-        if (wait >= BOT_WAIT_MS) {
+        if (wait >= HUMAN_ONLY_MS && now >= (entry.aiAfter || entry.joinedAt + AI_FALLBACK_MAX_MS)) {
           claimed.add(entry.userId);
           this.leaveQueue(entry.userId);
           const opened = await this.openStandInMatch(entry);
@@ -455,7 +485,14 @@ export class Arena {
   private requeue(entry: QueuedPlayer, resetWait = true) {
     if (this.queue.some((row) => row.userId === entry.userId)) return;
     if (this.busy(entry.userId)) return;
-    this.queue.push({ ...entry, joinedAt: resetWait ? Date.now() : entry.joinedAt });
+    const joinedAt = resetWait ? Date.now() : entry.joinedAt;
+    this.queue.push({
+      ...entry,
+      joinedAt,
+      aiAfter: resetWait ? joinedAt + randomFallbackMs() : entry.aiAfter,
+      lastWaitSec: resetWait ? 0 : entry.lastWaitSec,
+      disconnectedAt: undefined,
+    });
   }
 
   private async openRankedPair(first: QueuedPlayer, second: QueuedPlayer): Promise<boolean> {
@@ -471,6 +508,7 @@ export class Arena {
       rightRoster,
       leftRank: { rankIndex: first.rankIndex, stars: first.stars },
       rightRank: { rankIndex: second.rankIndex, stars: second.stars },
+      series: { bout: 1, bouts: { [left.userId]: 0, [right.userId]: 0 } },
     });
     return true;
   }
@@ -488,6 +526,7 @@ export class Arena {
       rightRoster: standIn.roster,
       leftRank: { rankIndex: entry.rankIndex, stars: entry.stars },
       rightRank: standIn.rank,
+      series: { bout: 1, bouts: { [left.userId]: 0, [standIn.fighter.userId]: 0 } },
     });
     return true;
   }
@@ -530,7 +569,7 @@ export class Arena {
   }
 
   private async rosterFor(userId: string): Promise<DraftPetView[]> {
-    const save = await this.store.findAdventure(userId);
+    const save = await this.store.findAdventure(realAccountId(userId));
     return petsFromSave(save);
   }
 
@@ -541,6 +580,7 @@ export class Arena {
     rightRoster: DraftPetView[];
     leftRank: { rankIndex: number; stars: number };
     rightRank: { rankIndex: number; stars: number };
+    series: SeriesState;
   }) {
     const draft: Draft = {
       id: `draft-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
@@ -553,6 +593,8 @@ export class Arena {
       rightRoster: input.rightRoster,
       leftRank: input.leftRank,
       rightRank: input.rightRank,
+      series: input.series,
+      disconnectedAt: {},
       picks: {
         [input.left.userId]: emptyChoice(),
         [input.right.userId]: emptyChoice(),
@@ -660,7 +702,15 @@ export class Arena {
     draft.left.pets = resolveSide(draft, 'left');
     draft.right.pets = resolveSide(draft, 'right');
     this.clearDraft(draft);
-    this.openRoom(draft.left, draft.right, { ranked: true });
+    this.openRoom(draft.left, draft.right, {
+      ranked: true,
+      bout: draft.series.bout,
+      bouts: draft.series.bouts,
+      leftRoster: draft.leftRoster,
+      rightRoster: draft.rightRoster,
+      leftRank: draft.leftRank,
+      rightRank: draft.rightRank,
+    });
   }
 
   private emitDraft(draft: Draft) {
@@ -688,6 +738,11 @@ export class Arena {
       opponent: toDraftFighter(opponent, oppPets, oppRank),
       confirmed: youReady,
       opponentReady: oppReady,
+      bout: draft.series.bout,
+      boutScore: {
+        you: draft.series.bouts[userId] ?? 0,
+        opponent: draft.series.bouts[opponent.userId] ?? 0,
+      },
     };
   }
 
@@ -705,11 +760,25 @@ export class Arena {
     return fighterFromHint(userId, user?.username ?? hint.username, hint);
   }
 
-  private openRoom(left: Fighter, right: Fighter, options: { ranked: boolean }) {
+  private openRoom(
+    left: Fighter,
+    right: Fighter,
+    options: {
+      ranked: boolean;
+      bout?: number;
+      bouts?: Record<string, number>;
+      leftRoster?: DraftPetView[];
+      rightRoster?: DraftPetView[];
+      leftRank?: { rankIndex: number; stars: number };
+      rightRank?: { rankIndex: number; stars: number };
+    },
+  ) {
     const units = [...unitsFor(left), ...unitsFor(right)];
     const order = duelOrder(units, 1);
     const turnId = order[0] ?? left.userId;
     const actor = units.find((unit) => unit.id === turnId);
+    const bout = options.bout ?? 1;
+    const bouts = options.bouts ?? { [left.userId]: 0, [right.userId]: 0 };
     const room: Room = {
       id: `duel-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
       round: 1,
@@ -718,7 +787,7 @@ export class Arena {
       resolving: false,
       winnerId: null,
       log: options.ranked
-        ? [`${left.name} gặp ${right.name}. Best of 3.`, `Tới lượt ${actor?.name ?? left.name}.`]
+        ? [`${left.name} gặp ${right.name}. Hiệp ${bout}/3 · ${bouts[left.userId] ?? 0}-${bouts[right.userId] ?? 0}.`, `Tới lượt ${actor?.name ?? left.name}.`]
         : [`${left.name} gặp ${right.name}.`, `Tới lượt ${actor?.name ?? left.name}.`],
       fighters: [left, right],
       units,
@@ -726,9 +795,13 @@ export class Arena {
       turnId,
       disconnectedAt: {},
       ranked: options.ranked,
-      bout: 1,
-      bouts: { [left.userId]: 0, [right.userId]: 0 },
+      bout,
+      bouts,
       rankedResults: {},
+      leftRoster: options.leftRoster ?? [],
+      rightRoster: options.rightRoster ?? [],
+      leftRank: options.leftRank ?? { rankIndex: 0, stars: 0 },
+      rightRank: options.rightRank ?? { rankIndex: 0, stars: 0 },
     };
     this.rooms.set(room.id, room);
     if (!isSynthetic(left.userId)) this.userRoom.set(left.userId, room.id);
@@ -766,6 +839,8 @@ export class Arena {
 
   private async tick() {
     const now = Date.now();
+    this.dropStaleQueue(now);
+    this.dropStaleDrafts(now);
     this.pulseQueue();
     await this.matchSearch();
     for (const draft of [...this.drafts.values()]) {
@@ -855,24 +930,43 @@ export class Arena {
     }
     room.bouts[winnerId] = (room.bouts[winnerId] ?? 0) + 1;
     const winner = room.fighters.find((fighter) => fighter.userId === winnerId);
-    room.log.push(`${winner?.name ?? 'Người chơi'} thắng hiệp ${room.bout}.`);
+    room.log.push(`${winner?.name ?? 'Người chơi'} thắng hiệp ${room.bout}. Tỷ số ${scoreLine(room)}.`);
     if ((room.bouts[winnerId] ?? 0) >= 2 || room.bout >= 3) {
       await this.finish(room, winnerId);
       return;
     }
-    room.bout += 1;
-    for (const unit of room.units) {
-      unit.hp = unit.maxHp;
-      unit.mp = unit.maxMp;
-    }
-    room.round = 1;
-    room.order = duelOrder(room.units, 1);
-    room.turnId = room.order[0] ?? room.turnId;
-    room.deadline = Date.now() + TURN_MS;
-    room.resolving = false;
+    room.resolving = true;
+    this.destroyRoom(room);
+    await this.openNextBoutDraft(room);
+  }
+
+  private async openNextBoutDraft(room: Room) {
     const [left, right] = room.fighters;
-    room.log.push(`Hiệp đấu ${room.bout}. Tỷ số ${room.bouts[left.userId] ?? 0}-${room.bouts[right.userId] ?? 0}.`);
-    this.emitRoom(room);
+    const series: SeriesState = {
+      bout: room.bout + 1,
+      bouts: { ...room.bouts },
+    };
+    let leftRoster = room.leftRoster;
+    let rightRoster = room.rightRoster;
+    try {
+      const [freshLeft, freshRight] = await Promise.all([
+        this.rosterFor(realAccountId(left.userId)),
+        this.rosterFor(realAccountId(right.userId)),
+      ]);
+      if (freshLeft.length > 0) leftRoster = freshLeft;
+      if (freshRight.length > 0) rightRoster = freshRight;
+    } catch (error) {
+      console.warn('[arena] next-bout roster refresh failed, keeping the locked series rosters', error);
+    }
+    this.openDraft({
+      left: { ...left, pets: [] },
+      right: { ...right, pets: [] },
+      leftRoster,
+      rightRoster,
+      leftRank: room.leftRank,
+      rightRank: room.rightRank,
+      series,
+    });
   }
 
   /** Next living unit in this round, or a fresh speed order when the round ends. */
@@ -1020,15 +1114,35 @@ export class Arena {
     };
   }
 
+  private dropStaleQueue(now: number) {
+    for (const entry of [...this.queue]) {
+      const since = entry.disconnectedAt;
+      if (since !== undefined && now - since > DISCONNECT_GRACE_MS) this.leaveQueue(entry.userId);
+    }
+  }
+
+  private dropStaleDrafts(now: number) {
+    for (const draft of [...this.drafts.values()]) {
+      const dropped = this.humansOf(draft).find((fighter) => {
+        const since = draft.disconnectedAt[fighter.userId];
+        return since !== undefined && now - since > DISCONNECT_GRACE_MS;
+      });
+      if (dropped) this.cancelDraftFor(dropped.userId, 'Đối thủ mất kết nối.');
+    }
+  }
+
   private queueView(userId: string): QueueView {
     const index = this.queue.findIndex((entry) => entry.userId === userId);
     if (index < 0) return { state: 'idle', position: 0 };
     const entry = this.queue[index];
     const searchingFor = Date.now() - entry.joinedAt;
+    const waitSec = Math.max(entry.lastWaitSec ?? 0, Math.floor(searchingFor / 1000));
+    entry.lastWaitSec = waitSec;
     return {
       state: 'queued',
       position: index + 1,
       searchingFor,
+      waitSec,
       band: mmrBand(searchingFor),
       rankIndex: entry.rankIndex,
       stars: entry.stars,
@@ -1082,6 +1196,8 @@ export class Arena {
   private cancelDraftFor(userId: string, message: string) {
     const draft = this.draftFor(userId);
     if (!draft) return;
+    const played = draft.series.bout > 1 || Object.values(draft.series.bouts).some((wins) => wins > 0);
+    const winner = draft.left.userId === userId ? draft.right : draft.left;
     this.clearDraft(draft);
     for (const fighter of [draft.left, draft.right]) {
       if (isSynthetic(fighter.userId)) continue;
@@ -1090,6 +1206,38 @@ export class Arena {
       socket?.emit('arena:draft_clear', { matchId: draft.id });
       socket?.emit('queue:status', { state: 'idle', position: 0 });
     }
+    if (played) void this.settleDraftForfeit(draft, winner.userId);
+  }
+
+  private async settleDraftForfeit(draft: Draft, winnerId: string) {
+    const [left, right] = [draft.left, draft.right];
+    const units = [...unitsFor(left), ...unitsFor(right)];
+    const room: Room = {
+      id: `duel-forfeit-${Date.now().toString(36)}`,
+      round: 1,
+      deadline: Date.now(),
+      status: 'active',
+      resolving: false,
+      winnerId: null,
+      log: ['Đối thủ rời cửa sổ chọn tướng. Hiệp đấu kết thúc.'],
+      fighters: [left, right],
+      units,
+      order: units.map((unit) => unit.id),
+      turnId: units[0]?.id ?? left.userId,
+      disconnectedAt: {},
+      ranked: true,
+      bout: draft.series.bout,
+      bouts: { ...draft.series.bouts },
+      rankedResults: {},
+      leftRoster: draft.leftRoster,
+      rightRoster: draft.rightRoster,
+      leftRank: draft.leftRank,
+      rightRank: draft.rightRank,
+    };
+    this.rooms.set(room.id, room);
+    if (!isSynthetic(left.userId)) this.userRoom.set(left.userId, room.id);
+    if (!isSynthetic(right.userId)) this.userRoom.set(right.userId, room.id);
+    await this.finish(room, winnerId);
   }
 
   private clearDraft(draft: Draft) {
@@ -1218,6 +1366,20 @@ function toDraftFighter(fighter: Fighter, pets: DraftPetView[], rank: { rankInde
 
 function isSynthetic(userId: string): boolean {
   return userId.startsWith('bot:') || userId.startsWith('ghost:') || userId.startsWith('ai:');
+}
+
+function realAccountId(userId: string): string {
+  return userId.startsWith('ai:') ? userId.slice(3) : userId;
+}
+
+function randomFallbackMs(): number {
+  const span = AI_FALLBACK_MAX_MS - AI_FALLBACK_MIN_MS;
+  return AI_FALLBACK_MIN_MS + Math.floor(Math.random() * (span + 1));
+}
+
+function scoreLine(room: Room): string {
+  const [left, right] = room.fighters;
+  return `${room.bouts[left.userId] ?? 0}-${room.bouts[right.userId] ?? 0}`;
 }
 
 function readClientId(socket: Socket): string {

@@ -46,6 +46,8 @@ export type ArenaDraftView = {
   opponent: DraftFighterView;
   confirmed: boolean;
   opponentReady: boolean;
+  bout?: number;
+  boutScore?: { you: number; opponent: number };
 };
 
 export type ArenaRankView = {
@@ -153,6 +155,8 @@ export type QueueView = {
   state: 'idle' | 'queued';
   position: number;
   searchingFor?: number;
+  /** Whole seconds in queue. Never decreases for this queue session. */
+  waitSec?: number;
   band?: number;
   rankIndex?: number;
   stars?: number;
