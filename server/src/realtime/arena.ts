@@ -18,6 +18,8 @@ import type {
   FighterView,
   QueueView,
 } from './protocol.js';
+import { advancedAtLevel } from '../combat/advanced.js';
+import { strike } from '../combat/rules.js';
 import { statsForRecord } from '../combat/stats.js';
 import type { MatchHistoryEntry } from '../domain.js';
 import { applyStarResult, mmrBand, mmrClose, normalizeRank, rankTitle } from './ranks.js';
@@ -62,6 +64,15 @@ type CombatUnit = {
   speed: number;
   initiative: boolean;
   skills: [SkillCard, SkillCard];
+  tgh: number;
+  maxTgh: number;
+  armPen: number;
+  res: number;
+  critRate: number;
+  critDamage: number;
+  eva: number;
+  acc: number;
+  staggered?: boolean;
 };
 
 type SeriesState = {
@@ -894,6 +905,14 @@ export class Arena {
       this.emitRoom(room);
       return;
     }
+    if (actor.staggered) {
+      actor.staggered = false;
+      room.log.push(`${actor.name} gục ngã và bỏ lượt (−50% DEF hết).`);
+      this.advance(room);
+      room.resolving = false;
+      this.emitRoom(room);
+      return;
+    }
     const foes = room.units.filter((unit) => unit.ownerId !== actor.ownerId && unit.hp > 0);
     const target = foes.find((unit) => unit.id === targetId) ?? foes[0];
     if (!target) {
@@ -901,12 +920,47 @@ export class Arena {
       return;
     }
     const skill = action === 'skill' ? actor.skills[skillIndex] ?? actor.skills[0] : null;
-    const power = skill ? skill.power : 1;
-    const pierced = skill ? Math.floor(target.defense / 3) : Math.floor(target.defense / 2);
-    const damage = Math.max(1, Math.round(actor.attack * power) - pierced);
-    target.hp = Math.max(0, target.hp - damage);
-    const verb = skill ? `dùng ${skill.name} vào` : 'tấn công';
-    room.log.push(`${actor.name} ${verb} ${target.name}, gây ${damage} sát thương.`);
+    const result = strike(
+      {
+        name: actor.name,
+        attack: actor.attack,
+        defense: actor.defense,
+        level: actor.level,
+        armPen: actor.armPen,
+        res: actor.res,
+        critRate: actor.critRate,
+        critDamage: actor.critDamage,
+        eva: actor.eva,
+        acc: actor.acc,
+        tgh: actor.tgh,
+        maxTgh: actor.maxTgh,
+        staggered: actor.staggered,
+      },
+      {
+        name: target.name,
+        attack: target.attack,
+        defense: target.defense,
+        level: target.level,
+        armPen: target.armPen,
+        res: target.res,
+        critRate: target.critRate,
+        critDamage: target.critDamage,
+        eva: target.eva,
+        acc: target.acc,
+        tgh: target.tgh,
+        maxTgh: target.maxTgh,
+        staggered: target.staggered,
+      },
+      action,
+      'attack',
+      Math.random,
+      skill ? { power: skill.power, skillName: skill.name } : undefined,
+    );
+    target.hp = Math.max(0, target.hp - (result.damage || 0));
+    target.tgh = result.tgh;
+    target.maxTgh = result.maxTgh;
+    if (result.staggered) target.staggered = true;
+    room.log.push(result.text);
 
     const owners = [...new Set(room.units.map((unit) => unit.ownerId))];
     const livingOwners = owners.filter((id) => room.units.some((unit) => unit.ownerId === id && unit.hp > 0));
@@ -971,21 +1025,32 @@ export class Arena {
 
   /** Next living unit in this round, or a fresh speed order when the round ends. */
   private advance(room: Room) {
+    const take = (unit: CombatUnit, preface?: string) => {
+      if (unit.staggered) {
+        unit.staggered = false;
+        room.log.push(`${preface ? `${preface} ` : ''}${unit.name} gục ngã và bỏ lượt (−50% DEF hết).`);
+        return false;
+      }
+      room.turnId = unit.id;
+      room.deadline = Date.now() + TURN_MS;
+      room.log.push(`${preface ? `${preface} ` : ''}Tới lượt ${unit.name}.`);
+      return true;
+    };
     const start = room.order.indexOf(room.turnId);
     for (let step = start + 1; step < room.order.length; step += 1) {
       const unit = room.units.find((entry) => entry.id === room.order[step]);
       if (!unit || unit.hp <= 0) continue;
-      room.turnId = unit.id;
-      room.deadline = Date.now() + TURN_MS;
-      room.log.push(`Tới lượt ${unit.name}.`);
-      return;
+      if (take(unit)) return;
     }
     room.round += 1;
     room.order = duelOrder(room.units, room.round);
+    for (const id of room.order) {
+      const unit = room.units.find((entry) => entry.id === id);
+      if (!unit || unit.hp <= 0) continue;
+      if (take(unit, `Hiệp ${room.round}.`)) return;
+    }
     room.turnId = room.order[0] ?? room.turnId;
     room.deadline = Date.now() + TURN_MS;
-    const actor = room.units.find((unit) => unit.id === room.turnId);
-    room.log.push(`Hiệp ${room.round}. Tới lượt ${actor?.name ?? 'người chơi'}.`);
   }
 
   private async finish(room: Room, winnerId: string | null) {
@@ -1410,6 +1475,7 @@ function present(fighter: Fighter, room: Room): FighterView {
 function unitsFor(fighter: Fighter): CombatUnit[] {
   const level = fighter.level;
   const maxMp = Math.max(10, level * 8);
+  const heroAdv = advancedAtLevel(level, 'hero');
   const hero: CombatUnit = {
     id: fighter.userId,
     ownerId: fighter.userId,
@@ -1428,6 +1494,14 @@ function unitsFor(fighter: Fighter): CombatUnit[] {
       { name: 'Kỹ năng 1', power: 1.55 },
       { name: 'Kỹ năng 2', power: 1.85 },
     ],
+    tgh: heroAdv.maxTgh,
+    maxTgh: heroAdv.maxTgh,
+    armPen: heroAdv.armPen,
+    res: heroAdv.res,
+    critRate: heroAdv.critRate,
+    critDamage: heroAdv.critDamage,
+    eva: heroAdv.eva,
+    acc: heroAdv.acc,
   };
   const pets = (fighter.pets ?? []).slice(0, 3).flatMap((pet, index) => {
     const petLevel = clampStat(pet.level, 1, 200);
@@ -1435,6 +1509,7 @@ function unitsFor(fighter: Fighter): CombatUnit[] {
     const hp = clampStat(Math.min(pet.hp, petMax), 0, petMax);
     if (hp <= 0) return [];
     const petMp = Math.max(8, petLevel * 4);
+    const petAdv = advancedAtLevel(petLevel, 'pet');
     const card: CombatUnit = {
       id: `${fighter.userId}:pet:${index}`,
       ownerId: fighter.userId,
@@ -1453,6 +1528,14 @@ function unitsFor(fighter: Fighter): CombatUnit[] {
         { name: 'Kỹ năng 1', power: 1.35 },
         { name: 'Kỹ năng 2', power: 1.6 },
       ],
+      tgh: petAdv.maxTgh,
+      maxTgh: petAdv.maxTgh,
+      armPen: petAdv.armPen,
+      res: petAdv.res,
+      critRate: petAdv.critRate,
+      critDamage: petAdv.critDamage,
+      eva: petAdv.eva,
+      acc: petAdv.acc,
     };
     return [card];
   });
@@ -1494,6 +1577,9 @@ function toUnitView(unit: CombatUnit, viewerId: string): DuelUnitView {
     defense: unit.defense,
     speed: unit.speed,
     side: unit.ownerId === viewerId ? 'you' : 'opponent',
+    tgh: unit.tgh,
+    maxTgh: unit.maxTgh,
+    staggered: Boolean(unit.staggered),
   };
 }
 

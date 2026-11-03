@@ -1,3 +1,11 @@
+import {
+  isArmorBreakSkill,
+  monsterAdvanced,
+  resolveStatusApplication,
+  startingToughness,
+  toughnessDamage,
+  type StatusId,
+} from './combat/advanced';
 import { finalDamage, type DamageResult } from './combat/damage';
 import { combatElement, type ElementId } from './combat/elements';
 import { applyMastery, classCatalog, heroTraits, masteryOf, monsterCatalog, resolvePetLoadout, rollHeroKit, rollMonsterKit } from './combat/kits';
@@ -29,6 +37,16 @@ export type Fighter = {
   critRate: number;
   critDamage: number;
   element: ElementId;
+  tgh: number;
+  maxTgh: number;
+  armPen: number;
+  res: number;
+  eva: number;
+  acc: number;
+  /** Staggered fighters skip their next turn and take −50% DEF until then. */
+  staggered?: boolean;
+  /** Live status effects. Duration is remaining turns. */
+  statuses?: { id: StatusId; turns: number }[];
   /** The basic attack used in this fight. Heroes choose it before battle. */
   basic: Skill;
   /** Class basics offered on the setup screen. Monsters keep the one they rolled. */
@@ -58,6 +76,14 @@ export type TamedMonster = {
   attack: number;
   defense: number;
   speed: number;
+  tgh?: number;
+  maxTgh?: number;
+  armPen?: number;
+  res?: number;
+  critRate?: number;
+  critDamage?: number;
+  eva?: number;
+  acc?: number;
   /** Chosen in Kỹ Năng. Missing values use the roll from this monster's id. */
   basicId?: string;
   skillIds?: string[];
@@ -253,6 +279,12 @@ export function makePlayer(input: {
     critRate: traits.critRate,
     critDamage: traits.critDamage,
     element: traits.element,
+    tgh: pace.tgh,
+    maxTgh: pace.maxTgh,
+    armPen: traits.armPen,
+    res: traits.res,
+    eva: traits.eva,
+    acc: traits.acc,
     basic,
     basics: catalog.basics,
     skills,
@@ -267,6 +299,7 @@ export function makeWild(card: Encounter): Fighter {
   const kindId = card.kindId ?? card.id;
   const maxMp = monsterMana(kindId, card.level);
   const kit = rollMonsterKit(kindId, card.id);
+  const advanced = monsterAdvanced(card.level, Boolean(card.elite));
   return {
     id: card.id,
     name: card.name,
@@ -282,9 +315,15 @@ export function makeWild(card: Encounter): Fighter {
     attack: card.attack,
     defense: card.defense,
     speed: card.speed ?? 46 + card.level,
-    critRate: card.elite ? 0.12 : 0.08,
-    critDamage: 1.5,
+    critRate: advanced.critRate,
+    critDamage: advanced.critDamage,
     element: combatElement(kindId),
+    tgh: advanced.maxTgh,
+    maxTgh: advanced.maxTgh,
+    armPen: advanced.armPen,
+    res: advanced.res,
+    eva: advanced.eva,
+    acc: advanced.acc,
     basic: kit.basic,
     basics: [kit.basic],
     skills: kit.skills,
@@ -306,6 +345,17 @@ export function makeAlly(monster: TamedMonster): Fighter {
   const skills = loadout.skillIds
     .map((id) => petCatalog.skills.find((skill) => skill.id === id))
     .filter((skill): skill is Skill => Boolean(skill));
+  const advanced = monsterAdvanced(level, false);
+  const toughness = startingToughness({
+    maxTgh: monster.maxTgh ?? advanced.maxTgh,
+    tgh: monster.tgh,
+    armPen: monster.armPen,
+    res: monster.res,
+    critRate: monster.critRate,
+    critDamage: monster.critDamage,
+    eva: monster.eva,
+    acc: monster.acc,
+  });
   return {
     id: `ally-${monster.id}`,
     name: monster.name,
@@ -322,9 +372,15 @@ export function makeAlly(monster: TamedMonster): Fighter {
     defense: monster.defense || 1,
     speed: monster.speed || 48 + level,
     exp: monster.exp,
-    critRate: 0.08,
-    critDamage: 1.5,
+    critRate: monster.critRate ?? advanced.critRate,
+    critDamage: monster.critDamage ?? advanced.critDamage,
     element: combatElement(monster.kindId),
+    tgh: toughness.tgh,
+    maxTgh: toughness.maxTgh,
+    armPen: monster.armPen ?? advanced.armPen,
+    res: monster.res ?? advanced.res,
+    eva: monster.eva ?? advanced.eva,
+    acc: monster.acc ?? advanced.acc,
     basic,
     basics: [basic],
     skills: skills.length === 2 ? skills : kit.skills,
@@ -391,10 +447,9 @@ export function actAlly(state: BattleState, foeId: string | null, skillId: strin
   }
   const foe = state.foes.find((entry) => entry.id === foeId && entry.hp > 0);
   if (!foe) return { ...state, log: 'Hãy chọn một quái còn sống.' };
-  const hit = deal(ready, foe, skill ? skill.power : ready.basic.power);
-  const hurt = { ...foe, hp: Math.max(0, foe.hp - hit.damage) };
+  const strike = resolveStrike(ready, foe, skill ? skill.power : ready.basic.power, skill?.name);
   const name = skill ? skill.name : ready.basic.name;
-  return after(replace(replace(state, ready), hurt), ready.id, `${ready.name} dùng ${name}, gây ${hitText(hit)} sát thương lên ${foe.name}.`);
+  return after(replace(replace(state, ready), strike.target), ready.id, `${ready.name} dùng ${name}. ${strikeText(strike, foe.name)}`);
 }
 
 export function actItem(state: BattleState, itemId: ItemId): BattleState {
@@ -450,6 +505,14 @@ export function actTame(state: BattleState, foeId: string, bonuses: number[], ro
     attack: foe.attack,
     defense: foe.defense,
     speed: foe.speed,
+    tgh: foe.maxTgh || foe.tgh,
+    maxTgh: foe.maxTgh,
+    armPen: foe.armPen,
+    res: foe.res,
+    critRate: foe.critRate,
+    critDamage: foe.critDamage,
+    eva: foe.eva,
+    acc: foe.acc,
     evoStage: 0,
   };
   const foes = state.foes.map((entry) => (entry.id === foe.id ? { ...entry, hp: 0 } : entry));
@@ -487,10 +550,9 @@ export function actAuto(state: BattleState, allowAlly = false): BattleState {
   const pool = actor.side === 'wild' ? friendlies(state) : state.foes;
   const target = weakest(pool);
   if (!target) return after(replace(state, spent), spent.id, state.log);
-  const hit = deal(spent, target, skill ? skill.power : spent.basic.power);
-  const hurt = { ...target, hp: Math.max(0, target.hp - hit.damage) };
+  const strike = resolveStrike(spent, target, skill ? skill.power : spent.basic.power, skill?.name);
   const name = skill ? skill.name : spent.basic.name;
-  return after(replace(replace(state, spent), hurt), spent.id, `${spent.name} dùng ${name}, gây ${hitText(hit)} sát thương lên ${target.name}.`);
+  return after(replace(replace(state, spent), strike.target), spent.id, `${spent.name} dùng ${name}. ${strikeText(strike, target.name)}`);
 }
 
 /** Auto-battle for the player: heal when low, otherwise the strongest ready skill. */
@@ -604,10 +666,10 @@ function strikeFoe(state: BattleState, foeId: string | null, skillId: string | n
   }
   const foe = state.foes.find((entry) => entry.id === foeId && entry.hp > 0);
   if (!foe) return { ...state, log: 'Hãy chọn một quái còn sống.' };
-  const hit = deal(player, foe, skill ? skill.power : player.basic.power);
-  const foes = state.foes.map((entry) => (entry.id === foe.id ? { ...entry, hp: Math.max(0, entry.hp - hit.damage) } : entry));
+  const strike = resolveStrike(player, foe, skill ? skill.power : player.basic.power, skill?.name);
+  const foes = state.foes.map((entry) => (entry.id === foe.id ? strike.target : entry));
   const label = skill ? skill.name : player.basic.name;
-  return after({ ...state, player, foes }, 'player', `${label} gây ${hitText(hit)} sát thương lên ${foe.name}.`);
+  return after({ ...state, player, foes }, 'player', `${label}. ${strikeText(strike, foe.name)}`);
 }
 
 function isPlayerTurn(state: BattleState): boolean {
@@ -646,20 +708,79 @@ function weakest(fighters: Fighter[]): Fighter | undefined {
     .sort((a, b) => a.hp / Math.max(1, a.maxHp) - b.hp / Math.max(1, b.maxHp) || a.id.localeCompare(b.id))[0];
 }
 
+type StrikeOutcome = {
+  hit: DamageResult;
+  target: Fighter;
+  staggered: boolean;
+};
+
+function livingDefense(fighter: Fighter): number {
+  const base = Number.isFinite(fighter.defense) ? fighter.defense : 0;
+  return fighter.staggered ? Math.max(0, Math.round(base * 0.5)) : base;
+}
+
 function deal(attacker: Fighter, defender: Fighter, multiplier: number): DamageResult {
   return finalDamage({
-    attack: attacker.attack,
-    multiplier,
-    critRate: attacker.critRate,
-    critDamage: attacker.critDamage,
+    attack: Number.isFinite(attacker.attack) ? attacker.attack : 0,
+    multiplier: Number.isFinite(multiplier) ? multiplier : 1,
+    critRate: attacker.critRate || 0,
+    critDamage: attacker.critDamage || 1.5,
     attackerElement: attacker.element,
     defenderElement: defender.element,
-    defense: defender.defense,
+    defense: livingDefense(defender),
+    armPen: attacker.armPen || 0,
+    acc: attacker.acc || 0.9,
+    eva: defender.eva || 0,
+    hitRoll: Math.random(),
     critRoll: Math.random(),
   });
 }
 
+function resolveStrike(attacker: Fighter, defender: Fighter, multiplier: number, skillName?: string): StrikeOutcome {
+  const hit = deal(attacker, defender, multiplier);
+  if (hit.miss) {
+    return { hit, target: defender, staggered: false };
+  }
+  let target: Fighter = {
+    ...defender,
+    hp: Math.max(0, defender.hp - hit.damage),
+  };
+  const armorBreak = isArmorBreakSkill(multiplier, skillName);
+  const chip = toughnessDamage(target.maxTgh || 100, {
+    weakness: hit.element === 2,
+    armorBreak,
+    skillPower: multiplier,
+  });
+  let staggered = false;
+  if (chip > 0) {
+    const nextTgh = Math.max(0, (Number.isFinite(target.tgh) ? target.tgh : target.maxTgh || 100) - chip);
+    if (nextTgh <= 0) {
+      staggered = true;
+      target = {
+        ...target,
+        tgh: target.maxTgh || 100,
+        staggered: true,
+      };
+    } else {
+      target = { ...target, tgh: nextTgh };
+    }
+  }
+  return { hit, target, staggered };
+}
+
+function strikeText(strike: StrikeOutcome, targetName: string): string {
+  if (strike.hit.miss) return `Trượt ${targetName}.`;
+  const notes: string[] = [];
+  if (strike.hit.crit) notes.push('chí mạng');
+  if (strike.hit.element === 2) notes.push('khắc hệ');
+  if (strike.hit.element === 0.5) notes.push('bị kháng');
+  if (strike.staggered) notes.push('gục ngã');
+  const suffix = notes.length ? ` (${notes.join(', ')})` : '';
+  return `Gây ${strike.hit.damage} sát thương lên ${targetName}${suffix}.`;
+}
+
 function hitText(hit: DamageResult): string {
+  if (hit.miss) return '0 (trượt)';
   const notes: string[] = [];
   if (hit.crit) notes.push('chí mạng');
   if (hit.element === 2) notes.push('khắc hệ');
@@ -668,23 +789,73 @@ function hitText(hit: DamageResult): string {
   return `${hit.damage}${suffix}`;
 }
 
+/** Public helper for status skills. RES lowers chance and duration. */
+export function tryApplyStatus(
+  target: Fighter,
+  status: StatusId,
+  chance: number,
+  duration: number,
+  roll = Math.random(),
+): { target: Fighter; applied: boolean } {
+  const result = resolveStatusApplication(chance, duration, target.res || 0, roll);
+  if (!result.applied) return { target, applied: false };
+  const others = (target.statuses ?? []).filter((entry) => entry.id !== status);
+  return {
+    applied: true,
+    target: { ...target, statuses: [...others, { id: status, turns: result.duration }] },
+  };
+}
+
 function everyone(state: BattleState): Fighter[] {
   return [state.player, ...state.allies, ...state.foes];
 }
 
+function clearStagger(fighter: Fighter): Fighter {
+  if (!fighter.staggered) return fighter;
+  return { ...fighter, staggered: false };
+}
+
+function tickStatuses(fighter: Fighter): Fighter {
+  if (!fighter.statuses?.length) return fighter;
+  const statuses = fighter.statuses
+    .map((entry) => ({ ...entry, turns: entry.turns - 1 }))
+    .filter((entry) => entry.turns > 0);
+  return { ...fighter, statuses };
+}
+
 function after(state: BattleState, actedId: string, log: string): BattleState {
-  const next = { ...state, log };
+  let next = { ...state, log };
+  const actor = unit(next, actedId);
+  if (actor) next = replace(next, tickStatuses(actor));
   const friends = friendlies(next).some((fighter) => fighter.hp > 0);
   if (!friends) return { ...next, over: 'lose' };
   if (next.foes.every((foe) => foe.hp <= 0)) return { ...next, over: 'win' };
+
+  const pickNext = (fromOrder: string[], fromIndex: number): BattleState | null => {
+    for (let step = fromIndex + 1; step < fromOrder.length; step += 1) {
+      const fighter = unit(next, fromOrder[step]);
+      if (!fighter || fighter.hp <= 0) continue;
+      if (fighter.staggered) {
+        next = replace(next, clearStagger(fighter));
+        next = {
+          ...next,
+          log: `${next.log} ${fighter.name} gục ngã và bỏ lượt (−50% DEF hết).`.trim(),
+        };
+        continue;
+      }
+      return { ...next, turnId: fighter.id };
+    }
+    return null;
+  };
+
   const start = next.order.indexOf(actedId);
   if (start >= 0) {
-    for (let step = start + 1; step < next.order.length; step += 1) {
-      const fighter = unit(next, next.order[step]);
-      if (fighter && fighter.hp > 0) return { ...next, turnId: fighter.id };
-    }
+    const found = pickNext(next.order, start);
+    if (found) return found;
   }
   const round = next.round + 1;
   const order = turnOrder(everyone(next), round);
+  const wrap = pickNext(order, -1);
+  if (wrap) return { ...wrap, round, order };
   return { ...next, round, order, turnId: order[0] ?? next.turnId };
 }

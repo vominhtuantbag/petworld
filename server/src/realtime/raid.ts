@@ -1,5 +1,7 @@
 import type { Server, Socket } from 'socket.io';
 
+import { advancedAtLevel } from '../combat/advanced.js';
+import { strike as resolveStrike } from '../combat/rules.js';
 import { GOLDEN_WINDOW_LABEL, goldenHourAt } from '../dungeon/schedule.js';
 import { raidPayout, type RaidPayout } from '../dungeon/rewards.js';
 import type { Arena } from './arena.js';
@@ -66,6 +68,15 @@ type Unit = {
   speed: number;
   tint: string;
   skills: [SkillCard, SkillCard];
+  tgh: number;
+  maxTgh: number;
+  armPen: number;
+  res: number;
+  critRate: number;
+  critDamage: number;
+  eva: number;
+  acc: number;
+  staggered?: boolean;
   baseAvatarId?: string;
   hairColor?: string;
   outfitColor?: string;
@@ -405,6 +416,12 @@ export class DungeonRaids {
   }
 
   private strike(room: RaidRoom, actor: Unit, action: 'attack' | 'skill', skillIndex: 0 | 1, targetId: string | undefined) {
+    if (actor.staggered) {
+      actor.staggered = false;
+      room.log.push(`${actor.name} gục ngã và bỏ lượt (−50% DEF hết).`);
+      this.advance(room);
+      return;
+    }
     const foes = foesOf(room.units, actor);
     const target = foes.find((unit) => unit.id === targetId) ?? preferred(foes, actor);
     if (!target) {
@@ -412,12 +429,19 @@ export class DungeonRaids {
       return;
     }
     const skill = action === 'skill' ? actor.skills[skillIndex] ?? actor.skills[0] : null;
-    const power = skill ? skill.power : 1;
-    const pierced = skill ? Math.floor(target.defense / 3) : Math.floor(target.defense / 2);
-    const damage = Math.max(1, Math.round(actor.attack * power) - pierced);
-    target.hp = Math.max(0, target.hp - damage);
-    const verb = skill ? `dùng ${skill.name} vào` : 'tấn công';
-    room.log.push(`${actor.name} ${verb} ${target.name}, gây ${damage} sát thương.`);
+    const result = resolveStrike(
+      strikerOf(actor),
+      strikerOf(target),
+      action,
+      'attack',
+      Math.random,
+      skill ? { power: skill.power, skillName: skill.name } : undefined,
+    );
+    target.hp = Math.max(0, target.hp - (result.damage || 0));
+    target.tgh = result.tgh;
+    target.maxTgh = result.maxTgh;
+    if (result.staggered) target.staggered = true;
+    room.log.push(result.text);
     const heroesAlive = room.units.some((unit) => unit.kind === 'hero' && unit.hp > 0);
     const foesAlive = room.units.some((unit) => unit.kind !== 'hero' && unit.hp > 0);
     if (!foesAlive) {
@@ -432,22 +456,33 @@ export class DungeonRaids {
   }
 
   private advance(room: RaidRoom) {
+    const take = (unit: Unit, preface?: string) => {
+      if (unit.staggered) {
+        unit.staggered = false;
+        room.log.push(`${preface ? `${preface} ` : ''}${unit.name} gục ngã và bỏ lượt (−50% DEF hết).`);
+        return false;
+      }
+      room.turnId = unit.id;
+      room.deadline = Date.now() + (isNpc(unit) ? NPC_TURN_MS : TURN_MS);
+      room.log.push(`${preface ? `${preface} ` : ''}Tới lượt ${unit.name}.`);
+      return true;
+    };
     const start = room.order.indexOf(room.turnId);
     for (let step = start + 1; step < room.order.length; step += 1) {
       const unit = room.units.find((entry) => entry.id === room.order[step]);
       if (!unit || unit.hp <= 0) continue;
-      room.turnId = unit.id;
-      room.deadline = Date.now() + (isNpc(unit) ? NPC_TURN_MS : TURN_MS);
-      room.log.push(`Tới lượt ${unit.name}.`);
-      return;
+      if (take(unit)) return;
     }
     room.round += 1;
     room.order = speedOrder(room.units);
+    for (const id of room.order) {
+      const unit = room.units.find((entry) => entry.id === id);
+      if (!unit || unit.hp <= 0) continue;
+      if (take(unit, `Hiệp ${room.round}.`)) return;
+    }
     room.turnId = room.order[0] ?? room.turnId;
     const lead = room.units.find((unit) => unit.id === room.turnId);
     room.deadline = Date.now() + (lead && isNpc(lead) ? NPC_TURN_MS : TURN_MS);
-    const actor = room.units.find((unit) => unit.id === room.turnId);
-    room.log.push(`Hiệp ${room.round}. Tới lượt ${actor?.name ?? 'người chơi'}.`);
   }
 
   private finish(room: RaidRoom, victory: boolean) {
@@ -707,6 +742,7 @@ function slotView(member: Member, index: number): RaidSlotView {
 
 function heroUnit(member: Member, slot: number): Unit {
   const maxMp = Math.max(10, member.level * 8);
+  const advanced = advancedAtLevel(member.level, 'hero');
   return {
     id: member.userId,
     ownerId: member.userId,
@@ -726,6 +762,14 @@ function heroUnit(member: Member, slot: number): Unit {
       { name: 'Kỹ năng 1', power: 1.55 },
       { name: 'Kỹ năng 2', power: 1.85 },
     ],
+    tgh: advanced.maxTgh,
+    maxTgh: advanced.maxTgh,
+    armPen: advanced.armPen,
+    res: advanced.res,
+    critRate: advanced.critRate,
+    critDamage: advanced.critDamage,
+    eva: advanced.eva,
+    acc: advanced.acc,
     baseAvatarId: member.baseAvatarId,
     hairColor: member.hairColor,
     outfitColor: member.outfitColor,
@@ -736,27 +780,39 @@ function foeUnits(level: number): Unit[] {
   const addHp = 55 + level * 16;
   const addAtk = 8 + level * 3;
   const addDef = 4 + level;
-  const add = (slot: number, name: string, tint: string): Unit => ({
-    id: `foe:${slot + 1}`,
-    ownerId: null,
-    name,
-    kind: 'monster',
-    slot,
-    level,
-    hp: addHp,
-    maxHp: addHp,
-    mp: 20 + level * 2,
-    maxMp: 20 + level * 2,
-    attack: addAtk,
-    defense: addDef,
-    speed: 82 + level,
-    tint,
-    skills: [
-      { name: 'Kỹ năng 1', power: 1.2 },
-      { name: 'Kỹ năng 2', power: 1.35 },
-    ],
-  });
+  const add = (slot: number, name: string, tint: string, elite = false): Unit => {
+    const advanced = advancedAtLevel(level, elite ? 'elite' : 'pet');
+    return {
+      id: `foe:${slot + 1}`,
+      ownerId: null,
+      name,
+      kind: 'monster',
+      slot,
+      level,
+      hp: addHp,
+      maxHp: addHp,
+      mp: 20 + level * 2,
+      maxMp: 20 + level * 2,
+      attack: addAtk,
+      defense: addDef,
+      speed: 82 + level,
+      tint,
+      skills: [
+        { name: 'Kỹ năng 1', power: 1.2 },
+        { name: 'Kỹ năng 2', power: 1.35 },
+      ],
+      tgh: advanced.maxTgh,
+      maxTgh: advanced.maxTgh,
+      armPen: advanced.armPen,
+      res: advanced.res,
+      critRate: advanced.critRate,
+      critDamage: advanced.critDamage,
+      eva: advanced.eva,
+      acc: advanced.acc,
+    };
+  };
   const bossHp = Math.round(addHp * 2.5);
+  const bossAdv = advancedAtLevel(level, 'elite');
   const boss: Unit = {
     id: 'boss',
     ownerId: null,
@@ -776,8 +832,34 @@ function foeUnits(level: number): Unit[] {
       { name: 'Kỹ năng 1', power: 1.4 },
       { name: 'Kỹ năng 2', power: 1.7 },
     ],
+    tgh: bossAdv.maxTgh,
+    maxTgh: bossAdv.maxTgh,
+    armPen: bossAdv.armPen,
+    res: bossAdv.res,
+    critRate: bossAdv.critRate,
+    critDamage: bossAdv.critDamage,
+    eva: bossAdv.eva,
+    acc: bossAdv.acc,
   };
   return [add(0, 'Quái hầm ngục', '#8a5a42'), add(1, 'Quái hầm ngục', '#6a4a38'), boss];
+}
+
+function strikerOf(unit: Unit) {
+  return {
+    name: unit.name,
+    attack: unit.attack,
+    defense: unit.defense,
+    level: unit.level,
+    armPen: unit.armPen,
+    res: unit.res,
+    critRate: unit.critRate,
+    critDamage: unit.critDamage,
+    eva: unit.eva,
+    acc: unit.acc,
+    tgh: unit.tgh,
+    maxTgh: unit.maxTgh,
+    staggered: unit.staggered,
+  };
 }
 
 function isNpc(unit: Unit): boolean {
@@ -833,6 +915,9 @@ function toView(unit: Unit): RaidUnitView {
     baseAvatarId: unit.baseAvatarId,
     hairColor: unit.hairColor,
     outfitColor: unit.outfitColor,
+    tgh: unit.tgh,
+    maxTgh: unit.maxTgh,
+    staggered: Boolean(unit.staggered),
   };
 }
 

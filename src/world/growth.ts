@@ -10,6 +10,8 @@
  * remain for older callers.
  */
 
+import { heroAdvanced, monsterAdvanced } from './combat/advanced';
+
 export const CLASS_SKILL_SLOTS = 2;
 export const CLASS_SKILLS_UNLOCKED = 1;
 export const CLASS_SECOND_SKILL_LEVEL = 8;
@@ -29,6 +31,14 @@ export type CharacterCombatStats = {
   attack: number;
   defense: number;
   speed: number;
+  tgh: number;
+  maxTgh: number;
+  armPen: number;
+  res: number;
+  critRate: number;
+  critDamage: number;
+  eva: number;
+  acc: number;
 };
 
 export type MonsterCombatStats = {
@@ -40,6 +50,14 @@ export type MonsterCombatStats = {
   defense: number;
   speed: number;
   element: MonsterElement;
+  tgh: number;
+  maxTgh: number;
+  armPen: number;
+  res: number;
+  critRate: number;
+  critDamage: number;
+  eva: number;
+  acc: number;
 };
 
 type Curve = {
@@ -87,6 +105,7 @@ function step(base: number, per: number, level: number): number {
 export function professionPools(professionId: string | undefined, level: number): CharacterCombatStats {
   const curve = CURVES[professionId ?? ''] ?? CURVES.wanderer;
   const lv = Math.max(1, level);
+  const advanced = heroAdvanced(professionId, lv);
   return {
     lv,
     exp: 0,
@@ -96,6 +115,14 @@ export function professionPools(professionId: string | undefined, level: number)
     attack: step(curve.attack, curve.attackPer, lv),
     defense: step(curve.defense, curve.defensePer, lv),
     speed: step(curve.speed, curve.speedPer, lv),
+    tgh: advanced.maxTgh,
+    maxTgh: advanced.maxTgh,
+    armPen: advanced.armPen,
+    res: advanced.res,
+    critRate: advanced.critRate,
+    critDamage: advanced.critDamage,
+    eva: advanced.eva,
+    acc: advanced.acc,
   };
 }
 

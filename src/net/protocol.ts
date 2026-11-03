@@ -97,6 +97,9 @@ export type DuelUnitView = {
   defense: number;
   speed: number;
   side: 'you' | 'opponent';
+  tgh?: number;
+  maxTgh?: number;
+  staggered?: boolean;
 };
 
 export type FighterView = {
@@ -230,6 +233,9 @@ export type RaidUnitView = {
   baseAvatarId?: string;
   hairColor?: string;
   outfitColor?: string;
+  tgh?: number;
+  maxTgh?: number;
+  staggered?: boolean;
 };
 
 export type RaidRewardView = {

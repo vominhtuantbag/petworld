@@ -17,6 +17,7 @@ import { CHUNK_SIZE, hashString, mulberry32, SECTOR_SIZE, TIER_MAP_H, TIER_MAP_W
 import { generateDesert, DESERT_SAND, desertNeedsDressing } from './desertDecor';
 import { omitHazardsOnPads } from './hazards';
 import { locomotion } from './gait';
+import { monsterAdvanced } from './combat/advanced';
 import { monsterMana } from './growth';
 import { ITEMS } from './items';
 import { withGroundLoot } from './scatterLoot';
@@ -106,12 +107,21 @@ export function fieldNeedsRebuild(field: FieldState): boolean {
 
 export function monsterStats(kind: MonsterSpecies, level: number) {
   const steps = Math.max(0, level - 1);
+  const advanced = monsterAdvanced(level, false);
   return {
     hp: kind.hp + steps * (8 + Math.floor(level / 12)),
     mp: monsterMana(kind.id, level),
     attack: kind.attack + Math.floor(steps * 1.6),
     defense: kind.defense + Math.floor(steps * 0.85),
     agro: kind.agro + Math.min(90, Math.floor(level * 1.1)),
+    tgh: advanced.maxTgh,
+    maxTgh: advanced.maxTgh,
+    armPen: advanced.armPen,
+    res: advanced.res,
+    critRate: advanced.critRate,
+    critDamage: advanced.critDamage,
+    eva: advanced.eva,
+    acc: advanced.acc,
   };
 }
 

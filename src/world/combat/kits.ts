@@ -9,30 +9,30 @@
  */
 
 import { hashString, mulberry32 } from '../grid';
+import { heroAdvanced, type AdvancedStats } from './advanced';
 import { combatElement, type ElementId } from './elements';
 import type { HeroStats } from './model';
 import type { Skill } from './model';
 
 export type SpeciesId = 'beast' | 'bug' | 'reptile' | 'avian' | 'aquatic' | 'spirit';
 
-export type HeroTraits = HeroStats & {
-  element: ElementId;
-  critRate: number;
-  critDamage: number;
-};
+export type HeroTraits = HeroStats &
+  AdvancedStats & {
+    element: ElementId;
+  };
 
 const HERO_TRAITS: Record<string, HeroTraits> = {
-  guardian: { element: 'metal', critRate: 0.08, critDamage: 1.5, mastery: 0.12, initiative: true },
-  knight: { element: 'metal', critRate: 0.1, critDamage: 1.5, mastery: 0.1, initiative: true },
-  mage: { element: 'arcane', critRate: 0.14, critDamage: 1.5, mastery: 0.15, initiative: true },
-  healer: { element: 'light', critRate: 0.08, critDamage: 1.5, mastery: 0.1, initiative: true },
-  rogue: { element: 'dark', critRate: 0.22, critDamage: 1.5, mastery: 0.08, initiative: true },
-  bard: { element: 'dark', critRate: 0.2, critDamage: 1.5, mastery: 0.08, initiative: true },
-  archer: { element: 'wind', critRate: 0.18, critDamage: 1.5, mastery: 0.1, initiative: true },
-  ranger: { element: 'nature', critRate: 0.16, critDamage: 1.5, mastery: 0.14, initiative: true },
-  scout: { element: 'wind', critRate: 0.16, critDamage: 1.5, mastery: 0.1, initiative: true },
-  monk: { element: 'spirit', critRate: 0.12, critDamage: 1.5, mastery: 0.12, initiative: true },
-  wanderer: { element: 'earth', critRate: 0.12, critDamage: 1.5, mastery: 0.1, initiative: true },
+  guardian: { element: 'metal', mastery: 0.12, initiative: true, ...heroAdvanced('guardian') },
+  knight: { element: 'metal', mastery: 0.1, initiative: true, ...heroAdvanced('knight') },
+  mage: { element: 'arcane', mastery: 0.15, initiative: true, ...heroAdvanced('mage') },
+  healer: { element: 'light', mastery: 0.1, initiative: true, ...heroAdvanced('healer') },
+  rogue: { element: 'dark', mastery: 0.08, initiative: true, ...heroAdvanced('rogue') },
+  bard: { element: 'dark', mastery: 0.08, initiative: true, ...heroAdvanced('bard') },
+  archer: { element: 'wind', mastery: 0.1, initiative: true, ...heroAdvanced('archer') },
+  ranger: { element: 'nature', mastery: 0.14, initiative: true, ...heroAdvanced('ranger') },
+  scout: { element: 'wind', mastery: 0.1, initiative: true, ...heroAdvanced('scout') },
+  monk: { element: 'spirit', mastery: 0.12, initiative: true, ...heroAdvanced('monk') },
+  wanderer: { element: 'earth', mastery: 0.1, initiative: true, ...heroAdvanced('wanderer') },
 };
 
 function move(id: string, name: string, mana: number, power: number, cooldown: number): Skill {

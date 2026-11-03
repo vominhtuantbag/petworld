@@ -97,6 +97,8 @@ const gearSchema = z.object({
   plus: z.number().int().min(0).max(5),
 });
 
+const rateSchema = z.number().min(0).max(3).optional();
+
 const tamedSchema = z.object({
   id: z.string().regex(/^[a-z0-9:_-]{1,80}$/i),
   kindId: z.string().regex(/^[a-z0-9:_-]{1,80}$/i),
@@ -114,6 +116,14 @@ const tamedSchema = z.object({
   basicId: z.string().regex(/^[a-z0-9:_-]{1,80}$/i).optional(),
   skillIds: z.array(z.string().regex(/^[a-z0-9:_-]{1,80}$/i)).max(4).optional(),
   evoStage: z.number().int().min(0).max(2).optional(),
+  tgh: z.number().int().min(0).max(99_999).optional(),
+  maxTgh: z.number().int().min(1).max(99_999).optional(),
+  armPen: rateSchema,
+  res: rateSchema,
+  critRate: rateSchema,
+  critDamage: rateSchema,
+  eva: rateSchema,
+  acc: rateSchema,
 });
 
 export const saveSchema = z.object({

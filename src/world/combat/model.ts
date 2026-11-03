@@ -19,8 +19,9 @@ export type Skill = {
 };
 
 /**
- * Eight stats carried by every fighter.
- * `critRate` is a fraction (0.15 is 15%). `critDamage` defaults to 1.5.
+ * Core stats carried by every fighter.
+ * Advanced combat rates are fractions (0.15 is 15%).
+ * `critDamage` defaults to 1.5. Toughness uses `tgh` / `maxTgh`.
  */
 export type CoreStats = {
   hp: number;
@@ -31,6 +32,17 @@ export type CoreStats = {
   critRate: number;
   critDamage: number;
   element: ElementId;
+  /** Current toughness. Breaks into Stagger at 0. */
+  tgh: number;
+  maxTgh: number;
+  /** Armor penetration fraction. */
+  armPen: number;
+  /** Status resistance fraction. */
+  res: number;
+  /** Evasion fraction. */
+  eva: number;
+  /** Accuracy fraction. */
+  acc: number;
 };
 
 /** Leadership stats. Only the hero uses them. */
