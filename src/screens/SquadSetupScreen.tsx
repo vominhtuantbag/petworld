@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AdvancedStatsGrid } from '../components/combat/AdvancedStatsGrid';
 import { monsterPortrait } from '../components/world/MonsterToken';
 import { getCharacter } from '../data/characters';
 import type { DuelPet } from '../net/protocol';
@@ -12,6 +13,7 @@ import { theme } from '../theme/theme';
 import { useLayout } from '../theme/useLayout';
 import { SQUAD_ITEMS, classBasics } from '../world/combat';
 import { monsterCatalog, resolvePetLoadout } from '../world/combat/kits';
+import { petAdvancedView } from '../world/combat/statView';
 import { ITEMS } from '../world/items';
 import type { ItemId } from '../world/types';
 
@@ -184,6 +186,7 @@ export function SquadSetupScreen() {
                       <Text style={[styles.copy, { fontSize: font(11) }]} numberOfLines={1}>
                         {basic.name} · {skills.map((skill) => skill.name).join(' · ')}
                       </Text>
+                      <AdvancedStatsGrid stats={petAdvancedView(monster)} font={font} compact />
                     </View>
                   </Pressable>
                 );

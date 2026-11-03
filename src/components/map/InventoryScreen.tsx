@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Image, PanResponder, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { AdvancedStatsGrid } from '../combat/AdvancedStatsGrid';
 import { CharacterAvatar } from '../CharacterAvatar';
 import { monsterPortrait } from '../world/MonsterToken';
 import { getCharacter, getProfession } from '../../data/characters';
@@ -18,6 +19,7 @@ import {
   type HeroSkillLoadout,
 } from '../../world/combat/kits';
 import type { Skill } from '../../world/combat/model';
+import { heroAdvancedView, petAdvancedView } from '../../world/combat/statView';
 import {
   BAG_COLUMNS,
   BAG_ROWS,
@@ -391,6 +393,9 @@ function CharacterPane({
   const atk = pet ? pet.attack : attack;
   const def = pet ? pet.defense : defense;
   const spd = pet ? pet.speed : speed;
+  const advanced = pet
+    ? petAdvancedView(pet)
+    : heroAdvancedView(professionId, level);
   const fz = (size: number) => Math.max(8, font(compact ? size - 1 : size));
   const avatarSize =
     artBox.w > 0 && artBox.h > 0
@@ -447,27 +452,30 @@ function CharacterPane({
           <Text style={[styles.arrowLabel, { fontSize: fz(16) }]}>›</Text>
         </Pressable>
       </View>
-      <Text style={[styles.heroName, { fontSize: fz(12) }]} numberOfLines={1}>
-        {title} · {subtitle}
-      </Text>
-      <View style={styles.bars}>
-        {bars.map((bar) => (
-          <VitalBar key={bar.label} {...bar} height={barH} font={fz} />
-        ))}
-      </View>
-      <Text style={[styles.statLine, { fontSize: fz(10) }]} numberOfLines={1}>
-        Tấn công {atk} · Thủ {def} · Tốc {spd}
-      </Text>
-      <View style={styles.skillBox}>
-        <Text style={[styles.skillLine, { fontSize: fz(10) }]} numberOfLines={1}>
-          <Text style={styles.skillHead}>Đòn thường  </Text>
-          {kit.basic?.name ?? '—'}
+      <ScrollView style={styles.paneScroll} contentContainerStyle={styles.paneScrollBody} showsVerticalScrollIndicator={false}>
+        <Text style={[styles.heroName, { fontSize: fz(12) }]} numberOfLines={1}>
+          {title} · {subtitle}
         </Text>
-        <Text style={[styles.skillLine, { fontSize: fz(10) }]} numberOfLines={1}>
-          <Text style={styles.skillHead}>Kỹ năng  </Text>
-          {kit.skills.length ? kit.skills.map((skill) => skill.name).join(' · ') : '—'}
+        <View style={styles.bars}>
+          {bars.map((bar) => (
+            <VitalBar key={bar.label} {...bar} height={barH} font={fz} />
+          ))}
+        </View>
+        <Text style={[styles.statLine, { fontSize: fz(10) }]} numberOfLines={1}>
+          Tấn công {atk} · Thủ {def} · Tốc {spd}
         </Text>
-      </View>
+        <AdvancedStatsGrid stats={advanced} font={font} compact={compact} />
+        <View style={styles.skillBox}>
+          <Text style={[styles.skillLine, { fontSize: fz(10) }]} numberOfLines={1}>
+            <Text style={styles.skillHead}>Đòn thường  </Text>
+            {kit.basic?.name ?? '—'}
+          </Text>
+          <Text style={[styles.skillLine, { fontSize: fz(10) }]} numberOfLines={1}>
+            <Text style={styles.skillHead}>Kỹ năng  </Text>
+            {kit.skills.length ? kit.skills.map((skill) => skill.name).join(' · ') : '—'}
+          </Text>
+        </View>
+      </ScrollView>
     </View>
   );
 }
@@ -782,6 +790,8 @@ const styles = StyleSheet.create({
   area3: { position: 'relative' },
   areaTitle: { color: theme.gold, fontWeight: '800', alignSelf: 'flex-start' },
   pane: { flex: 1, minWidth: 0, minHeight: 0, gap: 3 },
+  paneScroll: { flex: 1, minHeight: 0 },
+  paneScrollBody: { gap: 3, paddingBottom: 4 },
   switchRow: { flex: 1, flexDirection: 'row', alignItems: 'stretch', justifyContent: 'space-between', gap: 4, minHeight: 0 },
   arrow: {
     width: 26,

@@ -1,11 +1,13 @@
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { AdvancedStatsGrid } from '../combat/AdvancedStatsGrid';
 import { monsterPortrait } from '../world/MonsterToken';
 import { useWorld } from '../../state/WorldContext';
 import { theme } from '../../theme/theme';
 import { useLayout } from '../../theme/useLayout';
 import type { TamedMonster } from '../../world/combat';
 import { monsterCatalog, resolvePetLoadout } from '../../world/combat/kits';
+import { petAdvancedView } from '../../world/combat/statView';
 import { collectionSpecies, type CollectionSpecies } from '../../world/collection';
 
 type Props = { onClose: () => void };
@@ -46,6 +48,16 @@ export function CollectionModal({ onClose }: Props) {
 
 function SpeciesCard({ entry, caught, seen, font }: { entry: CollectionSpecies; caught: boolean; seen: boolean; font: (size: number) => number }) {
   const art = monsterPortrait(entry.id);
+  const advanced = {
+    tgh: entry.tgh,
+    maxTgh: entry.maxTgh,
+    armPen: entry.armPen,
+    res: entry.res,
+    critRate: entry.critRate,
+    critDamage: entry.critDamage,
+    eva: entry.eva,
+    acc: entry.acc,
+  };
   return (
     <View style={styles.card}>
       <View style={[styles.avatar, { backgroundColor: entry.tint }]}>
@@ -68,6 +80,7 @@ function SpeciesCard({ entry, caught, seen, font }: { entry: CollectionSpecies; 
         <Text style={[styles.copy, { fontSize: font(11) }]} numberOfLines={2}>
           {entry.skills.join(' · ')}
         </Text>
+        <AdvancedStatsGrid stats={advanced} font={font} compact />
       </View>
     </View>
   );
@@ -81,6 +94,7 @@ function Card({ monster, font }: { monster: TamedMonster; font: (size: number) =
   const loadout = resolvePetLoadout(monster);
   const basic = book.basics.find((skill) => skill.id === loadout.basicId) ?? book.basics[0];
   const skills = loadout.skillIds.map((id) => book.skills.find((skill) => skill.id === id)).filter((skill) => skill != null);
+  const advanced = petAdvancedView(monster);
   return (
     <View style={styles.card}>
       <View style={[styles.avatar, { backgroundColor: monster.tint }]}>
@@ -98,7 +112,7 @@ function Card({ monster, font }: { monster: TamedMonster; font: (size: number) =
           Đã thu phục
         </Text>
         <Text style={[styles.copy, { fontSize: font(11) }]} numberOfLines={1}>
-          Cấp {monster.level} · EXP {monster.exp}
+          Cấp {monster.level} · EXP {monster.exp} · Công {monster.attack} · Thủ {monster.defense}
         </Text>
         <Text style={[styles.copy, { fontSize: font(11) }]} numberOfLines={1}>
           Máu {hp}/{monster.maxHp} · Mana {mp}/{monster.maxMp}
@@ -106,6 +120,7 @@ function Card({ monster, font }: { monster: TamedMonster; font: (size: number) =
         <Text style={[styles.copy, { fontSize: font(11) }]} numberOfLines={2}>
           {basic.name} · {skills.map((skill) => skill.name).join(' · ')}
         </Text>
+        <AdvancedStatsGrid stats={advanced} font={font} compact />
       </View>
     </View>
   );
@@ -130,7 +145,7 @@ const styles = StyleSheet.create({
   copy: { color: theme.muted },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingBottom: 8 },
   card: {
-    width: 280,
+    width: 320,
     maxWidth: '48%',
     flexGrow: 1,
     flexDirection: 'row',

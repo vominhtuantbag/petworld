@@ -120,8 +120,12 @@ export function monsterAdvanced(level: number, eliteOrOptions: boolean | Monster
     acc: base.acc + steps * 0.0005 + zone * 0.003 + (elite ? 0.02 : 0),
   });
   if (!options.overrides) return grown;
-  const patch = normalizeAdvanced({ ...grown, ...options.overrides });
-  return patch;
+  const patch: AdvancedInput = { ...grown };
+  for (const [key, value] of Object.entries(options.overrides)) {
+    if (value == null || (typeof value === 'number' && !Number.isFinite(value))) continue;
+    (patch as Record<string, unknown>)[key] = value;
+  }
+  return normalizeAdvanced(patch);
 }
 
 export function normalizeAdvanced(input?: AdvancedInput | null): AdvancedStats {
