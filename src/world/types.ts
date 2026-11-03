@@ -177,6 +177,15 @@ export type MonsterActor = {
   defense: number;
   agro: number;
   speed: number;
+  /** Advanced combat rates. Always set for Map-1 fauna; fallbacks exist in battle. */
+  tgh: number;
+  maxTgh: number;
+  armPen: number;
+  res: number;
+  critRate: number;
+  critDamage: number;
+  eva: number;
+  acc: number;
   bounds: Rect;
   homeX: number;
   homeY: number;
@@ -324,6 +333,15 @@ export type Encounter = {
   /** Species id used to pick the wild skill pair. Falls back to `id`. */
   kindId?: string;
   speed?: number;
+  /** Optional advanced rates. Missing values resolve from species role + level. */
+  tgh?: number;
+  maxTgh?: number;
+  armPen?: number;
+  res?: number;
+  critRate?: number;
+  critDamage?: number;
+  eva?: number;
+  acc?: number;
   /** Nearby monsters the player chooses from. The battle uses exactly three. */
   pool?: Encounter[];
   /** One foe. The wild court does not pad this fight out to a pack. */

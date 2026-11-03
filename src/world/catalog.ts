@@ -107,13 +107,18 @@ export function fieldNeedsRebuild(field: FieldState): boolean {
 
 export function monsterStats(kind: MonsterSpecies, level: number) {
   const steps = Math.max(0, level - 1);
-  const advanced = monsterAdvanced(level, false);
+  const advanced = monsterAdvanced(level, {
+    role: kind.role,
+    zone: kind.zone,
+    overrides: kind.advanced,
+  });
   return {
     hp: kind.hp + steps * (8 + Math.floor(level / 12)),
     mp: monsterMana(kind.id, level),
     attack: kind.attack + Math.floor(steps * 1.6),
     defense: kind.defense + Math.floor(steps * 0.85),
     agro: kind.agro + Math.min(90, Math.floor(level * 1.1)),
+    /** Current toughness. Starts full; battle mutates this. */
     tgh: advanced.maxTgh,
     maxTgh: advanced.maxTgh,
     armPen: advanced.armPen,
@@ -122,6 +127,12 @@ export function monsterStats(kind: MonsterSpecies, level: number) {
     critDamage: advanced.critDamage,
     eva: advanced.eva,
     acc: advanced.acc,
+    /** Snake_case aliases for skill / data pipelines. */
+    arm_pen: advanced.armPen,
+    crit_rate: advanced.critRate,
+    crit_dmg: advanced.critDamage,
+    role: kind.role,
+    zone: kind.zone,
   };
 }
 
@@ -474,6 +485,14 @@ export function createChunk(field: FieldState, cx: number, cy: number): { monste
       defense: elite ? stats.defense + 4 : stats.defense,
       agro: elite ? stats.agro + 40 : stats.agro,
       speed: elite ? kind.speed * 0.85 : kind.speed,
+      tgh: elite ? Math.round(stats.maxTgh * 1.35) : stats.tgh,
+      maxTgh: elite ? Math.round(stats.maxTgh * 1.35) : stats.maxTgh,
+      armPen: Math.min(0.45, stats.armPen + (elite ? 0.04 : 0)),
+      res: Math.min(0.55, stats.res + (elite ? 0.05 : 0)),
+      critRate: Math.min(0.4, stats.critRate + (elite ? 0.03 : 0)),
+      critDamage: stats.critDamage + (elite ? 0.05 : 0),
+      eva: Math.min(0.35, stats.eva + (elite ? 0.02 : 0)),
+      acc: Math.min(0.99, stats.acc + (elite ? 0.02 : 0)),
       bounds,
       homeX: x,
       homeY: y,

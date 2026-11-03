@@ -25,6 +25,14 @@ export type CollectionSpecies = {
   attack: number;
   defense: number;
   speed: number;
+  tgh: number;
+  maxTgh: number;
+  armPen: number;
+  res: number;
+  critRate: number;
+  critDamage: number;
+  eva: number;
+  acc: number;
   skills: string[];
 };
 
@@ -44,6 +52,14 @@ export function collectionSpecies(): CollectionSpecies[] {
       attack: stats.attack,
       defense: stats.defense,
       speed: kind.speed,
+      tgh: stats.tgh,
+      maxTgh: stats.maxTgh,
+      armPen: stats.armPen,
+      res: stats.res,
+      critRate: stats.critRate,
+      critDamage: stats.critDamage,
+      eva: stats.eva,
+      acc: stats.acc,
       skills: [wildBasic(kind.id).name, ...wildSkills(kind.id, level).map((skill) => skill.name)],
     };
   });

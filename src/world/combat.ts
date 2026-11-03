@@ -13,6 +13,7 @@ import type { Skill } from './combat/model';
 import { turnOrder } from './combat/order';
 import { monsterMana, professionPools } from './growth';
 import { ITEMS, applyConsumable, removeOne } from './items';
+import { speciesById } from './monsters';
 import { expFromMonster } from './progression';
 import type { Encounter, ItemId, Stack, Vitals } from './types';
 
@@ -299,7 +300,24 @@ export function makeWild(card: Encounter): Fighter {
   const kindId = card.kindId ?? card.id;
   const maxMp = monsterMana(kindId, card.level);
   const kit = rollMonsterKit(kindId, card.id);
-  const advanced = monsterAdvanced(card.level, Boolean(card.elite));
+  const species = speciesById(kindId);
+  const advanced = monsterAdvanced(card.level, {
+    elite: Boolean(card.elite),
+    role: species?.role,
+    zone: species?.zone,
+    overrides: {
+      ...species?.advanced,
+      ...(Number.isFinite(card.maxTgh) ? { maxTgh: card.maxTgh } : null),
+      ...(Number.isFinite(card.armPen) ? { armPen: card.armPen } : null),
+      ...(Number.isFinite(card.res) ? { res: card.res } : null),
+      ...(Number.isFinite(card.critRate) ? { critRate: card.critRate } : null),
+      ...(Number.isFinite(card.critDamage) ? { critDamage: card.critDamage } : null),
+      ...(Number.isFinite(card.eva) ? { eva: card.eva } : null),
+      ...(Number.isFinite(card.acc) ? { acc: card.acc } : null),
+    },
+  });
+  const maxTgh = advanced.maxTgh;
+  const tgh = Number.isFinite(card.tgh) ? Math.max(0, Math.min(maxTgh, Number(card.tgh))) : maxTgh;
   return {
     id: card.id,
     name: card.name,
@@ -318,8 +336,8 @@ export function makeWild(card: Encounter): Fighter {
     critRate: advanced.critRate,
     critDamage: advanced.critDamage,
     element: combatElement(kindId),
-    tgh: advanced.maxTgh,
-    maxTgh: advanced.maxTgh,
+    tgh,
+    maxTgh,
     armPen: advanced.armPen,
     res: advanced.res,
     eva: advanced.eva,
@@ -345,16 +363,21 @@ export function makeAlly(monster: TamedMonster): Fighter {
   const skills = loadout.skillIds
     .map((id) => petCatalog.skills.find((skill) => skill.id === id))
     .filter((skill): skill is Skill => Boolean(skill));
-  const advanced = monsterAdvanced(level, false);
+  const species = speciesById(monster.kindId);
+  const advanced = monsterAdvanced(level, {
+    role: species?.role,
+    zone: species?.zone,
+    overrides: species?.advanced,
+  });
   const toughness = startingToughness({
     maxTgh: monster.maxTgh ?? advanced.maxTgh,
     tgh: monster.tgh,
-    armPen: monster.armPen,
-    res: monster.res,
-    critRate: monster.critRate,
-    critDamage: monster.critDamage,
-    eva: monster.eva,
-    acc: monster.acc,
+    armPen: monster.armPen ?? advanced.armPen,
+    res: monster.res ?? advanced.res,
+    critRate: monster.critRate ?? advanced.critRate,
+    critDamage: monster.critDamage ?? advanced.critDamage,
+    eva: monster.eva ?? advanced.eva,
+    acc: monster.acc ?? advanced.acc,
   });
   return {
     id: `ally-${monster.id}`,

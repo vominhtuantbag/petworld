@@ -71,18 +71,57 @@ export function heroAdvanced(professionId: string | undefined, level = 1): Advan
   });
 }
 
-/** Monster / pet baselines from level and role. Elite monsters are slightly sharper. */
-export function monsterAdvanced(level: number, elite = false): AdvancedStats {
-  const lv = Math.max(1, level);
-  return normalizeAdvanced({
-    maxTgh: 70 + lv * 4 + (elite ? 30 : 0),
-    armPen: Math.min(0.35, 0.04 + lv * 0.0015 + (elite ? 0.04 : 0)),
-    res: Math.min(0.4, 0.08 + lv * 0.0012 + (elite ? 0.05 : 0)),
-    critRate: Math.min(0.3, (elite ? 0.12 : 0.08) + lv * 0.001),
-    critDamage: elite ? 1.6 : DEFAULT_CRIT_DAMAGE,
-    eva: Math.min(0.3, 0.04 + lv * 0.001 + (elite ? 0.02 : 0)),
-    acc: Math.min(0.97, 0.86 + lv * 0.001 + (elite ? 0.02 : 0)),
+/**
+ * Combat archetype for wild monsters / pets.
+ * Agile = eva/crit. Tank = tgh/res. Striker = arm_pen/crit.
+ * Bruiser = thick body + solid pen. Mystic = res/pen. Balanced = mid.
+ */
+export type MonsterCombatRole = 'agile' | 'tank' | 'striker' | 'bruiser' | 'mystic' | 'balanced';
+
+export type MonsterAdvancedOptions = {
+  elite?: boolean;
+  role?: MonsterCombatRole;
+  /** Map-1 sub-zone 0–4. Zones 3–4 (town levels 7–10) gain arm_pen / res. */
+  zone?: number;
+  overrides?: AdvancedInput | null;
+};
+
+/** Level-1 baselines before level / zone scaling. */
+export const MONSTER_ROLE_ADVANCED: Record<MonsterCombatRole, AdvancedStats> = {
+  agile: { maxTgh: 70, armPen: 0.05, res: 0.08, critRate: 0.16, critDamage: 1.55, eva: 0.14, acc: 0.94 },
+  tank: { maxTgh: 135, armPen: 0.03, res: 0.2, critRate: 0.06, critDamage: 1.45, eva: 0.03, acc: 0.88 },
+  striker: { maxTgh: 85, armPen: 0.13, res: 0.1, critRate: 0.18, critDamage: 1.65, eva: 0.08, acc: 0.93 },
+  bruiser: { maxTgh: 115, armPen: 0.07, res: 0.13, critRate: 0.1, critDamage: 1.55, eva: 0.05, acc: 0.9 },
+  mystic: { maxTgh: 90, armPen: 0.1, res: 0.22, critRate: 0.12, critDamage: 1.55, eva: 0.07, acc: 0.91 },
+  balanced: { maxTgh: 95, armPen: 0.06, res: 0.11, critRate: 0.1, critDamage: DEFAULT_CRIT_DAMAGE, eva: 0.06, acc: 0.9 },
+};
+
+/**
+ * Monster / pet advanced rates from level, combat role, and town zone.
+ * Accepts the legacy `(level, elite)` boolean form so older call sites keep working.
+ */
+export function monsterAdvanced(level: number, eliteOrOptions: boolean | MonsterAdvancedOptions = false): AdvancedStats {
+  const options: MonsterAdvancedOptions =
+    typeof eliteOrOptions === 'boolean' ? { elite: eliteOrOptions } : eliteOrOptions ?? {};
+  const lv = Math.max(1, Number.isFinite(level) ? level : 1);
+  const role = options.role && MONSTER_ROLE_ADVANCED[options.role] ? options.role : 'balanced';
+  const base = MONSTER_ROLE_ADVANCED[role];
+  const zone = clamp(Math.round(Number.isFinite(options.zone) ? Number(options.zone) : 0), 0, 4);
+  const elite = Boolean(options.elite);
+  const highTier = zone >= 3;
+  const steps = lv - 1;
+  const grown = normalizeAdvanced({
+    maxTgh: base.maxTgh + steps * (role === 'tank' ? 5 : role === 'bruiser' ? 4.5 : 3.5) + zone * 8 + (elite ? 30 : 0),
+    armPen: base.armPen + steps * 0.0012 + zone * 0.008 + (highTier ? 0.035 : 0) + (elite ? 0.04 : 0),
+    res: base.res + steps * 0.001 + zone * 0.01 + (highTier ? 0.04 : 0) + (elite ? 0.05 : 0),
+    critRate: base.critRate + steps * 0.0009 + zone * 0.006 + (elite ? 0.03 : 0),
+    critDamage: base.critDamage + (elite ? 0.05 : 0) + (highTier && role === 'striker' ? 0.05 : 0),
+    eva: base.eva + steps * 0.0007 + zone * 0.004 + (elite ? 0.02 : 0),
+    acc: base.acc + steps * 0.0005 + zone * 0.003 + (elite ? 0.02 : 0),
   });
+  if (!options.overrides) return grown;
+  const patch = normalizeAdvanced({ ...grown, ...options.overrides });
+  return patch;
 }
 
 export function normalizeAdvanced(input?: AdvancedInput | null): AdvancedStats {

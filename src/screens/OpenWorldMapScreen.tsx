@@ -227,6 +227,14 @@ function toCard(monster: MonsterActor): Encounter {
     speed: monster.speed,
     tint: monster.tint,
     elite: monster.elite,
+    tgh: monster.tgh,
+    maxTgh: monster.maxTgh,
+    armPen: monster.armPen,
+    res: monster.res,
+    critRate: monster.critRate,
+    critDamage: monster.critDamage,
+    eva: monster.eva,
+    acc: monster.acc,
   };
 }
 

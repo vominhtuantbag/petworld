@@ -58,6 +58,10 @@ export type MonsterCombatStats = {
   critDamage: number;
   eva: number;
   acc: number;
+  /** Optional aliases for skill / data pipelines. */
+  arm_pen?: number;
+  crit_rate?: number;
+  crit_dmg?: number;
 };
 
 type Curve = {

@@ -1,3 +1,4 @@
+import { monsterStats } from './catalog';
 import { speciesById } from './monsters';
 import { expFromMonster } from './progression';
 import type { Encounter, FieldState, ItemId, Sensor } from './types';
@@ -123,11 +124,16 @@ function mineFoe(level: number, floor: number, wave: number, role: 'minion' | 'b
   const body = role === 'boss' ? 2.4 : 1.35 + wave * 0.12;
   const hp = Math.max(8, Math.round(((kind?.hp ?? 52) + steps * 12) * body * MINE_TEST_SCALE));
   const label = role === 'boss' ? `Tiểu boss hầm mỏ ${floor}-${wave}` : `Quái hầm mỏ ${floor}-${wave}${index > 1 ? ` ${index}` : ''}`;
+  const foeLevel = Math.max(1, floor);
+  const advanced = kind
+    ? monsterStats(kind, foeLevel)
+    : null;
+  const eliteBoost = role === 'boss' ? 1.25 : 1;
   return {
     id: `mine-${floor}-${wave}-${role}-${index}`,
     kindId: kind?.id ?? (role === 'boss' ? MINE_KIND : MINION_KIND),
     name: label,
-    level: Math.max(1, floor),
+    level: foeLevel,
     hp,
     maxHp: hp,
     attack: Math.max(1, Math.round(((kind?.attack ?? 16) + steps * 1.8) * (role === 'boss' ? 1.55 : 1.25) * MINE_TEST_SCALE)),
@@ -135,6 +141,14 @@ function mineFoe(level: number, floor: number, wave: number, role: 'minion' | 'b
     tint: role === 'boss' ? '#c4472f' : (kind?.tint ?? '#8a5a42'),
     elite: role === 'boss',
     speed: Math.max(20, Math.round(((kind?.speed ?? 70) + safe - (role === 'boss' ? 8 : 0)) * 0.5)),
+    tgh: Math.round((advanced?.maxTgh ?? 100) * eliteBoost),
+    maxTgh: Math.round((advanced?.maxTgh ?? 100) * eliteBoost),
+    armPen: advanced?.armPen,
+    res: advanced?.res,
+    critRate: advanced?.critRate,
+    critDamage: advanced?.critDamage,
+    eva: advanced?.eva,
+    acc: advanced?.acc,
   };
 }
 
