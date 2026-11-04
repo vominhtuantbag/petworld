@@ -178,7 +178,8 @@ function SkillRow({
   onEquip?: () => void;
 }) {
   const kind = skillKind(skill);
-  const tint = kind === 'basic' ? '#e4c27a' : kind === 'heal' ? '#3cba45' : '#7fd0c4';
+  const tint = kind === 'basic' ? '#e4c27a' : kind === 'heal' ? '#3cba45' : kind === 'utility' ? '#c9a227' : '#7fd0c4';
+  const kindLabel = kind === 'basic' ? 'Đòn thường' : kind === 'heal' ? 'Hồi máu' : kind === 'utility' ? 'Hỗ trợ' : 'Kỹ năng';
   const mark = equipped === 'basic' ? 'Đang dùng' : equipped === 'first' ? 'Ô 1' : equipped === 'second' ? 'Ô 2' : locked ? 'Khóa' : 'Mang theo';
   return (
     <View style={[styles.row, selected && styles.rowOn]}>
@@ -191,8 +192,14 @@ function SkillRow({
             {skill.name}
           </Text>
           <Text style={[styles.copy, { fontSize: font(11) }]} numberOfLines={1}>
-            {kind === 'basic' ? 'Đòn thường' : kind === 'heal' ? 'Hồi máu' : 'Kỹ năng'} · Mana {skill.mana} · Hồi {skill.cooldown} · ×{skill.power}
+            {kindLabel} · MP {skill.mana} · CD {skill.cooldown}
+            {skill.power > 0 ? ` · ×${skill.power}` : ''}
           </Text>
+          {skill.blurb ? (
+            <Text style={[styles.copy, { fontSize: font(10) }]} numberOfLines={2}>
+              {skill.blurb}
+            </Text>
+          ) : null}
         </View>
       </Pressable>
       <Pressable
@@ -217,9 +224,10 @@ function Detail({ skill, font }: { skill: Skill | null; font: (size: number) => 
     );
   }
   const kind = skillKind(skill);
+  const kindLabel = kind === 'basic' ? 'Đòn thường' : kind === 'heal' ? 'Hồi máu' : kind === 'utility' ? 'Hỗ trợ' : 'Kỹ năng';
   return (
-    <Text style={[styles.copy, { fontSize: font(11) }]} numberOfLines={2}>
-      {kind === 'basic' ? 'Đòn thường' : kind === 'heal' ? 'Hồi máu' : 'Kỹ năng'} · {describeSkill(skill)}
+    <Text style={[styles.copy, { fontSize: font(11) }]} numberOfLines={3}>
+      {kindLabel} · {describeSkill(skill)}
     </Text>
   );
 }

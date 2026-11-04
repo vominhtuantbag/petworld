@@ -16,9 +16,11 @@ import type {
   DuelSkillView,
   DuelUnitView,
   FighterView,
+  LastHitView,
   QueueView,
 } from './protocol.js';
 import { advancedAtLevel } from '../combat/advanced.js';
+import { arenaSkills, professionFromAvatar, type ClassSkillCard } from '../combat/classSkills.js';
 import { strike } from '../combat/rules.js';
 import { statsForRecord } from '../combat/stats.js';
 import type { MatchHistoryEntry } from '../domain.js';
@@ -47,7 +49,7 @@ const BOT_THINK_MS = 700;
 
 type Fighter = Omit<FighterView, 'hp' | 'ready'> & { attack: number; defense: number };
 
-type SkillCard = { name: string; power: number };
+type SkillCard = ClassSkillCard;
 
 type CombatUnit = {
   id: string;
@@ -64,6 +66,7 @@ type CombatUnit = {
   speed: number;
   initiative: boolean;
   skills: [SkillCard, SkillCard];
+  cooldowns: Record<string, number>;
   tgh: number;
   maxTgh: number;
   armPen: number;
@@ -88,6 +91,7 @@ type Room = {
   resolving: boolean;
   winnerId: string | null;
   log: string[];
+  lastHit: LastHitView | null;
   fighters: [Fighter, Fighter];
   units: CombatUnit[];
   order: string[];
@@ -800,6 +804,7 @@ export class Arena {
       log: options.ranked
         ? [`${left.name} gặp ${right.name}. Hiệp ${bout}/3 · ${bouts[left.userId] ?? 0}-${bouts[right.userId] ?? 0}.`, `Tới lượt ${actor?.name ?? left.name}.`]
         : [`${left.name} gặp ${right.name}.`, `Tới lượt ${actor?.name ?? left.name}.`],
+      lastHit: null,
       fighters: [left, right],
       units,
       order,
@@ -919,7 +924,30 @@ export class Arena {
       await this.closeBout(room, actor.ownerId);
       return;
     }
+    // Tick this actor's skill cooldowns at the start of their action.
+    for (const [id, value] of Object.entries(actor.cooldowns ?? {})) {
+      actor.cooldowns[id] = Math.max(0, value - 1);
+    }
     const skill = action === 'skill' ? actor.skills[skillIndex] ?? actor.skills[0] : null;
+    if (skill && action === 'skill') {
+      const wait = actor.cooldowns[skill.id] ?? 0;
+      if (wait > 0) {
+        room.log.push(`${actor.name} không thể dùng ${skill.name} (CD ${wait}).`);
+        this.advance(room);
+        room.resolving = false;
+        this.emitRoom(room);
+        return;
+      }
+      if (actor.mp < (skill.mana || 0)) {
+        room.log.push(`${actor.name} thiếu mana cho ${skill.name}.`);
+        this.advance(room);
+        room.resolving = false;
+        this.emitRoom(room);
+        return;
+      }
+      actor.mp = Math.max(0, actor.mp - (skill.mana || 0));
+      if (skill.cooldown > 0) actor.cooldowns[skill.id] = skill.cooldown;
+    }
     const result = strike(
       {
         name: actor.name,
@@ -961,6 +989,14 @@ export class Arena {
     target.maxTgh = result.maxTgh;
     if (result.staggered) target.staggered = true;
     room.log.push(result.text);
+    room.lastHit = {
+      attackerId: actor.id,
+      targetId: target.id,
+      damage: result.damage || 0,
+      crit: Boolean(result.crit),
+      miss: Boolean(result.miss || result.dodged),
+      skillName: skill?.name,
+    };
 
     const owners = [...new Set(room.units.map((unit) => unit.ownerId))];
     const livingOwners = owners.filter((id) => room.units.some((unit) => unit.ownerId === id && unit.hp > 0));
@@ -1164,6 +1200,7 @@ export class Arena {
       queue: upcoming(room.order, room.turnId, room.units),
       units: room.units.map((unit) => toUnitView(unit, userId)),
       skills: skillButtons(skillSource),
+      lastHit: room.lastHit,
       yourTurn,
       ranked: room.ranked,
       bout: room.bout,
@@ -1285,6 +1322,7 @@ export class Arena {
       resolving: false,
       winnerId: null,
       log: ['Đối thủ rời cửa sổ chọn tướng. Hiệp đấu kết thúc.'],
+      lastHit: null,
       fighters: [left, right],
       units,
       order: units.map((unit) => unit.id),
@@ -1476,6 +1514,8 @@ function unitsFor(fighter: Fighter): CombatUnit[] {
   const level = fighter.level;
   const maxMp = Math.max(10, level * 8);
   const heroAdv = advancedAtLevel(level, 'hero');
+  const profession = professionFromAvatar(fighter.baseAvatarId);
+  const [skillA, skillB] = arenaSkills(profession);
   const hero: CombatUnit = {
     id: fighter.userId,
     ownerId: fighter.userId,
@@ -1490,10 +1530,8 @@ function unitsFor(fighter: Fighter): CombatUnit[] {
     defense: fighter.defense,
     speed: 90 + Math.max(0, level - 1),
     initiative: true,
-    skills: [
-      { name: 'Kỹ năng 1', power: 1.55 },
-      { name: 'Kỹ năng 2', power: 1.85 },
-    ],
+    skills: [skillA, skillB],
+    cooldowns: {},
     tgh: heroAdv.maxTgh,
     maxTgh: heroAdv.maxTgh,
     armPen: heroAdv.armPen,
@@ -1525,9 +1563,10 @@ function unitsFor(fighter: Fighter): CombatUnit[] {
       speed: 48 + petLevel,
       initiative: false,
       skills: [
-        { name: 'Kỹ năng 1', power: 1.35 },
-        { name: 'Kỹ năng 2', power: 1.6 },
+        { id: `pet-skill-1-${index}`, name: 'Kỹ năng 1', mana: 4, power: 1.35, cooldown: 1 },
+        { id: `pet-skill-2-${index}`, name: 'Kỹ năng 2', mana: 6, power: 1.6, cooldown: 2 },
       ],
+      cooldowns: {},
       tgh: petAdv.maxTgh,
       maxTgh: petAdv.maxTgh,
       armPen: petAdv.armPen,
@@ -1585,11 +1624,24 @@ function toUnitView(unit: CombatUnit, viewerId: string): DuelUnitView {
 
 function skillButtons(unit: CombatUnit | undefined): DuelSkillView[] {
   const skills = unit?.skills ?? [
-    { name: 'Kỹ năng 1', power: 1 },
-    { name: 'Kỹ năng 2', power: 1 },
+    { id: 'fallback-0', name: 'Kỹ năng 1', mana: 0, power: 1, cooldown: 0 },
+    { id: 'fallback-1', name: 'Kỹ năng 2', mana: 0, power: 1, cooldown: 0 },
   ];
+  const cds = unit?.cooldowns ?? {};
   return [
-    { index: 0, name: skills[0].name },
-    { index: 1, name: skills[1].name },
+    {
+      index: 0,
+      name: skills[0].name,
+      mana: skills[0].mana,
+      cooldown: skills[0].cooldown,
+      wait: cds[skills[0].id] ?? 0,
+    },
+    {
+      index: 1,
+      name: skills[1].name,
+      mana: skills[1].mana,
+      cooldown: skills[1].cooldown,
+      wait: cds[skills[1].id] ?? 0,
+    },
   ];
 }

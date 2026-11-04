@@ -1,6 +1,7 @@
 import type { Server, Socket } from 'socket.io';
 
 import { advancedAtLevel } from '../combat/advanced.js';
+import { arenaSkills, professionFromAvatar, type ClassSkillCard } from '../combat/classSkills.js';
 import { strike as resolveStrike } from '../combat/rules.js';
 import { GOLDEN_WINDOW_LABEL, goldenHourAt } from '../dungeon/schedule.js';
 import { raidPayout, type RaidPayout } from '../dungeon/rewards.js';
@@ -8,6 +9,7 @@ import type { Arena } from './arena.js';
 import type { WorldPresence } from './world.js';
 import type {
   DuelSkillView,
+  LastHitView,
   PartyInviteView,
   PartyMemberView,
   RaidBattleView,
@@ -50,7 +52,7 @@ type Lobby = {
   closing: boolean;
 };
 
-type SkillCard = { name: string; power: number };
+type SkillCard = ClassSkillCard;
 
 type Unit = {
   id: string;
@@ -68,6 +70,7 @@ type Unit = {
   speed: number;
   tint: string;
   skills: [SkillCard, SkillCard];
+  cooldowns: Record<string, number>;
   tgh: number;
   maxTgh: number;
   armPen: number;
@@ -100,6 +103,7 @@ type RaidRoom = {
   victory: boolean;
   finishedAt: number;
   log: string[];
+  lastHit: LastHitView | null;
   members: Member[];
   units: Unit[];
   order: string[];
@@ -384,6 +388,7 @@ export class DungeonRaids {
       victory: false,
       finishedAt: 0,
       log: [`Hầm ngục mở. ${members.length} người vào trận.`, `Tới lượt ${actor?.name ?? 'người chơi'}.`],
+      lastHit: null,
       members,
       units,
       order,
@@ -428,11 +433,24 @@ export class DungeonRaids {
       this.finish(room, actor.kind === 'hero');
       return;
     }
-    const skill = action === 'skill' ? actor.skills[skillIndex] ?? actor.skills[0] : null;
+    for (const [id, value] of Object.entries(actor.cooldowns ?? {})) {
+      actor.cooldowns[id] = Math.max(0, value - 1);
+    }
+    let skill = action === 'skill' ? actor.skills[skillIndex] ?? actor.skills[0] : null;
+    if (skill && action === 'skill') {
+      const wait = actor.cooldowns[skill.id] ?? 0;
+      if (wait > 0 || actor.mp < (skill.mana || 0)) {
+        skill = null;
+        action = 'attack';
+      } else {
+        actor.mp = Math.max(0, actor.mp - (skill.mana || 0));
+        if (skill.cooldown > 0) actor.cooldowns[skill.id] = skill.cooldown;
+      }
+    }
     const result = resolveStrike(
       strikerOf(actor),
       strikerOf(target),
-      action,
+      skill ? 'skill' : 'attack',
       'attack',
       Math.random,
       skill ? { power: skill.power, skillName: skill.name } : undefined,
@@ -442,6 +460,14 @@ export class DungeonRaids {
     target.maxTgh = result.maxTgh;
     if (result.staggered) target.staggered = true;
     room.log.push(result.text);
+    room.lastHit = {
+      attackerId: actor.id,
+      targetId: target.id,
+      damage: result.damage || 0,
+      crit: Boolean(result.crit),
+      miss: Boolean(result.miss || result.dodged),
+      skillName: skill?.name,
+    };
     const heroesAlive = room.units.some((unit) => unit.kind === 'hero' && unit.hp > 0);
     const foesAlive = room.units.some((unit) => unit.kind !== 'hero' && unit.hp > 0);
     if (!foesAlive) {
@@ -583,6 +609,7 @@ export class DungeonRaids {
       queue: upcoming(room.order, room.turnId, room.units),
       units: room.units.map((unit) => toView(unit)),
       skills: skillButtons(skillSource),
+      lastHit: room.lastHit,
       yourTurn,
       rewards: room.victory ? (room.payouts.get(userId) ?? room.rewards) : null,
       tameUntil: room.status === 'taming' ? room.tameUntil : null,
@@ -743,6 +770,7 @@ function slotView(member: Member, index: number): RaidSlotView {
 function heroUnit(member: Member, slot: number): Unit {
   const maxMp = Math.max(10, member.level * 8);
   const advanced = advancedAtLevel(member.level, 'hero');
+  const [skillA, skillB] = arenaSkills(professionFromAvatar(member.baseAvatarId));
   return {
     id: member.userId,
     ownerId: member.userId,
@@ -758,10 +786,8 @@ function heroUnit(member: Member, slot: number): Unit {
     defense: member.defense,
     speed: 90 + Math.max(0, member.level - 1),
     tint: '#e4c27a',
-    skills: [
-      { name: 'Kỹ năng 1', power: 1.55 },
-      { name: 'Kỹ năng 2', power: 1.85 },
-    ],
+    skills: [skillA, skillB],
+    cooldowns: {},
     tgh: advanced.maxTgh,
     maxTgh: advanced.maxTgh,
     armPen: advanced.armPen,
@@ -798,9 +824,10 @@ function foeUnits(level: number): Unit[] {
       speed: 82 + level,
       tint,
       skills: [
-        { name: 'Kỹ năng 1', power: 1.2 },
-        { name: 'Kỹ năng 2', power: 1.35 },
+        { id: `foe-${slot}-a`, name: 'Kỹ năng 1', mana: 4, power: 1.2, cooldown: 1 },
+        { id: `foe-${slot}-b`, name: 'Kỹ năng 2', mana: 6, power: 1.35, cooldown: 2 },
       ],
+      cooldowns: {},
       tgh: advanced.maxTgh,
       maxTgh: advanced.maxTgh,
       armPen: advanced.armPen,
@@ -829,9 +856,10 @@ function foeUnits(level: number): Unit[] {
     speed: 98 + level,
     tint: '#c4472f',
     skills: [
-      { name: 'Kỹ năng 1', power: 1.4 },
-      { name: 'Kỹ năng 2', power: 1.7 },
+      { id: 'boss-a', name: 'Kỹ năng 1', mana: 6, power: 1.4, cooldown: 1 },
+      { id: 'boss-b', name: 'Kỹ năng 2', mana: 10, power: 1.7, cooldown: 2 },
     ],
+    cooldowns: {},
     tgh: bossAdv.maxTgh,
     maxTgh: bossAdv.maxTgh,
     armPen: bossAdv.armPen,
@@ -923,12 +951,25 @@ function toView(unit: Unit): RaidUnitView {
 
 function skillButtons(unit: Unit | undefined): DuelSkillView[] {
   const skills = unit?.skills ?? [
-    { name: 'Kỹ năng 1', power: 1 },
-    { name: 'Kỹ năng 2', power: 1 },
+    { id: 'fallback-0', name: 'Kỹ năng 1', mana: 0, power: 1, cooldown: 0 },
+    { id: 'fallback-1', name: 'Kỹ năng 2', mana: 0, power: 1, cooldown: 0 },
   ];
+  const cds = unit?.cooldowns ?? {};
   return [
-    { index: 0, name: skills[0].name },
-    { index: 1, name: skills[1].name },
+    {
+      index: 0,
+      name: skills[0].name,
+      mana: skills[0].mana,
+      cooldown: skills[0].cooldown,
+      wait: cds[skills[0].id] ?? 0,
+    },
+    {
+      index: 1,
+      name: skills[1].name,
+      mana: skills[1].mana,
+      cooldown: skills[1].cooldown,
+      wait: cds[skills[1].id] ?? 0,
+    },
   ];
 }
 

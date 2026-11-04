@@ -10,9 +10,11 @@
 
 import { hashString, mulberry32 } from '../grid';
 import { heroAdvanced, type AdvancedStats } from './advanced';
+import { CLASS_KITS } from './characterSkills';
 import { combatElement, type ElementId } from './elements';
-import type { HeroStats } from './model';
-import type { Skill } from './model';
+import type { HeroStats, Skill } from './model';
+
+export { CLASS_KITS } from './characterSkills';
 
 export type SpeciesId = 'beast' | 'bug' | 'reptile' | 'avian' | 'aquatic' | 'spirit';
 
@@ -81,55 +83,6 @@ function elementPool(element: ElementId): Skill[] {
     move(`${element}-${index + 1}`, name, ELEMENT_MANA[index], ELEMENT_POWERS[index], ELEMENT_COOLDOWN[index]),
   );
 }
-
-type ClassKit = { basics: [Skill, Skill]; skills: [Skill, Skill, Skill] };
-
-const CLASS_KITS: Record<string, ClassKit> = {
-  guardian: {
-    basics: [move('guardian-bash', 'Đánh khiên', 0, 1, 0), move('guardian-shove', 'Húc vai', 0, 1.05, 0)],
-    skills: [move('bash', 'Đập khiên', 6, 1.3, 1), move('ward', 'Hộ thể', 8, 0, 2), move('riposte', 'Phản đòn', 10, 1.5, 2)],
-  },
-  knight: {
-    basics: [move('knight-cut', 'Chém kiếm', 0, 1, 0), move('knight-thrust', 'Đâm kiếm', 0, 1.08, 0)],
-    skills: [move('slash', 'Chém', 6, 1.4, 1), move('oath', 'Lời thề', 10, 1.65, 2), move('smite', 'Khiên thánh', 12, 1.55, 2)],
-  },
-  mage: {
-    basics: [move('mage-staff', 'Gậy', 0, 1, 0), move('mage-bolt', 'Cầu lửa', 0, 1.05, 0)],
-    skills: [move('spark', 'Tia lửa', 8, 1.55, 1), move('nova', 'Nổ sao', 14, 1.9, 3), move('frost', 'Đóng băng', 10, 1.7, 2)],
-  },
-  healer: {
-    basics: [move('healer-staff', 'Gậy', 0, 1, 0), move('healer-light', 'Ánh nhẹ', 0, 1, 0)],
-    skills: [move('mend', 'Hồi máu', 8, 0, 1), move('smite', 'Ánh sáng', 10, 1.4, 2), move('bless', 'Ban phước', 12, 0, 2)],
-  },
-  rogue: {
-    basics: [move('rogue-knife', 'Dao', 0, 1, 0), move('rogue-jab', 'Đâm nhanh', 0, 1.15, 0)],
-    skills: [move('stab', 'Đâm lén', 6, 1.45, 1), move('venom', 'Dao độc', 10, 1.7, 2), move('hide', 'Ẩn kích', 9, 1.6, 2)],
-  },
-  bard: {
-    basics: [move('bard-twin', 'Song đao', 0, 1, 0), move('bard-cross', 'Chém chéo', 0, 1.1, 0)],
-    skills: [move('cut', 'Chém kép', 7, 1.5, 1), move('shade', 'Bóng dao', 12, 1.85, 3), move('end', 'Kết liễu', 14, 1.9, 3)],
-  },
-  archer: {
-    basics: [move('archer-shot', 'Bắn', 0, 1, 0), move('archer-tip', 'Mũi nhọn', 0, 1.08, 0)],
-    skills: [move('shot', 'Mũi tên', 6, 1.4, 1), move('rain', 'Mưa tên', 12, 1.75, 3), move('pierce', 'Xuyên tên', 10, 1.65, 2)],
-  },
-  ranger: {
-    basics: [move('ranger-trap', 'Bẫy tay', 0, 1, 0), move('ranger-knife', 'Dao săn', 0, 1.05, 0)],
-    skills: [move('trap', 'Bẫy', 7, 1.35, 1), move('mark', 'Ngắm', 11, 1.7, 2), move('sting', 'Mũi độc', 9, 1.6, 2)],
-  },
-  scout: {
-    basics: [move('scout-jab', 'Lao', 0, 1, 0), move('scout-throw', 'Ném', 0, 1.05, 0)],
-    skills: [move('pin', 'Ghim', 6, 1.35, 1), move('flare', 'Pháo sáng', 9, 1.55, 2), move('mark', 'Đánh dấu', 8, 1.5, 2)],
-  },
-  monk: {
-    basics: [move('monk-fist', 'Quyền', 0, 1, 0), move('monk-kick', 'Cước', 0, 1.08, 0)],
-    skills: [move('palm', 'Chưởng', 6, 1.35, 1), move('breath', 'Điều khí', 8, 0, 2), move('chain', 'Liên hoàn', 10, 1.55, 2)],
-  },
-  wanderer: {
-    basics: [move('wanderer-draw', 'Đao', 0, 1, 0), move('wanderer-sweep', 'Chém ngang', 0, 1.05, 0)],
-    skills: [move('draw', 'Rút đao', 7, 1.45, 1), move('arc', 'Vòng chém', 12, 1.8, 3), move('break', 'Phá đao', 10, 1.7, 2)],
-  },
-};
 
 export function speciesOf(kindId: string): SpeciesId {
   if (/^(shade|chaos|warden|shard|void)$/.test(kindId) || /golem|phoenix/.test(kindId)) return 'spirit';
@@ -242,33 +195,49 @@ export function elementSkillList(element: ElementId): Skill[] {
   return elementPool(element);
 }
 
-export function skillKind(skill: Skill): 'basic' | 'active' | 'heal' {
+export function skillKind(skill: Skill): 'basic' | 'active' | 'heal' | 'utility' {
   if (skill.mana <= 0 && skill.cooldown <= 0) return 'basic';
-  if (skill.power <= 0) return 'heal';
+  const hasHeal = (skill.effects ?? []).some((effect) => effect.type === 'heal');
+  if (skill.power <= 0 && hasHeal) return 'heal';
+  if (skill.power <= 0) return 'utility';
   return 'active';
 }
 
+const TARGET_LABEL: Record<string, string> = {
+  enemy: 'Một kẻ địch',
+  enemies: 'Toàn bộ địch',
+  enemy_pets: 'Pet địch',
+  ally: 'Một đồng minh',
+  ally_pet: 'Một pet',
+  self: 'Bản thân',
+  party: 'Cả đội',
+  party_pets: 'Mọi pet',
+  none: 'Không cần mục tiêu',
+};
+
 export function skillTarget(skill: Skill): string {
-  return skillKind(skill) === 'heal' ? 'Bản thân' : 'Một kẻ địch';
+  if (skill.target) return TARGET_LABEL[skill.target] ?? skill.target;
+  return skillKind(skill) === 'heal' || skillKind(skill) === 'utility' ? 'Bản thân / đồng minh' : 'Một kẻ địch';
 }
 
 export function skillMark(skill: Skill): string {
   const kind = skillKind(skill);
   if (kind === 'heal') return '+';
+  if (kind === 'utility') return '※';
   if (kind === 'basic') return 'Đ';
   return 'K';
 }
 
-/** Dictionary copy. Heal size matches `healAmount` in combat. */
+/** Dictionary copy. Prefers author `blurb` when present. */
 export function skillEffect(skill: Skill): string {
+  if (skill.blurb) return skill.blurb;
   const kind = skillKind(skill);
   if (kind === 'basic') {
-    return `Đòn đánh thường vào một kẻ địch. Sát thương bằng Tấn công × ${formatPower(skill.power)}. Không tốn mana, không thời gian hồi. Có thể chí mạng và chịu khắc hệ.`;
+    return `Đòn đánh thường. Sát thương × ${formatPower(skill.power)}. Không tốn mana.`;
   }
-  if (kind === 'heal') {
-    return 'Hồi máu cho người dùng, khoảng 22% máu tối đa và không dưới 8 điểm. Không gây sát thương.';
-  }
-  return `Kỹ năng chủ động vào một kẻ địch. Sát thương bằng Tấn công × ${formatPower(skill.power)}. Có thể chí mạng và chịu khắc hệ.`;
+  if (kind === 'heal') return 'Hồi máu / hỗ trợ đồng minh.';
+  if (kind === 'utility') return 'Kỹ năng hỗ trợ. Không gây sát thương trực tiếp.';
+  return `Kỹ năng chủ động. Sát thương × ${formatPower(skill.power)}.`;
 }
 
 function formatPower(power: number): string {
@@ -278,10 +247,10 @@ function formatPower(power: number): string {
 }
 
 export function describeSkill(skill: Skill): string {
-  const kind = skillKind(skill);
-  if (kind === 'basic') return `${skill.name}. Đòn đánh thường, hệ số sát thương ×${skill.power}. Không tốn mana.`;
-  if (kind === 'heal') return `${skill.name}. Hồi máu. Tốn ${skill.mana} mana và hồi sau ${skill.cooldown} lượt.`;
-  return `${skill.name}. Kỹ năng chủ động. Tốn ${skill.mana} mana, hồi ${skill.cooldown} lượt, hệ số sát thương ×${skill.power}.`;
+  const cd = skill.cooldown > 0 ? `, CD ${skill.cooldown}` : '';
+  const mana = skill.mana > 0 ? ` · ${skill.mana} MP` : '';
+  const body = skill.blurb ?? skillEffect(skill);
+  return `${skill.name}${mana}${cd}. ${body}`;
 }
 
 export function defaultHeroLoadout(professionId: string | undefined, seed?: string): HeroSkillLoadout {

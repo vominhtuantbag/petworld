@@ -31,23 +31,20 @@ import {
   masteryOf,
   makePlayer,
   makeWild,
+  needsAllyTarget,
+  skillNeedsFoe,
   startBattle,
   type BattleState,
   type Fighter,
 } from '../world/combat';
+import { describeSkill } from '../world/combat/kits';
+import { floatKindFromLog, IMPACT_MS, SLASH_MS, STANCE_MS, STANCE_PX, TEAR_MS, TURN_MS } from '../world/combat/loop';
 import { upcomingQueue } from '../world/combat/order';
 import { ITEMS } from '../world/items';
 import { MINE_WAVE_COUNT, mineClearDrops, mineEncounter, mineLabel } from '../world/dungeons';
 import type { Encounter, ItemId } from '../world/types';
 
 const ARENA = require('../../assets/images/sandau_2.jpg');
-
-/** Short step into a stance. The fighter does not close the gap. */
-const STANCE_PX = 32;
-const STANCE_MS = 340;
-const SLASH_MS = 500;
-const IMPACT_MS = 160;
-const TEAR_MS = 500;
 
 type Beat = 'stance' | 'ready' | 'slash' | 'impact' | 'tear' | 'hold';
 
@@ -113,7 +110,9 @@ export function BattleScreen() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [paused, setPaused] = useState(false);
   const [auto, setAuto] = useState(false);
-  const [floats, setFloats] = useState<{ id: number; fighterId: string; amount: number }[]>([]);
+  const [floats, setFloats] = useState<{ id: number; fighterId: string; amount: number; kind?: 'damage' | 'heal' | 'crit' | 'miss' }[]>([]);
+  const [turnDeadline, setTurnDeadline] = useState<number | null>(null);
+  const [clockNow, setClockNow] = useState(Date.now());
   const focusRef = useRef<string | null>(null);
   const autoRef = useRef(false);
   const rewardsRef = useRef<BattleRewards | null>(null);
@@ -157,6 +156,19 @@ export function BattleScreen() {
   useEffect(() => {
     setActionId('basic');
   }, [battle?.turnId]);
+  // Step C: 30s human turn clock (adventure / mines). Resets each new turn.
+  useEffect(() => {
+    if (!turnToken || !handsOff || auto || tameId || paused) {
+      setTurnDeadline(null);
+      return;
+    }
+    setTurnDeadline(Date.now() + TURN_MS);
+  }, [turnToken, handsOff, auto, tameId, paused]);
+  useEffect(() => {
+    if (turnDeadline == null) return;
+    const timer = setInterval(() => setClockNow(Date.now()), 200);
+    return () => clearInterval(timer);
+  }, [turnDeadline]);
   useEffect(() => {
     if (beat !== 'stance' || !turnToken) return;
     const timer = setTimeout(() => {
@@ -180,6 +192,20 @@ export function BattleScreen() {
     }, 40);
     return () => clearTimeout(timer);
   }, [beat, turnToken, tameId, auto, handsOff]);
+  // Step C expiry: default basic attack when the 30s clock hits zero.
+  useEffect(() => {
+    if (turnDeadline == null || beat !== 'ready' || !turnToken || tameId || auto || paused) return;
+    if (clockNow < turnDeadline) return;
+    const current = battleRef.current;
+    if (!current || current.over || current.turnId !== turnToken || beatRef.current !== 'ready') return;
+    const next =
+      current.turnId === 'player'
+        ? actAutoPlayer(current, focusRef.current)
+        : actAuto(current, true);
+    if (next === current) return;
+    setTurnDeadline(null);
+    beginStrikeRef.current(current, next);
+  }, [beat, clockNow, turnDeadline, turnToken, tameId, auto, paused]);
   useEffect(() => {
     if (!battle) {
       hpWatch.current = null;
@@ -194,13 +220,18 @@ export function BattleScreen() {
       setFloats((current) => (current.length === 0 ? current : []));
       return;
     }
-    const born: { id: number; fighterId: string; amount: number }[] = [];
+    const born: { id: number; fighterId: string; amount: number; kind?: 'damage' | 'heal' | 'crit' | 'miss' }[] = [];
     for (const fighter of lineup) {
       if (!previous.has(fighter.id)) continue;
       const delta = fighter.hp - (previous.get(fighter.id) ?? fighter.hp);
       if (!Number.isFinite(delta) || delta === 0) continue;
       floatSerial.current += 1;
-      born.push({ id: floatSerial.current, fighterId: fighter.id, amount: delta });
+      born.push({
+        id: floatSerial.current,
+        fighterId: fighter.id,
+        amount: delta,
+        kind: floatKindFromLog(battle.log, delta),
+      });
     }
     if (born.length === 0) return;
     setFloats((current) => [...current, ...born].slice(-24));
@@ -546,23 +577,30 @@ export function BattleScreen() {
     if (current.turnId !== 'player' && !ally) return;
     const picked = [...current.foes, ...current.allies].find((fighter) => fighter.id === focusId && fighter.hp > 0) ?? null;
     const foe = picked?.side === 'wild' ? picked : picked ? null : current.foes.find((fighter) => fighter.hp > 0) ?? null;
+    const allyPick = picked && picked.side !== 'wild' ? picked : current.allies.find((fighter) => fighter.hp > 0) ?? null;
     let next = current;
     if (ally) {
       if (actionId !== 'basic') {
         const skill = ally.skills.find((entry) => entry.id === actionId);
-        if (skill && skill.power <= 0) next = actAlly(current, null, skill.id);
-        else if (!foe) next = { ...current, log: 'Hãy chọn một quái còn sống.' };
-        else next = actAlly(current, foe.id, actionId);
+        if (!skill) return;
+        if (skillNeedsFoe(skill) && !foe) next = { ...current, log: 'Hãy chọn một quái còn sống.' };
+        else if (needsAllyTarget(skill) && !allyPick) next = { ...current, log: 'Hãy chọn một pet đồng minh.' };
+        else next = actAlly(current, skillNeedsFoe(skill) ? foe?.id ?? null : allyPick?.id ?? null, skill.id);
       } else if (!foe) next = { ...current, log: 'Hãy chọn một quái còn sống.' };
       else next = actAlly(current, foe.id, null);
     } else if (current.turnId === 'player') {
       if (actionId === 'basic') {
-        next = foe ? actBasic(current, foe.id) : { ...current, log: 'Hãy chọn một quái còn sống.' };
+        const basic = current.player.basic;
+        if (current.player.chargedPower) {
+          next = foe ? actBasic(current, foe.id) : { ...current, log: 'Hãy chọn một quái còn sống.' };
+        } else if (skillNeedsFoe(basic) && !foe) next = { ...current, log: 'Hãy chọn một quái còn sống.' };
+        else next = actBasic(current, foe?.id ?? 'none');
       } else {
         const skill = current.player.skills.find((entry) => entry.id === actionId);
         if (!skill) return;
-        if (skill.power <= 0) next = actSkill(current, null, skill.id);
-        else next = foe ? actSkill(current, foe.id, skill.id) : { ...current, log: 'Hãy chọn một quái còn sống.' };
+        if (skillNeedsFoe(skill) && !foe) next = { ...current, log: 'Hãy chọn một quái còn sống.' };
+        else if (needsAllyTarget(skill) && !allyPick) next = { ...current, log: 'Hãy chọn một pet đồng minh.' };
+        else next = actSkill(current, skillNeedsFoe(skill) ? foe?.id ?? null : allyPick?.id ?? null, skill.id);
       }
     }
     if (next === current) return;
@@ -629,7 +667,21 @@ export function BattleScreen() {
       <SafeAreaView style={styles.frame} edges={['top', 'bottom', 'left', 'right']}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <RoundButton label={paused ? '▶' : 'Dừng'} hint="Tạm dừng" disabled={!battle || Boolean(battle.over)} hot={paused} onPress={() => setPaused((value) => !value)} testID="battle-pause" size={s(36)} width={s(72)} font={font(12)} />
+          <RoundButton
+            label={
+              battle?.over
+                ? 'Hết'
+                : turnDeadline != null && handsOff && !auto
+                  ? `${Math.max(0, Math.ceil((turnDeadline - clockNow) / 1000))}s`
+                  : '—'
+            }
+            hint="Thời gian lượt (30s)"
+            onPress={() => undefined}
+            size={s(36)}
+            width={s(56)}
+            font={font(12)}
+          />
+          <RoundButton label={paused ? '▶' : 'Dừng'} hint="Tạm dừng" disabled={!battle || Boolean(battle.over)} hot={paused} onPress={() => setPaused((value) => !value)} testID="battle-pause" size={s(36)} width={s(64)} font={font(12)} />
           <RoundButton label={auto ? 'Tự: Bật' : 'Tự: Tắt'} hint={auto ? 'Tắt tự động đánh' : 'Bật tự động đánh'} disabled={!battle || Boolean(battle.over)} hot={auto} onPress={() => setAuto((value) => !value)} testID="battle-auto" size={s(36)} width={s(78)} font={font(11)} />
           {world.encounter?.mine ? (
             <RoundButton
@@ -741,6 +793,7 @@ export function BattleScreen() {
             <FloatingCombatText
               key={note.id}
               amount={note.amount}
+              kind={note.kind}
               x={anchor.x + (index - (stack.length - 1) / 2) * 16}
               y={anchor.y}
               onDone={() => setFloats((current) => current.filter((entry) => entry.id !== note.id))}
@@ -884,15 +937,17 @@ export function BattleScreen() {
               {((actingAlly ?? battle.player).skills ?? []).slice(0, 2).map((skill, index) => {
                 const actor = actingAlly ?? battle.player;
                 const wait = actor.cooldowns[skill.id] ?? 0;
+                const locked = wait > 0 || actor.mp < skill.mana;
                 return (
                   <RoundButton
                     key={skill.id}
-                    label={wait > 0 ? String(wait) : skill.name}
-                    hint={`Chiêu ${index + 1} ${skill.name}`}
+                    label={wait > 0 ? `CD ${wait}` : skill.name}
+                    hint={describeSkill(skill)}
                     square
                     tint="#7fd0c4"
                     hot={actionId === skill.id}
-                    disabled={!commandTurn || actor.mp < skill.mana || wait > 0}
+                    disabled={!commandTurn || locked}
+                    dim={locked}
                     testID={`battle-skill-${index + 1}`}
                     onPress={() => setActionId(skill.id)}
                     size={s(48)}

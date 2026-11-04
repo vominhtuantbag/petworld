@@ -202,7 +202,8 @@ function SkillCard({ row, known, wide, font, pad, icon }: { row: Row; known: boo
             {skill.name}
           </Text>
           <Text style={[styles.meta, { fontSize: font(11) }]} numberOfLines={1}>
-            {row.group} · {kind === 'basic' ? 'Đòn thường' : kind === 'heal' ? 'Hồi máu' : 'Kỹ năng'}
+            {row.group} ·{' '}
+            {kind === 'basic' ? 'Đòn thường' : kind === 'heal' ? 'Hồi máu' : kind === 'utility' ? 'Hỗ trợ' : 'Kỹ năng'}
             {known ? ' · Đã mở' : ''}
           </Text>
         </View>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -9,6 +9,7 @@ import { RankStars } from '../components/arena/RankStars';
 import { CharacterAvatar } from '../components/CharacterAvatar';
 import { CourtUnit, FaceArt, RoundButton, TimelineFace, styles as court, timelineFaceSize, type CourtActor } from '../components/battle/courtChrome';
 import { getCharacter } from '../data/characters';
+import { useSocketCombatFx } from '../hooks/useSocketCombatFx';
 import type { DuelUnitView } from '../net/protocol';
 import { useBattle } from '../state/BattleContext';
 import { theme } from '../theme/theme';
@@ -37,10 +38,6 @@ export function ArenaScreen() {
   const [now, setNow] = useState(Date.now());
   const [picked, setPicked] = useState<Pick>('attack');
   const [focusId, setFocusId] = useState<string | null>(null);
-  const [floats, setFloats] = useState<{ id: number; fighterId: string; amount: number }[]>([]);
-  const hpWatch = useRef<Map<string, number> | null>(null);
-  const floatSerial = useRef(0);
-  const hpKey = (snapshot?.units ?? []).map((unit) => `${unit.id}:${unit.hp}`).join('|');
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 200);
@@ -59,27 +56,31 @@ export function ArenaScreen() {
   const cast = units.map(toCourt);
   const foes = units.filter((unit) => unit.side === 'opponent' && unit.hp > 0);
   const focus = foes.find((unit) => unit.id === focusId) ?? foes[0] ?? null;
-
-  useEffect(() => {
-    if (!snapshot) {
-      hpWatch.current = null;
-      setFloats((current) => (current.length === 0 ? current : []));
-      return;
-    }
-    const previous = hpWatch.current;
-    const next = new Map(snapshot.units.map((unit) => [unit.id, unit.hp]));
-    hpWatch.current = next;
-    if (!previous) return;
-    const born: { id: number; fighterId: string; amount: number }[] = [];
-    for (const unit of snapshot.units) {
-      if (!previous.has(unit.id)) continue;
-      const delta = unit.hp - (previous.get(unit.id) ?? unit.hp);
-      if (!Number.isFinite(delta) || delta === 0) continue;
-      floatSerial.current += 1;
-      born.push({ id: floatSerial.current, fighterId: unit.id, amount: delta });
-    }
-    if (born.length > 0) setFloats((current) => [...current, ...born].slice(-24));
-  }, [hpKey, snapshot]);
+  const finishedEarly = snapshot?.status === 'finished';
+  const footMemo = useMemo(() => {
+    return (cell: string) => feetInView(cell, screen.w, screen.h, insets.left + stageBox.x, insets.top + stageBox.y);
+  }, [insets.left, insets.top, screen.h, screen.w, stageBox.x, stageBox.y]);
+  const slotOf = useMemo(() => {
+    return (id: string) => {
+      if (!youHero || !foeHero) return null;
+      if (id === youHero.id) return footMemo(BATTLE_GRID_POSITIONS.player);
+      if (id === foeHero.id) return footMemo('G28');
+      const allyIndex = yourPets.findIndex((unit) => unit.id === id);
+      if (allyIndex >= 0) return footMemo(PET_CELLS[allyIndex] ?? PET_CELLS[0]);
+      const foeIndex = foePets.findIndex((unit) => unit.id === id);
+      if (foeIndex >= 0) return footMemo(FOE_PET_CELLS[foeIndex] ?? FOE_PET_CELLS[0]);
+      return null;
+    };
+  }, [foeHero, foePets, footMemo, youHero, yourPets]);
+  const { floats, dismissFloat, steps, slashes, shakes } = useSocketCombatFx({
+    units,
+    turnId: finishedEarly ? null : snapshot?.turnId ?? null,
+    focusId: focus?.id ?? null,
+    lastHit: snapshot?.lastHit,
+    lastLog: snapshot?.log[snapshot.log.length - 1],
+    slotOf,
+    finished: finishedEarly,
+  });
 
   if (!snapshot || !youHero || !foeHero) return null;
 
@@ -96,14 +97,20 @@ export function ArenaScreen() {
   const queued = snapshot.queue ?? [];
   const turnQueue = queued.length > 0 ? queued : cast.filter((unit) => unit.hp > 0).map((unit) => unit.id);
   const faceSize = timelineFaceSize(screen.w, insets.left, insets.right, turnQueue.length, s(30), s(72) + s(78) + 36);
-  const foot = (cell: string) => feetInView(cell, screen.w, screen.h, insets.left + stageBox.x, insets.top + stageBox.y);
+  const foot = footMemo;
   const heroSize = s(118);
   const petSize = Math.round(s(64) * 0.8);
   const foeHeroSize = Math.round(petSize * 1.5);
   const youCharacter = getCharacter(snapshot.you.baseAvatarId);
   const foeCharacter = getCharacter(snapshot.opponent.baseAvatarId);
-  const skill1 = snapshot.skills?.[0]?.name ?? 'Kỹ năng 1';
-  const skill2 = snapshot.skills?.[1]?.name ?? 'Kỹ năng 2';
+  const skillCard1 = snapshot.skills?.[0];
+  const skillCard2 = snapshot.skills?.[1];
+  const skill1 = skillCard1?.name ?? 'Kỹ năng 1';
+  const skill2 = skillCard2?.name ?? 'Kỹ năng 2';
+  const skill1Wait = skillCard1?.wait ?? 0;
+  const skill2Wait = skillCard2?.wait ?? 0;
+  const skill1Locked = skill1Wait > 0 || (actor != null && (skillCard1?.mana ?? 0) > (actor.mp ?? 0));
+  const skill2Locked = skill2Wait > 0 || (actor != null && (skillCard2?.mana ?? 0) > (actor.mp ?? 0));
   const pickedLabel = picked === 0 ? skill1 : picked === 1 ? skill2 : 'Đánh thường';
   const lastLine = snapshot.log[snapshot.log.length - 1] ?? '';
   const log = finished
@@ -120,6 +127,8 @@ export function ArenaScreen() {
 
   const confirm = () => {
     if (!yourTurn || !focus) return;
+    if (picked === 0 && skill1Locked) return;
+    if (picked === 1 && skill2Locked) return;
     if (picked === 'attack') battle.sendAction('attack', focus.id);
     else battle.sendAction('skill', focus.id, picked);
   };
@@ -189,6 +198,9 @@ export function ArenaScreen() {
             character={youCharacter}
             hairColor={snapshot.you.hairColor}
             outfitColor={snapshot.you.outfitColor}
+            step={steps[youHero.id] ?? null}
+            slashKey={slashes[youHero.id] ?? 0}
+            shakeKey={shakes[youHero.id] ?? 0}
           />
           {yourPets.map((unit, index) => (
             <CourtUnit
@@ -201,6 +213,9 @@ export function ArenaScreen() {
               statFont={font(10)}
               barWidth={s(86)}
               testID={`court-ally-${index}`}
+              step={steps[unit.id] ?? null}
+              slashKey={slashes[unit.id] ?? 0}
+              shakeKey={shakes[unit.id] ?? 0}
             />
           ))}
           <CourtUnit
@@ -217,6 +232,9 @@ export function ArenaScreen() {
             hairColor={snapshot.opponent.hairColor}
             outfitColor={snapshot.opponent.outfitColor}
             onPress={foeHero.hp > 0 ? () => setFocusId(foeHero.id) : undefined}
+            step={steps[foeHero.id] ?? null}
+            slashKey={slashes[foeHero.id] ?? 0}
+            shakeKey={shakes[foeHero.id] ?? 0}
           />
           {foePets.map((unit, index) => (
             <CourtUnit
@@ -232,6 +250,9 @@ export function ArenaScreen() {
               front={FOE_PET_CELLS[index] === 'G19'}
               testID={`court-foe-${index}`}
               onPress={unit.hp > 0 ? () => setFocusId(unit.id) : undefined}
+              step={steps[unit.id] ?? null}
+              slashKey={slashes[unit.id] ?? 0}
+              shakeKey={shakes[unit.id] ?? 0}
             />
           ))}
           {floats.map((note) => {
@@ -243,9 +264,10 @@ export function ArenaScreen() {
               <FloatingCombatText
                 key={note.id}
                 amount={note.amount}
+                kind={note.kind}
                 x={anchor.x + (index - (stack.length - 1) / 2) * 16}
                 y={anchor.y}
-                onDone={() => setFloats((current) => current.filter((entry) => entry.id !== note.id))}
+                onDone={() => dismissFloat(note.id)}
               />
             );
           })}
@@ -298,24 +320,26 @@ export function ArenaScreen() {
                   font={font(10)}
                 />
                 <RoundButton
-                  label={skill1}
-                  hint="Chiêu 1"
+                  label={skill1Wait > 0 ? `CD ${skill1Wait}` : skill1}
+                  hint={`${skill1} · MP ${skillCard1?.mana ?? 0}`}
                   square
                   tint="#7fd0c4"
                   picked={picked === 0}
-                  disabled={!yourTurn}
+                  disabled={!yourTurn || skill1Locked}
+                  dim={skill1Locked}
                   testID="action-skill-1"
                   onPress={() => setPicked(0)}
                   size={s(48)}
                   font={font(10)}
                 />
                 <RoundButton
-                  label={skill2}
-                  hint="Chiêu 2"
+                  label={skill2Wait > 0 ? `CD ${skill2Wait}` : skill2}
+                  hint={`${skill2} · MP ${skillCard2?.mana ?? 0}`}
                   square
                   tint="#7fd0c4"
                   picked={picked === 1}
-                  disabled={!yourTurn}
+                  disabled={!yourTurn || skill2Locked}
+                  dim={skill2Locked}
                   testID="action-skill-2"
                   onPress={() => setPicked(1)}
                   size={s(48)}
@@ -327,7 +351,7 @@ export function ArenaScreen() {
                   square
                   tint="#e23a22"
                   hot
-                  disabled={!yourTurn || !focus}
+                  disabled={!yourTurn || !focus || (picked === 0 && skill1Locked) || (picked === 1 && skill2Locked)}
                   testID="battle-confirm"
                   onPress={confirm}
                   size={s(48)}

@@ -4,13 +4,24 @@ import {
   resolveStatusApplication,
   startingToughness,
   toughnessDamage,
+  type StatusEntry,
   type StatusId,
 } from './combat/advanced';
 import { finalDamage, type DamageResult } from './combat/damage';
 import { combatElement, type ElementId } from './combat/elements';
 import { applyMastery, classCatalog, heroTraits, masteryOf, monsterCatalog, resolvePetLoadout, rollHeroKit, rollMonsterKit } from './combat/kits';
-import type { Skill } from './combat/model';
+import type { Skill, StatMod } from './combat/model';
 import { turnOrder } from './combat/order';
+import {
+  beginTurnAuras,
+  castSkill,
+  isSilenced,
+  needsAllyTarget,
+  needsEnemyTarget,
+  retargetAttack,
+  shouldSkipTurn,
+  tickFighterTimers,
+} from './combat/skillEffects';
 import { monsterMana, professionPools } from './growth';
 import { ITEMS, applyConsumable, removeOne } from './items';
 import { speciesById } from './monsters';
@@ -19,6 +30,7 @@ import type { Encounter, ItemId, Stack, Vitals } from './types';
 
 export type { Skill };
 export { applyMastery, masteryOf, rollHeroKit, rollMonsterKit };
+export { needsAllyTarget, needsEnemyTarget };
 
 export type Fighter = {
   id: string;
@@ -47,7 +59,23 @@ export type Fighter = {
   /** Staggered fighters skip their next turn and take −50% DEF until then. */
   staggered?: boolean;
   /** Live status effects. Duration is remaining turns. */
-  statuses?: { id: StatusId; turns: number }[];
+  statuses?: StatusEntry[];
+  /** Temporary stat modifiers from buffs/debuffs. */
+  mods?: StatMod[];
+  /** Cumulative damage taken this fight (Guardian rebound). */
+  damageTaken?: number;
+  stealthTurns?: number;
+  tauntTurns?: number;
+  /** Who this fighter is guarding (absorb fraction in statuses/guard). */
+  guardTargetId?: string;
+  guardAbsorb?: number;
+  guardTurns?: number;
+  /** Archer charge: next turn fires true damage at this power. */
+  chargedPower?: number;
+  chargedTrue?: boolean;
+  reflectCharges?: number;
+  reflectPct?: number;
+  critBlockTurns?: number;
   /** The basic attack used in this fight. Heroes choose it before battle. */
   basic: Skill;
   /** Class basics offered on the setup screen. Monsters keep the one they rolled. */
@@ -148,9 +176,15 @@ export function wildSkills(kindId: string, _level = 1, seed = kindId): Skill[] {
   return rollMonsterKit(kindId, seed).skills;
 }
 
-/** Heal skills use power 0 and restore a slice of max HP instead of dealing damage. */
+/** True when the skill is primarily a heal (has heal effect or legacy power-0 heal). */
 export function isHeal(skill: Skill): boolean {
-  return skill.power <= 0;
+  if ((skill.effects ?? []).some((effect) => effect.type === 'heal')) return true;
+  return skill.power <= 0 && !(skill.effects && skill.effects.length);
+}
+
+/** True when the battle UI can confirm without an enemy target. */
+export function skillNeedsFoe(skill: Skill | null | undefined): boolean {
+  return needsEnemyTarget(skill);
 }
 
 export function healAmount(maxHp: number): number {
@@ -236,6 +270,11 @@ export type BattleState = {
   log: string;
   over: 'win' | 'lose' | null;
   tamed: TamedMonster[];
+  /** Hunter bait: enemy attacks must hit the highest-HP ally for N turns. */
+  redirectHighestTurns?: number;
+  /** Medic bio-field: heal party at turn start. */
+  bioFieldTurns?: number;
+  bioFieldPct?: number;
 };
 
 export function makePlayer(input: {
@@ -440,7 +479,7 @@ export function startBattle(
 }
 
 export function actBasic(state: BattleState, foeId: string): BattleState {
-  return strikeFoe(state, foeId, null);
+  return strikeFoe(state, foeId === 'none' ? null : foeId, null);
 }
 
 export function actSkill(state: BattleState, foeId: string | null, skillId: string): BattleState {
@@ -456,6 +495,7 @@ export function actAlly(state: BattleState, foeId: string | null, skillId: strin
   const skill = skillId ? ready.skills.find((entry) => entry.id === skillId) ?? null : null;
   if (skillId && !skill) return state;
   if (skill && !skillReady(ready, skill)) return { ...state, log: `${skill.name} chưa sẵn sàng.` };
+  if (isSilenced(ready) && skill) return { ...state, log: `${ready.name} bị câm lặng — chỉ đánh thường.` };
   if (skill) {
     ready = {
       ...ready,
@@ -463,16 +503,15 @@ export function actAlly(state: BattleState, foeId: string | null, skillId: strin
       cooldowns: { ...ready.cooldowns, [skill.id]: skill.cooldown },
     };
   }
-  if (skill && isHeal(skill)) {
-    const amount = healAmount(ready.maxHp);
-    ready = { ...ready, hp: Math.min(ready.maxHp, ready.hp + amount) };
-    return after(replace(state, ready), ready.id, `${ready.name} dùng ${skill.name}, hồi ${amount} máu.`);
+  let next = replace(state, ready);
+  if (needsEnemyTarget(skill) || (!skill && needsEnemyTarget(ready.basic))) {
+    const intended = next.foes.find((entry) => entry.id === foeId && entry.hp > 0) ?? null;
+    const foe = retargetAttack(next, ready, intended);
+    if (!foe) return { ...state, log: 'Hãy chọn một quái còn sống.' };
+    foeId = foe.id;
   }
-  const foe = state.foes.find((entry) => entry.id === foeId && entry.hp > 0);
-  if (!foe) return { ...state, log: 'Hãy chọn một quái còn sống.' };
-  const strike = resolveStrike(ready, foe, skill ? skill.power : ready.basic.power, skill?.name);
-  const name = skill ? skill.name : ready.basic.name;
-  return after(replace(replace(state, ready), strike.target), ready.id, `${ready.name} dùng ${name}. ${strikeText(strike, foe.name)}`);
+  const cast = castSkill(next, ready.id, skill, foeId);
+  return after(cast.state as BattleState, ready.id, `${ready.name} dùng ${skill ? skill.name : ready.basic.name}. ${cast.log}`);
 }
 
 export function actItem(state: BattleState, itemId: ItemId): BattleState {
@@ -566,16 +605,26 @@ export function actAuto(state: BattleState, allowAlly = false): BattleState {
   if (actor.side === 'ally' && !allowAlly) return state;
   if (actor.side !== 'wild' && actor.side !== 'ally') return state;
   const ready = tickCooldowns(actor);
-  const skill = [...ready.skills].filter((entry) => entry.power > 0 && skillReady(ready, entry)).sort((a, b) => b.power - a.power)[0];
+  const skip = shouldSkipTurn(ready);
+  if (skip) {
+    const cleared = { ...ready, staggered: false };
+    return after(replace(state, cleared), ready.id, `${ready.name} ${skip} và bỏ lượt.`);
+  }
+  const canSkill = !isSilenced(ready);
+  const skill = canSkill
+    ? [...ready.skills].filter((entry) => skillReady(ready, entry)).sort((a, b) => b.power - a.power)[0]
+    : undefined;
   const spent = skill
     ? { ...ready, mp: ready.mp - skill.mana, cooldowns: { ...ready.cooldowns, [skill.id]: skill.cooldown } }
     : ready;
   const pool = actor.side === 'wild' ? friendlies(state) : state.foes;
-  const target = weakest(pool);
-  if (!target) return after(replace(state, spent), spent.id, state.log);
-  const strike = resolveStrike(spent, target, skill ? skill.power : spent.basic.power, skill?.name);
+  const intended = weakest(pool.filter((unit) => (unit.stealthTurns ?? 0) <= 0)) ?? weakest(pool);
+  const target = retargetAttack(state, spent, intended ?? null);
+  if (!target && needsEnemyTarget(skill ?? spent.basic)) return after(replace(state, spent), spent.id, state.log);
+  let next = replace(state, spent);
+  const cast = castSkill(next, spent.id, skill ?? null, target?.id ?? null);
   const name = skill ? skill.name : spent.basic.name;
-  return after(replace(replace(state, spent), strike.target), spent.id, `${spent.name} dùng ${name}. ${strikeText(strike, target.name)}`);
+  return after(cast.state as BattleState, spent.id, `${spent.name} dùng ${name}. ${cast.log}`);
 }
 
 /** Auto-battle for the player: heal when low, otherwise the strongest ready skill. */
@@ -675,6 +724,17 @@ function strikeFoe(state: BattleState, foeId: string | null, skillId: string | n
   const skill = skillId ? player.skills.find((entry) => entry.id === skillId) ?? null : null;
   if (skillId && !skill) return state;
   if (skill && !skillReady(player, skill)) return { ...state, log: `${skill.name} chưa sẵn sàng.` };
+  if (isSilenced(player) && skill) return { ...state, log: `${player.name} bị câm lặng — chỉ đánh thường.` };
+
+  // Fire charged snipe if waiting.
+  if (!skill && player.chargedPower) {
+    const intended = state.foes.find((entry) => entry.id === foeId && entry.hp > 0) ?? null;
+    const foe = retargetAttack(state, player, intended);
+    if (!foe) return { ...state, log: 'Hãy chọn một quái còn sống.' };
+    const cast = castSkill({ ...state, player }, player.id, null, foe.id);
+    return after(cast.state as BattleState, 'player', cast.log);
+  }
+
   if (skill) {
     player = {
       ...player,
@@ -682,17 +742,19 @@ function strikeFoe(state: BattleState, foeId: string | null, skillId: string | n
       cooldowns: { ...player.cooldowns, [skill.id]: skill.cooldown },
     };
   }
-  if (skill && isHeal(skill)) {
-    const amount = healAmount(player.maxHp);
-    player = { ...player, hp: Math.min(player.maxHp, player.hp + amount) };
-    return after({ ...state, player }, 'player', `${skill.name} hồi ${amount} máu.`);
+  let next: BattleState = { ...state, player };
+  const move = skill ?? player.basic;
+  if (needsEnemyTarget(move)) {
+    const intended = next.foes.find((entry) => entry.id === foeId && entry.hp > 0) ?? null;
+    const foe = retargetAttack(next, player, intended);
+    if (!foe) return { ...state, log: 'Hãy chọn một quái còn sống.' };
+    foeId = foe.id;
+  } else if (needsAllyTarget(move) && !foeId) {
+    const pet = next.allies.find((entry) => entry.hp > 0);
+    foeId = pet?.id ?? null;
   }
-  const foe = state.foes.find((entry) => entry.id === foeId && entry.hp > 0);
-  if (!foe) return { ...state, log: 'Hãy chọn một quái còn sống.' };
-  const strike = resolveStrike(player, foe, skill ? skill.power : player.basic.power, skill?.name);
-  const foes = state.foes.map((entry) => (entry.id === foe.id ? strike.target : entry));
-  const label = skill ? skill.name : player.basic.name;
-  return after({ ...state, player, foes }, 'player', `${label}. ${strikeText(strike, foe.name)}`);
+  const cast = castSkill(next, player.id, skill, foeId);
+  return after(cast.state as BattleState, 'player', cast.log);
 }
 
 function isPlayerTurn(state: BattleState): boolean {
@@ -838,31 +900,32 @@ function clearStagger(fighter: Fighter): Fighter {
   return { ...fighter, staggered: false };
 }
 
-function tickStatuses(fighter: Fighter): Fighter {
-  if (!fighter.statuses?.length) return fighter;
-  const statuses = fighter.statuses
-    .map((entry) => ({ ...entry, turns: entry.turns - 1 }))
-    .filter((entry) => entry.turns > 0);
-  return { ...fighter, statuses };
-}
-
 function after(state: BattleState, actedId: string, log: string): BattleState {
   let next = { ...state, log };
   const actor = unit(next, actedId);
-  if (actor) next = replace(next, tickStatuses(actor));
+  if (actor) next = replace(next, tickFighterTimers(actor));
+  if ((next.redirectHighestTurns ?? 0) > 0) {
+    next = { ...next, redirectHighestTurns: Math.max(0, (next.redirectHighestTurns ?? 0) - 1) };
+  }
+  if ((next.bioFieldTurns ?? 0) > 0) {
+    next = { ...next, bioFieldTurns: Math.max(0, (next.bioFieldTurns ?? 0) - 1) };
+  }
   const friends = friendlies(next).some((fighter) => fighter.hp > 0);
   if (!friends) return { ...next, over: 'lose' };
   if (next.foes.every((foe) => foe.hp <= 0)) return { ...next, over: 'win' };
 
   const pickNext = (fromOrder: string[], fromIndex: number): BattleState | null => {
     for (let step = fromIndex + 1; step < fromOrder.length; step += 1) {
-      const fighter = unit(next, fromOrder[step]);
+      let fighter = unit(next, fromOrder[step]);
       if (!fighter || fighter.hp <= 0) continue;
-      if (fighter.staggered) {
-        next = replace(next, clearStagger(fighter));
+      next = beginTurnAuras(next, fighter.id) as BattleState;
+      fighter = unit(next, fighter.id)!;
+      const skip = shouldSkipTurn(fighter);
+      if (skip) {
+        next = replace(next, clearStagger(tickFighterTimers({ ...fighter, staggered: false })));
         next = {
           ...next,
-          log: `${next.log} ${fighter.name} gục ngã và bỏ lượt (−50% DEF hết).`.trim(),
+          log: `${next.log} ${fighter.name} ${skip} và bỏ lượt.`.trim(),
         };
         continue;
       }

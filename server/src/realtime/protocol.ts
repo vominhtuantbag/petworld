@@ -79,6 +79,10 @@ export type ArenaFriendView = {
 export type DuelSkillView = {
   index: 0 | 1;
   name: string;
+  mana?: number;
+  cooldown?: number;
+  /** Remaining turns before the skill can be used again. */
+  wait?: number;
 };
 
 /** One hero or pet in the shared turn queue. `side` is relative to the viewer. */
@@ -121,6 +125,15 @@ export type FighterView = {
   ready: boolean;
 };
 
+export type LastHitView = {
+  attackerId: string;
+  targetId: string;
+  damage: number;
+  crit: boolean;
+  miss: boolean;
+  skillName?: string;
+};
+
 export type BattleView = {
   roomId: string;
   round: number;
@@ -138,6 +151,7 @@ export type BattleView = {
   units: DuelUnitView[];
   /** The two skill buttons for the viewer's side. */
   skills: DuelSkillView[];
+  lastHit?: LastHitView | null;
   yourTurn: boolean;
   ranked?: boolean;
   bout?: number;
@@ -255,6 +269,7 @@ export type RaidBattleView = {
   queue: string[];
   units: RaidUnitView[];
   skills: DuelSkillView[];
+  lastHit?: LastHitView | null;
   yourTurn: boolean;
   /** Present on a win. The same object for every fighter. No leader bonus. */
   rewards: RaidRewardView | null;

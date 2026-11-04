@@ -6,7 +6,34 @@
 
 export const DEFAULT_CRIT_DAMAGE = 1.5;
 
-export type StatusId = 'poison' | 'freeze' | 'stun' | 'slow';
+export type StatusId =
+  | 'poison'
+  | 'freeze'
+  | 'stun'
+  | 'slow'
+  | 'silence'
+  | 'blind'
+  | 'bleed'
+  | 'burn'
+  | 'mark'
+  | 'stealth'
+  | 'taunt'
+  | 'guard'
+  | 'charge'
+  | 'immunity'
+  | 'reflect'
+  | 'crit_block'
+  | 'spd_zero';
+
+export type StatusEntry = {
+  id: StatusId;
+  turns: number;
+  /** Optional potency (DoT %, absorb %, reflect %, mark bonuses, etc.). */
+  power?: number;
+  /** Secondary value (e.g. mark ignoreDef, guard absorb). */
+  power2?: number;
+  sourceId?: string;
+};
 
 export type AdvancedStats = {
   /** Max Toughness. Current toughness lives on the live fighter as `tgh`. */
