@@ -23,7 +23,27 @@ export type StatusId =
   | 'immunity'
   | 'reflect'
   | 'crit_block'
-  | 'spd_zero';
+  | 'spd_zero'
+  | 'bound'
+  | 'energy_lock'
+  | 'item_lock'
+  | 'miasma'
+  | 'thirst'
+  | 'frost'
+  | 'curse_doom'
+  | 'sealed'
+  | 'undying'
+  | 'delayed'
+  | 'block_swap'
+  | 'evade_skill'
+  | 'evade_basic'
+  | 'nullify'
+  | 'veil'
+  | 'enrage'
+  | 'trap'
+  | 'thorns'
+  | 'chant'
+  | 'quicksand';
 
 export type StatusEntry = {
   id: StatusId;

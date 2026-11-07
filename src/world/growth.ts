@@ -6,11 +6,13 @@
  *
  * Battle loadouts are rolled in `src/world/combat/kits.ts`: a hero keeps
  * two of three class skills, and a monster keeps one species basic attack
- * plus two of the first three skills of its element. The counts below
+ * plus two of the first three skills of its biome system. The counts below
  * remain for older callers.
  */
 
-import { heroAdvanced, monsterAdvanced } from './combat/advanced';
+import { heroAdvanced } from './combat/advanced';
+import { biomeSkillList } from './combat/biomeSkills';
+import { combatElement, type BiomeId } from './combat/elements';
 
 export const CLASS_SKILL_SLOTS = 2;
 export const CLASS_SKILLS_UNLOCKED = 1;
@@ -20,7 +22,7 @@ export const MONSTER_SKILL_SLOTS = 3;
 export const MONSTER_SKILLS_UNLOCKED = 2;
 export const MONSTER_THIRD_SKILL_LEVEL = 16;
 
-export type MonsterElement = 'water' | 'fire' | 'ice' | 'earth' | 'poison' | 'beast';
+export type MonsterElement = BiomeId;
 
 export type CharacterCombatStats = {
   lv: number;
@@ -93,13 +95,23 @@ const CURVES: Record<string, Curve> = {
   wanderer: { hp: 100, hpPer: 8, mp: 40, mpPer: 4, stamina: 40, staminaPer: 2, attack: 11, attackPer: 2, defense: 4, defensePer: 1, speed: 90, speedPer: 1 },
 };
 
-const MP_BODY: Record<MonsterElement, number> = {
-  water: 20,
-  fire: 18,
-  ice: 17,
-  poison: 16,
-  earth: 13,
-  beast: 12,
+const MP_BODY: Record<BiomeId, number> = {
+  plains: 14,
+  mountain: 13,
+  forest: 16,
+  swamp: 16,
+  beach: 16,
+  ocean: 20,
+  frost: 17,
+  savanna: 14,
+  volcano: 18,
+  desert: 13,
+  darkness: 16,
+  light: 17,
+  heaven: 18,
+  hell: 18,
+  chaos: 16,
+  cosmic: 20,
 };
 
 function step(base: number, per: number, level: number): number {
@@ -138,22 +150,9 @@ export function monsterSkillCount(level: number): number {
   return level >= MONSTER_THIRD_SKILL_LEVEL ? MONSTER_SKILL_SLOTS : MONSTER_SKILLS_UNLOCKED;
 }
 
-/** Ocean, shore, swamp, and the wet grassland species share the water kit. */
+/** Combat biome for mana curves. Same mapping as the skill catalog. */
 export function monsterElement(kindId: string): MonsterElement {
-  if (/dart-frog|mamba|tarantula/.test(kindId)) return 'poison';
-  if (
-    kindId.startsWith('ocean-') ||
-    kindId.startsWith('beach-') ||
-    kindId.startsWith('swamp-') ||
-    /frog|toad|crab|turtle|fish|whale|shark|seal|penguin|orca|manta|octopus|moray|seahorse|jelly/.test(kindId)
-  ) {
-    return 'water';
-  }
-  if (kindId.startsWith('volcano-')) return 'fire';
-  if (kindId.startsWith('tundra-')) return 'ice';
-  if (kindId.startsWith('desert-')) return 'earth';
-  if (/snake|mamba|dart-frog|spider|tarantula|scorpion|gila/.test(kindId)) return 'poison';
-  return 'beast';
+  return combatElement(kindId);
 }
 
 export function monsterMana(kindId: string, level: number): number {
@@ -163,40 +162,13 @@ export function monsterMana(kindId: string, level: number): number {
 
 type SkillShape = { id: string; name: string; mana: number; power: number; cooldown: number };
 
-const KITS: Record<MonsterElement, SkillShape[]> = {
-  water: [
-    { id: 'water-gun', name: 'Súng nước', mana: 6, power: 1.35, cooldown: 1 },
-    { id: 'rain-dance', name: 'Vũ điệu mưa', mana: 10, power: 1.6, cooldown: 2 },
-    { id: 'tide', name: 'Thủy triều', mana: 14, power: 1.85, cooldown: 3 },
-  ],
-  fire: [
-    { id: 'ember', name: 'Tàn lửa', mana: 6, power: 1.4, cooldown: 1 },
-    { id: 'blaze', name: 'Bùng cháy', mana: 11, power: 1.7, cooldown: 2 },
-    { id: 'erupt', name: 'Phun trào', mana: 15, power: 1.95, cooldown: 3 },
-  ],
-  ice: [
-    { id: 'frost', name: 'Lạnh buốt', mana: 6, power: 1.3, cooldown: 1 },
-    { id: 'shard', name: 'Mảnh băng', mana: 10, power: 1.6, cooldown: 2 },
-    { id: 'blizzard', name: 'Bão tuyết', mana: 14, power: 1.85, cooldown: 3 },
-  ],
-  earth: [
-    { id: 'pebble', name: 'Đá vụn', mana: 5, power: 1.25, cooldown: 1 },
-    { id: 'quake', name: 'Rung đất', mana: 10, power: 1.55, cooldown: 2 },
-    { id: 'wall', name: 'Tường đá', mana: 13, power: 1.75, cooldown: 3 },
-  ],
-  poison: [
-    { id: 'spit', name: 'Phun độc', mana: 6, power: 1.35, cooldown: 1 },
-    { id: 'sting', name: 'Chích', mana: 8, power: 1.5, cooldown: 2 },
-    { id: 'venom', name: 'Độc tố', mana: 12, power: 1.8, cooldown: 3 },
-  ],
-  beast: [
-    { id: 'bite', name: 'Cắn', mana: 5, power: 1.3, cooldown: 1 },
-    { id: 'claw', name: 'Cào', mana: 7, power: 1.5, cooldown: 1 },
-    { id: 'howl', name: 'Gầm', mana: 11, power: 1.75, cooldown: 3 },
-  ],
-};
-
-/** All three monster slots. Callers slice to the unlocked count. */
+/** All five biome skills. Callers slice to the unlocked count. */
 export function monsterKit(kindId: string): SkillShape[] {
-  return KITS[monsterElement(kindId)];
+  return biomeSkillList(combatElement(kindId)).map((skill) => ({
+    id: skill.id,
+    name: skill.name,
+    mana: skill.mana,
+    power: skill.power,
+    cooldown: skill.cooldown,
+  }));
 }

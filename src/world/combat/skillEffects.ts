@@ -22,6 +22,20 @@ export type EffectFighter = {
   critRate: number;
   critDamage: number;
   element: import('./elements').ElementId;
+  shieldHp?: number;
+  extraTurns?: number;
+  mpCostMult?: number;
+  nextAttackBoost?: number;
+  magicReducePct?: number;
+  magicReduceTurns?: number;
+  meleeThornsPct?: number;
+  meleeThornsTurns?: number;
+  meleeThornsBurn?: boolean;
+  trapTurns?: number;
+  trapPct?: number;
+  delayed?: boolean;
+  enraged?: boolean;
+  endureUsed?: boolean;
   tgh: number;
   maxTgh: number;
   armPen: number;
@@ -63,6 +77,9 @@ export type EffectBattleState = {
   redirectHighestTurns?: number;
   bioFieldTurns?: number;
   bioFieldPct?: number;
+  chantTurns?: number;
+  chantHpPct?: number;
+  chantMpPct?: number;
 };
 
 type BattleState = EffectBattleState;
@@ -70,12 +87,44 @@ type Fighter = EffectFighter;
 
 type CastResult = { state: BattleState; log: string };
 
-const DEBUFF_IDS: StatusId[] = ['poison', 'freeze', 'stun', 'slow', 'silence', 'blind', 'bleed', 'burn', 'spd_zero'];
+const DEBUFF_IDS: StatusId[] = [
+  'poison',
+  'freeze',
+  'stun',
+  'slow',
+  'silence',
+  'blind',
+  'bleed',
+  'burn',
+  'spd_zero',
+  'bound',
+  'energy_lock',
+  'item_lock',
+  'miasma',
+  'thirst',
+  'curse_doom',
+  'sealed',
+  'block_swap',
+  'quicksand',
+];
+
+const RANDOM_HIT_STATUSES: StatusId[] = ['burn', 'freeze', 'poison', 'stun'];
+
+export function manaCost(fighter: EffectFighter, skill: Skill): number {
+  const thirst = hasStatus(fighter, 'thirst') || (fighter.mpCostMult ?? 1) > 1;
+  const mult = Math.max(1, fighter.mpCostMult ?? (thirst ? 2 : 1));
+  return Math.max(0, Math.round((skill.mana || 0) * mult));
+}
+
+export function isUltimateSkill(skill: Skill | null | undefined): boolean {
+  if (!skill) return false;
+  return /(?:-5)$/.test(skill.id);
+}
 
 export function needsEnemyTarget(skill: Skill | null | undefined): boolean {
   if (!skill) return true;
   const target = skill.target ?? inferTarget(skill);
-  return target === 'enemy' || target === 'enemies' || target === 'enemy_pets';
+  return target === 'enemy' || target === 'enemy_back' || target === 'enemies' || target === 'enemy_pets';
 }
 
 export function needsAllyTarget(skill: Skill | null | undefined): boolean {
@@ -118,13 +167,26 @@ export function castSkill(
   }
 
   const move = skill ?? actor.basic;
+  const fromSkill = Boolean(skill && (skill.mana > 0 || skill.cooldown > 0));
+  const liveActor = findUnit(next, actor.id) ?? actor;
+  if (fromSkill && hasStatus(liveActor, 'miasma')) {
+    const tax = Math.max(1, Math.round(liveActor.maxHp * (getStatus(liveActor, 'miasma')?.power ?? 0.1)));
+    next = putUnit(next, { ...liveActor, hp: Math.max(0, liveActor.hp - tax), damageTaken: (liveActor.damageTaken ?? 0) + tax });
+    notes.push(`${liveActor.name} mất ${tax} HP vì miasma.`);
+  }
+  if ((liveActor.trapTurns ?? 0) > 0 && fromSkill) {
+    const tax = Math.max(1, Math.round(liveActor.maxHp * (liveActor.trapPct ?? 0.08)));
+    const trapped = findUnit(next, liveActor.id)!;
+    next = putUnit(next, { ...trapped, hp: Math.max(0, trapped.hp - tax), damageTaken: (trapped.damageTaken ?? 0) + tax });
+    notes.push(`${trapped.name} dính bẫy (${tax}).`);
+  }
   const effects = move.effects?.length ? move.effects : ([{ type: 'damage', power: move.power || 1 }] as SkillEffect[]);
 
   // Stealth bonus for next damaging attack leaving stealth.
   const fromStealth = (actor.stealthTurns ?? 0) > 0;
 
   for (const effect of effects) {
-    const applied = applyEffect(next, actor.id, effect, targetId, rng, fromStealth);
+    const applied = applyEffect(next, actor.id, effect, targetId, rng, fromStealth, fromSkill);
     next = applied.state;
     if (applied.notes.length) notes.push(...applied.notes);
   }
@@ -145,13 +207,22 @@ function applyEffect(
   targetId: string | null,
   rng: () => number,
   fromStealth: boolean,
+  fromSkill = false,
 ): { state: BattleState; notes: string[] } {
   const actor = findUnit(state, actorId);
   if (!actor) return { state, notes: [] };
 
   switch (effect.type) {
     case 'damage':
-      return applyDamage(state, actor, pickEnemy(state, actor, targetId), effect, rng, fromStealth);
+      return applyDamage(
+        state,
+        actor,
+        effect.preferBackRow ? pickBackRow(state, actor) : pickEnemy(state, actor, targetId),
+        effect,
+        rng,
+        fromStealth,
+        fromSkill,
+      );
     case 'heal':
       return applyHeal(state, actor, effect, targetId);
     case 'restore_mp':
@@ -200,8 +271,109 @@ function applyEffect(
       };
     case 'strip_def':
       return stripDefHits(state, actor, effect, rng);
+    case 'strip_buff':
+      return stripBuff(state, actor, effect, targetId);
     case 'random':
-      return applyRandom(state, actorId, effect, targetId, rng, fromStealth);
+      return applyRandom(state, actorId, effect, targetId, rng, fromStealth, fromSkill);
+    case 'shield':
+      return applyShield(state, actor, effect);
+    case 'extra_turn': {
+      const self = { ...actor, extraTurns: (actor.extraTurns ?? 0) + 1 };
+      return { state: putUnit(state, self), notes: [`${actor.name} nhận thêm 1 lượt.`] };
+    }
+    case 'delay_turn':
+      return applyDelayTurn(state, actor, targetId);
+    case 'mp_cost_mult':
+      return applyMpCostMult(state, actor, effect, targetId);
+    case 'lock_energy':
+      return applyLockEnergy(state, actor, effect, targetId);
+    case 'pull_lowest':
+      return applyPullLowest(state, actor, effect);
+    case 'detonate_frost':
+      return applyDetonateFrost(state, actor, targetId, rng);
+    case 'swap_hp_pct':
+      return applySwapHpPct(state, actor, targetId);
+    case 'swap_stat':
+      return applySwapStat(state, actor, effect, targetId, rng);
+    case 'transfer_debuffs':
+      return applyTransferDebuffs(state, actor);
+    case 'seal_ultimate':
+      return applySealUltimate(state, actor, effect, targetId);
+    case 'sacrifice_hp':
+      return applySacrificeHp(state, actor, effect, targetId);
+    case 'reset_cds':
+      return resetCooldowns(state, actor);
+    case 'undying':
+      return {
+        state: putUnit(state, withStatus(actor, { id: 'undying', turns: effect.turns })),
+        notes: [`${actor.name} bất tử 1 HP trong ${effect.turns} lượt.`],
+      };
+    case 'endure':
+      return {
+        state: putUnit(state, { ...actor, endureUsed: false }),
+        notes: [`${actor.name} gieo Hạt Giống Sinh Cơ.`],
+      };
+    case 'next_skill_evade':
+      return {
+        state: putUnit(state, withStatus(actor, { id: 'evade_skill', turns: 2 })),
+        notes: [`${actor.name} né kỹ năng kế.`],
+      };
+    case 'evade_basics':
+      return {
+        state: putUnit(state, withStatus(actor, { id: 'evade_basic', turns: effect.turns })),
+        notes: [`${actor.name} né đòn thường ${effect.turns} lượt.`],
+      };
+    case 'barrier':
+      return applyBarrier(state, actor, effect);
+    case 'magic_reduce':
+      return {
+        state: putUnit(state, {
+          ...actor,
+          magicReducePct: effect.pct,
+          magicReduceTurns: effect.turns,
+        }),
+        notes: [`${actor.name} giảm ${Math.round(effect.pct * 100)}% sát thương kỹ năng.`],
+      };
+    case 'steal_stat':
+      return applyStealStat(state, actor, effect, targetId);
+    case 'absorb_def':
+      return applyAbsorbDef(state, actor, effect, targetId);
+    case 'hp_mp_chant':
+      return {
+        state: { ...state, chantTurns: effect.turns, chantHpPct: effect.hpPct, chantMpPct: effect.mpPct },
+        notes: [`Chuông cầu nguyện ${effect.turns} lượt.`],
+      };
+    case 'burn_mp':
+      return applyBurnMp(state, actor, effect, targetId);
+    case 'convert_def_to_atk':
+      return applyConvertDefToAtk(state, actor, effect);
+    case 'next_attack_boost':
+      return {
+        state: putUnit(state, { ...actor, nextAttackBoost: (actor.nextAttackBoost ?? 0) + effect.amount }),
+        notes: [`Đòn kế của ${actor.name} +${Math.round(effect.amount * 100)}%.`],
+      };
+    case 'melee_thorns':
+      return {
+        state: putUnit(state, {
+          ...actor,
+          meleeThornsPct: effect.pct,
+          meleeThornsTurns: effect.turns,
+          meleeThornsBurn: effect.burn,
+        }),
+        notes: [`${actor.name} kích giáp phản.`],
+      };
+    case 'enrage_below':
+      return maybeEnrage(state, actor, effect);
+    case 'trap_cast':
+      return applyTrap(state, actor, effect);
+    case 'cleanse':
+      return applyCleanse(state, actor, effect, targetId);
+    case 'frost_stack':
+      return applyFrostStack(state, actor, effect, targetId);
+    case 'cleanse_target_buffs':
+      return applyCleanseTargetBuffs(state, actor, targetId);
+    case 'steal_mp':
+      return applyStealMp(state, actor, effect, targetId);
     default:
       return { state, notes: [] };
   }
@@ -214,10 +386,21 @@ function applyDamage(
   effect: Extract<SkillEffect, { type: 'damage' }>,
   rng: () => number,
   fromStealth: boolean,
+  fromSkill = false,
 ): { state: BattleState; notes: string[] } {
   let next = state;
   const notes: string[] = [];
-  const hits = Math.max(1, effect.hits ?? 1);
+  if (effect.mpSpentPower) {
+    const spent = actor.mp;
+    const ratio = spent / Math.max(1, actor.maxMp);
+    effect = { ...effect, power: (effect.power ?? 1) * (0.4 + 1.6 * ratio) };
+    next = putUnit(next, { ...actor, mp: 0 });
+    notes.push(`Đốt ${spent} MP.`);
+    actor = findUnit(next, actor.id) ?? actor;
+  }
+  const hits = effect.randomHits
+    ? Math.max(1, effect.randomHits[0] + Math.floor(rng() * (effect.randomHits[1] - effect.randomHits[0] + 1)))
+    : Math.max(1, effect.hits ?? 1);
   const targets = resolveDamageTargets(next, actor, primary, effect.aoe);
   if (!targets.length) return { state: next, notes: ['Không có mục tiêu.'] };
 
@@ -243,7 +426,16 @@ function applyDamage(
         continue;
       }
 
-      const result = computeHit(liveActor, liveTarget, { ...effect, power }, rng, fromStealth && isPrimary && hit === 0);
+      const prepared = prepareConvert(next, liveActor, liveTarget, effect);
+      next = prepared.state;
+      const result = computeHit(
+        findUnit(next, liveActor.id) ?? liveActor,
+        findUnit(next, liveTarget.id) ?? liveTarget,
+        { ...effect, power: prepared.power ?? power },
+        rng,
+        fromStealth && isPrimary && hit === 0,
+        fromSkill,
+      );
       let damaged = result.target;
       let reflectedNote = '';
       if (result.damage > 0 && (damaged.reflectCharges ?? 0) > 0 && (damaged.reflectPct ?? 0) > 0) {
@@ -287,10 +479,50 @@ function applyDamage(
         }
       }
 
+      if (dealt > 0 && effect.tghPct) {
+        const chip = Math.max(1, Math.round((damaged.maxTgh || 100) * effect.tghPct));
+        let tgh = Math.max(0, (damaged.tgh || damaged.maxTgh || 100) - chip);
+        let staggered = damaged.staggered ?? false;
+        if (tgh <= 0) {
+          staggered = true;
+          tgh = damaged.maxTgh || 100;
+        }
+        damaged = { ...damaged, tgh, staggered };
+        notes.push(`TGH ${damaged.name} −${chip}.`);
+      }
+      if (dealt > 0 && (damaged.shieldHp ?? 0) > 0) {
+        damaged = { ...damaged, shieldHp: Math.max(0, (damaged.shieldHp ?? 0) - Math.round((damaged.maxTgh || 100) * (effect.tghPct ?? 0))) };
+      }
       next = putUnit(next, {
         ...damaged,
         damageTaken: (damaged.damageTaken ?? 0) + dealt,
       });
+      if (dealt > 0 && effect.lifesteal) {
+        const heal = Math.max(1, Math.round(dealt * effect.lifesteal));
+        const self = findUnit(next, liveActor.id)!;
+        next = putUnit(next, { ...self, hp: Math.min(self.maxHp, self.hp + heal) });
+        notes.push(`${self.name} hút ${heal} HP.`);
+      }
+      if (dealt > 0 && (liveActor.meleeThornsTurns ?? 0) <= 0 && (damaged.meleeThornsTurns ?? 0) > 0 && !effect.aoe) {
+        const thorn = Math.max(1, Math.round(dealt * (damaged.meleeThornsPct ?? 0.25)));
+        const attacker = findUnit(next, liveActor.id)!;
+        let hurt: Fighter = { ...attacker, hp: Math.max(0, attacker.hp - thorn), damageTaken: (attacker.damageTaken ?? 0) + thorn };
+        if (damaged.meleeThornsBurn) {
+          hurt = withStatus(hurt, { id: 'burn', turns: 2, power: 0.05, sourceId: damaged.id });
+        }
+        next = putUnit(next, hurt);
+        notes.push(`Phản giáp ${thorn}.`);
+      }
+      if (!result.miss && effect.statusOnHit && rng() < effect.statusOnHit.chance) {
+        const statusId = (RANDOM_HIT_STATUSES[Math.floor(rng() * RANDOM_HIT_STATUSES.length)] ?? effect.statusOnHit.id) as StatusId;
+        const updated = findUnit(next, liveTarget.id);
+        if (updated) next = putUnit(next, withStatus(updated, { id: statusId, turns: effect.statusOnHit.turns }));
+      }
+      if (!result.miss && effect.stunChanceVs?.includes(liveTarget.element) && rng() < 0.3) {
+        const updated = findUnit(next, liveTarget.id);
+        if (updated) next = putUnit(next, withStatus(updated, { id: 'stun', turns: 1 }));
+        notes.push(`${liveTarget.name} choáng.`);
+      }
       if (result.crit && liveActor.basic?.id === 'bard-ambush') {
         const healed = Math.round(liveActor.maxHp * 0.1);
         const self = findUnit(next, liveActor.id)!;
@@ -304,7 +536,40 @@ function applyDamage(
       );
     }
   }
+  if (effect.killRestore) {
+    const slain = primary ? findUnit(next, primary.id) : null;
+    if (slain && slain.hp <= 0) {
+      const self = findUnit(next, actor.id)!;
+      next = putUnit(next, { ...self, mp: self.maxMp, cooldowns: {} });
+      notes.push(`${self.name} kết liễu, hồi MP và reset hồi chiêu.`);
+    }
+  }
+  const boosted = findUnit(next, actor.id);
+  if (boosted?.nextAttackBoost) {
+    next = putUnit(next, { ...boosted, nextAttackBoost: 0 });
+  }
   return { state: next, notes };
+}
+
+function prepareConvert(
+  state: BattleState,
+  actor: Fighter,
+  target: Fighter,
+  effect: Extract<SkillEffect, { type: 'damage' }>,
+): { state: BattleState; power?: number } {
+  if (!effect.convertBuffsToDamage) return { state };
+  const buffs = (target.mods ?? []).filter((mod) => mod.amount > 0);
+  const shield = target.shieldHp ?? 0;
+  const converted = shield + buffs.length * Math.max(8, Math.round(actor.attack * 0.25));
+  const stripped: Fighter = {
+    ...target,
+    shieldHp: 0,
+    mods: (target.mods ?? []).filter((mod) => mod.amount <= 0),
+  };
+  return {
+    state: putUnit(state, stripped),
+    power: Math.max(effect.power ?? 1, converted / Math.max(1, actor.attack)),
+  };
 }
 
 function computeHit(
@@ -313,13 +578,53 @@ function computeHit(
   effect: Extract<SkillEffect, { type: 'damage' }>,
   rng: () => number,
   fromStealth: boolean,
+  fromSkill = false,
 ): { damage: number; miss: boolean; crit: boolean; staggered: boolean; target: Fighter } {
+  if (hasStatus(defender, 'nullify')) {
+    const left = (getStatus(defender, 'nullify')?.turns ?? 1) > 0;
+    if (left) {
+      return {
+        damage: 0,
+        miss: true,
+        crit: false,
+        staggered: false,
+        target: {
+          ...defender,
+          statuses: (defender.statuses ?? []).filter((entry) => entry.id !== 'nullify'),
+        },
+      };
+    }
+  }
+  if (fromSkill && hasStatus(defender, 'evade_skill')) {
+    return {
+      damage: 0,
+      miss: true,
+      crit: false,
+      staggered: false,
+      target: { ...defender, statuses: (defender.statuses ?? []).filter((entry) => entry.id !== 'evade_skill') },
+    };
+  }
+  if (!fromSkill && hasStatus(defender, 'evade_basic')) {
+    return { damage: 0, miss: true, crit: false, staggered: false, target: defender };
+  }
+  if (hasStatus(defender, 'veil') && rng() < (getStatus(defender, 'veil')?.power ?? 0.5)) {
+    return { damage: 0, miss: true, crit: false, staggered: false, target: defender };
+  }
+
   let power = effect.power ?? 1;
   const hpRatio = defender.maxHp > 0 ? defender.hp / defender.maxHp : 1;
   if (effect.ifHpAbove != null && hpRatio > effect.ifHpAbove) power += effect.bonusPower ?? 0;
   if (effect.ifHpBelow != null && hpRatio < effect.ifHpBelow) power *= effect.finishMult ?? 1;
   if (effect.ifDebuffedBonus && hasDebuff(defender)) power += effect.ifDebuffedBonus;
   if (fromStealth) power += effect.fromStealthBonus ?? 0.5;
+  if (effect.ifDefGreaterMult && (attacker.defense || 0) > (defender.defense || 0)) power *= effect.ifDefGreaterMult;
+  if (effect.ifSlowBonus && (hasStatus(defender, 'slow') || modSum(defender, 'spd') < 0)) power += effect.ifSlowBonus;
+  if (effect.ifCasterHpGreater && attacker.hp > defender.hp) power += effect.ifCasterHpGreater;
+  if (effect.missingTargetHpStep && effect.missingTargetHpBonus) {
+    const missing = Math.max(0, 1 - hpRatio);
+    power += Math.floor(missing / effect.missingTargetHpStep) * effect.missingTargetHpBonus;
+  }
+  if (attacker.nextAttackBoost) power *= 1 + attacker.nextAttackBoost;
 
   const atkMods = modSum(attacker, 'atk');
   const defMods = modSum(defender, 'def');
@@ -331,25 +636,15 @@ function computeHit(
 
   let attack = (attacker.attack || 0) * (1 + atkMods);
   if (effect.scaleFromDef) attack = (attacker.defense || 0) * (1 + modSum(attacker, 'def'));
+  if (effect.scaleFromTargetAtk) attack = (defender.attack || 0) * effect.scaleFromTargetAtk;
   if (effect.missingHpPower != null) {
     const missing = Math.max(0, attacker.maxHp - attacker.hp);
-    return {
-      damage: Math.max(1, Math.round(missing * effect.missingHpPower)),
-      miss: false,
-      crit: false,
-      staggered: false,
-      target: { ...defender, hp: Math.max(0, defender.hp - Math.max(1, Math.round(missing * effect.missingHpPower))) },
-    };
+    const raw = Math.max(1, Math.round(missing * effect.missingHpPower));
+    return { damage: raw, miss: false, crit: false, staggered: false, target: takeHit(defender, raw, fromSkill) };
   }
   if (effect.damageTakenPower != null) {
     const raw = Math.max(1, Math.round((attacker.damageTaken ?? 0) * effect.damageTakenPower));
-    return {
-      damage: raw,
-      miss: false,
-      crit: false,
-      staggered: false,
-      target: { ...defender, hp: Math.max(0, defender.hp - raw) },
-    };
+    return { damage: raw, miss: false, crit: false, staggered: false, target: takeHit(defender, raw, fromSkill) };
   }
 
   const mark = getStatus(defender, 'mark');
@@ -363,22 +658,18 @@ function computeHit(
   let defense = Math.max(0, (defender.defense || 0) * (1 + defMods));
   if (defender.staggered) defense = Math.round(defense * 0.5);
 
-  if (effect.trueDamage) {
+  const ignoreDef = Boolean(effect.trueDamage || effect.bypassDefVs?.includes(defender.element));
+  if (ignoreDef) {
     const raw = Math.max(1, Math.round(attack * power));
-    return {
-      damage: raw,
-      miss: false,
-      crit: false,
-      staggered: false,
-      target: { ...defender, hp: Math.max(0, defender.hp - raw) },
-    };
+    return { damage: raw, miss: false, crit: false, staggered: false, target: takeHit(defender, raw, fromSkill) };
   }
 
+  const slowCrit = effect.ifSlowCritDamage && (hasStatus(defender, 'slow') || modSum(defender, 'spd') < 0) ? effect.ifSlowCritDamage : 0;
   const hit = finalDamage({
     attack,
     multiplier: power,
     critRate,
-    critDamage: (attacker.critDamage || 1.5) + critDmgMods + (effect.critDamageBonus ?? 0),
+    critDamage: (attacker.critDamage || 1.5) + critDmgMods + (effect.critDamageBonus ?? 0) + slowCrit,
     attackerElement: attacker.element,
     defenderElement: defender.element,
     defense,
@@ -389,12 +680,33 @@ function computeHit(
     critRoll: rng(),
   });
 
-  let target: Fighter = { ...defender, hp: Math.max(0, defender.hp - (hit.miss ? 0 : hit.damage)) };
-  let staggered = false;
-  if (!hit.miss && effect.armPenBonus && effect.armPenBonus >= 0.15) {
-    // light toughness pressure on armor-pen skills handled elsewhere
+  let dealt = hit.miss ? 0 : hit.damage;
+  if (!hit.miss && effect.defBonus) {
+    const casterDef = (attacker.defense || 0) * (1 + modSum(attacker, 'def'));
+    dealt += Math.max(0, Math.round(casterDef * effect.defBonus));
   }
-  return { damage: hit.miss ? 0 : hit.damage, miss: hit.miss, crit: hit.crit, staggered, target };
+  return { damage: dealt, miss: hit.miss, crit: hit.crit, staggered: false, target: takeHit(defender, dealt, fromSkill) };
+}
+
+function takeHit(defender: Fighter, dealt: number, fromSkill: boolean): Fighter {
+  let remaining = Math.max(0, dealt);
+  let shield = defender.shieldHp ?? 0;
+  if (shield > 0 && remaining > 0) {
+    const absorb = Math.min(shield, remaining);
+    shield -= absorb;
+    remaining -= absorb;
+  }
+  if (fromSkill && remaining > 0 && (defender.magicReduceTurns ?? 0) > 0) {
+    remaining = Math.max(0, Math.round(remaining * (1 - (defender.magicReducePct ?? 0))));
+  }
+  let hp = defender.hp - remaining;
+  let endureUsed = defender.endureUsed;
+  if (hp <= 0 && hasStatus(defender, 'undying')) hp = 1;
+  if (hp <= 0 && endureUsed === false) {
+    hp = 1;
+    endureUsed = true;
+  }
+  return { ...defender, hp: Math.max(0, hp), shieldHp: shield, endureUsed };
 }
 
 function applyHeal(
@@ -439,6 +751,10 @@ function applyRestoreMp(
         : [actor];
   for (const unit of pool) {
     const live = findUnit(next, unit.id)!;
+    if (hasStatus(live, 'energy_lock')) {
+      notes.push(`${live.name} bị khóa năng lượng.`);
+      continue;
+    }
     const gain = Math.max(1, Math.round((effect.amount ?? 0) + (effect.pctMax ?? 0) * live.maxMp));
     next = putUnit(next, { ...live, mp: Math.min(live.maxMp, live.mp + gain) });
     notes.push(`${live.name} +${gain} MP.`);
@@ -482,7 +798,7 @@ function applyStatusEffect(
       withStatus(unit, {
         id: effect.id as StatusId,
         turns: roll.duration,
-        power: effect.power,
+        power: effect.id === 'curse_doom' ? unit.damageTaken ?? 0 : effect.power,
         sourceId: actor.id,
       }),
     );
@@ -623,6 +939,25 @@ function cleanseEnemyBuffs(state: BattleState, _actor: Fighter): { state: Battle
   return { state: next, notes: ['Đã xóa buff địch.'] };
 }
 
+function stripBuff(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'strip_buff' }>,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: [] };
+  const count = Math.max(1, effect.count ?? 1);
+  const buffs = (foe.mods ?? []).filter((mod) => mod.stat === effect.stat && mod.amount > 0);
+  if (!buffs.length) return { state, notes: [`${foe.name} không có buff ${effect.stat}.`] };
+  const stripped = buffs.slice(0, count);
+  const remove = new Set(stripped.map((mod) => mod.id));
+  return {
+    state: putUnit(state, { ...foe, mods: (foe.mods ?? []).filter((mod) => !remove.has(mod.id)) }),
+    notes: [`Gỡ buff ${effect.stat} của ${foe.name}.`],
+  };
+}
+
 function stealBuffs(
   state: BattleState,
   actor: Fighter,
@@ -692,6 +1027,364 @@ function stripDefHits(
   return { state: next, notes };
 }
 
+function applyShield(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'shield' }>,
+): { state: BattleState; notes: string[] } {
+  const shield = Math.max(1, Math.round(actor.maxHp * effect.pctMax));
+  return {
+    state: putUnit(state, { ...actor, shieldHp: (actor.shieldHp ?? 0) + shield }),
+    notes: [`${actor.name} tạo khiên ${shield} HP.`],
+  };
+}
+
+function applyDelayTurn(
+  state: BattleState,
+  actor: Fighter,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: ['Hãy chọn mục tiêu.'] };
+  const rest = state.order.filter((id) => id !== foe.id);
+  return {
+    state: putUnit({ ...state, order: [...rest, foe.id] }, { ...foe, delayed: true, statuses: [...(foe.statuses ?? []).filter((entry) => entry.id !== 'delayed'), { id: 'delayed', turns: 1 }] }),
+    notes: [`${foe.name} bị đẩy xuống cuối lượt.`],
+  };
+}
+
+function applyMpCostMult(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'mp_cost_mult' }>,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: [] };
+  return {
+    state: putUnit(state, { ...foe, mpCostMult: effect.amount }),
+    notes: [`${foe.name} tốn ×${effect.amount} MP trong ${effect.turns} lượt.`],
+  };
+}
+
+function applyLockEnergy(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'lock_energy' }>,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: [] };
+  let next = withStatus(foe, { id: 'energy_lock', turns: effect.turns });
+  if (effect.blockItems) next = withStatus(next, { id: 'item_lock', turns: effect.turns });
+  return { state: putUnit(state, next), notes: [`Khóa năng lượng ${foe.name}.`] };
+}
+
+function applyPullLowest(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'pull_lowest' }>,
+): { state: BattleState; notes: string[] } {
+  const pool = opponentsOf(state, actor).filter((unit) => unit.hp > 0);
+  if (!pool.length) return { state, notes: [] };
+  const weakest = [...pool].sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp || a.id.localeCompare(b.id))[0];
+  const others = pool.filter((unit) => unit.id !== weakest.id);
+  const foes = actor.side === 'wild' ? state.foes : [weakest, ...others];
+  let next: BattleState = actor.side === 'wild' ? state : { ...state, foes };
+  next = putUnit(next, {
+    ...weakest,
+    mods: [...(weakest.mods ?? []), { id: `pull-def`, stat: 'def' as ModStat, amount: -effect.defAmount, turns: effect.turns }],
+  });
+  return { state: next, notes: [`Kéo ${weakest.name} ra hàng trước. DEF −${Math.round(effect.defAmount * 100)}%.`] };
+}
+
+function applyDetonateFrost(
+  state: BattleState,
+  actor: Fighter,
+  targetId: string | null,
+  rng: () => number,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: [] };
+  const stacks = Math.max(1, Math.round(getStatus(foe, 'frost')?.power ?? 0));
+  const power = 0.35 * stacks;
+  const cleared = { ...foe, statuses: (foe.statuses ?? []).filter((entry) => entry.id !== 'frost') };
+  const next = putUnit(state, cleared);
+  return applyDamage(next, actor, findUnit(next, foe.id) ?? cleared, { type: 'damage', power, trueDamage: true }, rng, false, true);
+}
+
+function applySwapHpPct(
+  state: BattleState,
+  actor: Fighter,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: [] };
+  const selfPct = actor.maxHp > 0 ? actor.hp / actor.maxHp : 0;
+  const foePct = foe.maxHp > 0 ? foe.hp / foe.maxHp : 0;
+  let next = putUnit(state, { ...actor, hp: Math.max(1, Math.round(actor.maxHp * foePct)) });
+  next = putUnit(next, { ...foe, hp: Math.max(1, Math.round(foe.maxHp * selfPct)) });
+  return { state: next, notes: [`${actor.name} và ${foe.name} đổi % HP.`] };
+}
+
+function applySwapStat(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'swap_stat' }>,
+  targetId: string | null,
+  rng: () => number,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: [] };
+  const stat = effect.stats[Math.floor(rng() * effect.stats.length)] ?? 'atk';
+  const selfVal = stat === 'atk' ? actor.attack : actor.defense;
+  const foeVal = stat === 'atk' ? foe.attack : foe.defense;
+  const selfRatio = (foeVal - selfVal) / Math.max(1, selfVal);
+  const foeRatio = (selfVal - foeVal) / Math.max(1, foeVal);
+  let next = putUnit(state, {
+    ...actor,
+    mods: [...(actor.mods ?? []), { id: `swap-self-${stat}`, stat, amount: selfRatio, turns: 2 }],
+  });
+  next = putUnit(next, {
+    ...foe,
+    mods: [...(foe.mods ?? []), { id: `swap-foe-${stat}`, stat, amount: foeRatio, turns: 2 }],
+  });
+  return { state: next, notes: [`Tráo ${stat} với ${foe.name}.`] };
+}
+
+function applyTransferDebuffs(state: BattleState, actor: Fighter): { state: BattleState; notes: string[] } {
+  const debuffs = (actor.statuses ?? []).filter((entry) => DEBUFF_IDS.includes(entry.id));
+  let next = putUnit(state, { ...actor, statuses: (actor.statuses ?? []).filter((entry) => !DEBUFF_IDS.includes(entry.id)) });
+  for (const foe of opponentsOf(next, actor).filter((unit) => unit.hp > 0)) {
+    let live = findUnit(next, foe.id)!;
+    for (const debuff of debuffs) live = withStatus(live, { ...debuff });
+    next = putUnit(next, live);
+  }
+  return { state: next, notes: [`Chuyển ${debuffs.length} debuff sang địch.`] };
+}
+
+function applySealUltimate(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'seal_ultimate' }>,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: [] };
+  return {
+    state: putUnit(state, withStatus(foe, { id: 'sealed', turns: effect.turns })),
+    notes: [`Phong ấn ultimate của ${foe.name}.`],
+  };
+}
+
+function applySacrificeHp(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'sacrifice_hp' }>,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const unit =
+    effect.target === 'ally'
+      ? (targetId ? findUnit(state, targetId) : null) ??
+        state.allies.filter((entry) => entry.hp > 0).sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0]
+      : actor;
+  if (!unit || unit.hp <= 0) return { state, notes: ['Không có mục tiêu hiến tế.'] };
+  const loss = effect.pctCurrent
+    ? Math.max(1, Math.round(unit.hp * effect.pctCurrent))
+    : Math.max(1, Math.round(unit.maxHp * (effect.pctMax ?? 0.2)));
+  return {
+    state: putUnit(state, { ...unit, hp: Math.max(1, unit.hp - loss) }),
+    notes: [`${unit.name} hiến ${loss} HP.`],
+  };
+}
+
+function resetCooldowns(state: BattleState, actor: Fighter): { state: BattleState; notes: string[] } {
+  return { state: putUnit(state, { ...actor, cooldowns: {} }), notes: [`Reset hồi chiêu ${actor.name}.`] };
+}
+
+function applyBarrier(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'barrier' }>,
+): { state: BattleState; notes: string[] } {
+  let next = state;
+  const pool = effect.target === 'party' ? [next.player, ...next.allies] : [actor];
+  for (const unit of pool.filter((entry) => entry.hp > 0)) {
+    next = putUnit(next, withStatus(unit, { id: 'nullify', turns: 2 }));
+  }
+  return { state: next, notes: ['Rào chắn thánh kích hoạt.'] };
+}
+
+function applyStealStat(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'steal_stat' }>,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: [] };
+  let next = putUnit(state, {
+    ...foe,
+    mods: [...(foe.mods ?? []), { id: `steal-${effect.stat}`, stat: effect.stat, amount: -effect.pct, turns: effect.turns }],
+  });
+  const self = findUnit(next, actor.id)!;
+  const base = effect.stat === 'atk' ? Math.max(1, self.attack) : Math.max(1, self.defense);
+  const stolen = ((effect.stat === 'atk' ? foe.attack : foe.defense) * effect.pct) / base;
+  next = putUnit(next, {
+    ...self,
+    mods: [...(self.mods ?? []), { id: `gain-${effect.stat}`, stat: effect.stat, amount: stolen, turns: effect.turns }],
+  });
+  return { state: next, notes: [`Hấp thụ ${Math.round(effect.pct * 100)}% ${effect.stat} từ ${foe.name}.`] };
+}
+
+function applyAbsorbDef(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'absorb_def' }>,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: [] };
+  const reduced = foe.defense * effect.defAmount;
+  let next = putUnit(state, {
+    ...foe,
+    mods: [...(foe.mods ?? []), { id: 'absorb-def', stat: 'def' as ModStat, amount: -effect.defAmount, turns: effect.turns }],
+  });
+  const self = findUnit(next, actor.id)!;
+  const atkGain = (reduced * effect.absorb) / Math.max(1, self.attack);
+  next = putUnit(next, {
+    ...self,
+    mods: [...(self.mods ?? []), { id: 'absorb-atk', stat: 'atk' as ModStat, amount: atkGain, turns: effect.turns }],
+  });
+  return { state: next, notes: [`${foe.name} −${Math.round(effect.defAmount * 100)}% DEF. ${self.name} hấp thụ ATK.`] };
+}
+
+function applyBurnMp(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'burn_mp' }>,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: [] };
+  const burn = Math.max(1, Math.round(foe.mp * (effect.pct ?? 1)));
+  return { state: putUnit(state, { ...foe, mp: Math.max(0, foe.mp - burn) }), notes: [`Đốt ${burn} MP của ${foe.name}.`] };
+}
+
+function applyConvertDefToAtk(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'convert_def_to_atk' }>,
+): { state: BattleState; notes: string[] } {
+  const shifted = (actor.defense * effect.pct) / Math.max(1, actor.attack);
+  return {
+    state: putUnit(state, {
+      ...actor,
+      mods: [
+        ...(actor.mods ?? []),
+        { id: 'shift-atk', stat: 'atk' as ModStat, amount: shifted, turns: effect.turns },
+        { id: 'shift-def', stat: 'def' as ModStat, amount: -effect.pct, turns: effect.turns },
+      ],
+    }),
+    notes: [`${actor.name} đổi ${Math.round(effect.pct * 100)}% DEF thành ATK.`],
+  };
+}
+
+function maybeEnrage(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'enrage_below' }>,
+): { state: BattleState; notes: string[] } {
+  if (actor.enraged || actor.maxHp <= 0 || actor.hp / actor.maxHp >= effect.hpPct) {
+    return { state, notes: [`${actor.name} chờ Cuồng Nộ khi HP dưới ${Math.round(effect.hpPct * 100)}%.`] };
+  }
+  return {
+    state: putUnit(state, {
+      ...actor,
+      enraged: true,
+      mods: [
+        ...(actor.mods ?? []),
+        { id: 'enrage-atk', stat: 'atk' as ModStat, amount: effect.atk, turns: 9 },
+        { id: 'enrage-crit', stat: 'critRate' as ModStat, amount: effect.crit, turns: 9 },
+      ],
+    }),
+    notes: [`${actor.name} cuồng nộ.`],
+  };
+}
+
+function applyTrap(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'trap_cast' }>,
+): { state: BattleState; notes: string[] } {
+  let next = state;
+  for (const foe of opponentsOf(state, actor).filter((unit) => unit.hp > 0)) {
+    next = putUnit(next, { ...foe, trapTurns: effect.turns, trapPct: effect.pct });
+  }
+  return { state: next, notes: ['Bão cát gài bẫy.'] };
+}
+
+function applyCleanse(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'cleanse' }>,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const unit =
+    effect.target === 'ally'
+      ? (targetId ? findUnit(state, targetId) : null) ?? actor
+      : actor;
+  const debuffs = (unit.statuses ?? []).filter((entry) => DEBUFF_IDS.includes(entry.id));
+  const drop = new Set(debuffs.slice(0, effect.count ?? 1).map((entry) => entry.id));
+  return {
+    state: putUnit(state, { ...unit, statuses: (unit.statuses ?? []).filter((entry) => !drop.has(entry.id)) }),
+    notes: [`Gỡ ${drop.size} debuff khỏi ${unit.name}.`],
+  };
+}
+
+function applyFrostStack(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'frost_stack' }>,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: [] };
+  const current = getStatus(foe, 'frost')?.power ?? 0;
+  return {
+    state: putUnit(state, withStatus(foe, { id: 'frost', turns: 4, power: current + (effect.stacks ?? 1) })),
+    notes: [`${foe.name} +${effect.stacks ?? 1} tầng băng.`],
+  };
+}
+
+function applyCleanseTargetBuffs(
+  state: BattleState,
+  actor: Fighter,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: [] };
+  return {
+    state: putUnit(state, { ...foe, mods: (foe.mods ?? []).filter((mod) => mod.amount < 0), shieldHp: 0 }),
+    notes: [`Xóa buff của ${foe.name}.`],
+  };
+}
+
+function applyStealMp(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'steal_mp' }>,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const foe = pickEnemy(state, actor, targetId);
+  if (!foe) return { state, notes: [] };
+  const steal = Math.max(1, Math.round(foe.mp * effect.pct));
+  let next = putUnit(state, { ...foe, mp: Math.max(0, foe.mp - steal) });
+  const self = findUnit(next, actor.id)!;
+  next = putUnit(next, { ...self, mp: Math.min(self.maxMp, self.mp + steal) });
+  return { state: next, notes: [`Cướp ${steal} MP từ ${foe.name}.`] };
+}
+
 function applyRandom(
   state: BattleState,
   actorId: string,
@@ -699,6 +1392,7 @@ function applyRandom(
   targetId: string | null,
   rng: () => number,
   fromStealth: boolean,
+  fromSkill = false,
 ): { state: BattleState; notes: string[] } {
   const chances = effect.chances ?? effect.options.map(() => 1 / Math.max(1, effect.options.length));
   let roll = rng();
@@ -713,7 +1407,7 @@ function applyRandom(
   let next = state;
   const notes: string[] = [];
   for (const child of effect.options[index] ?? []) {
-    const applied = applyEffect(next, actorId, child, targetId, rng, fromStealth);
+    const applied = applyEffect(next, actorId, child, targetId, rng, fromStealth, fromSkill);
     next = applied.state;
     notes.push(...applied.notes);
   }
@@ -730,19 +1424,59 @@ export function beginTurnAuras(state: BattleState, fighterId: string): BattleSta
       next = putUnit(next, { ...unit, hp: Math.min(unit.maxHp, unit.hp + heal) });
     }
   }
+  if ((next.chantTurns ?? 0) > 0) {
+    const hpPct = next.chantHpPct ?? 0.1;
+    const mpPct = next.chantMpPct ?? 0.1;
+    for (const unit of [next.player, ...next.allies].filter((entry) => entry.hp > 0)) {
+      const live = findUnit(next, unit.id)!;
+      if (hasStatus(live, 'energy_lock')) {
+        next = putUnit(next, { ...live, hp: Math.min(live.maxHp, live.hp + Math.max(1, Math.round(live.maxHp * hpPct))) });
+        continue;
+      }
+      next = putUnit(next, {
+        ...live,
+        hp: Math.min(live.maxHp, live.hp + Math.max(1, Math.round(live.maxHp * hpPct))),
+        mp: Math.min(live.maxMp, live.mp + Math.max(1, Math.round(live.maxMp * mpPct))),
+      });
+    }
+  }
   const fighter = findUnit(next, fighterId);
   if (!fighter) return next;
   let hp = fighter.hp;
+  let shield = fighter.shieldHp ?? 0;
   for (const status of fighter.statuses ?? []) {
     if ((status.id === 'poison' || status.id === 'bleed' || status.id === 'burn') && status.power) {
       hp = Math.max(0, hp - Math.max(1, Math.round(fighter.maxHp * status.power)));
     }
+    if (status.id === 'quicksand' && shield > 0) {
+      shield = Math.max(0, shield - Math.max(1, Math.round((fighter.maxHp || 1) * 0.1)));
+    }
   }
-  if (hp !== fighter.hp) next = putUnit(next, { ...fighter, hp });
+  if (hp <= 0 && hasStatus(fighter, 'undying')) hp = 1;
+  if (hp <= 0 && fighter.endureUsed === false) hp = 1;
+  let updated: Fighter = hp !== fighter.hp || shield !== (fighter.shieldHp ?? 0) ? { ...fighter, hp, shieldHp: shield } : fighter;
+  if (!updated.enraged && updated.element === 'volcano' && updated.maxHp > 0 && updated.hp / updated.maxHp < 0.3) {
+    updated = {
+      ...updated,
+      enraged: true,
+      mods: [
+        ...(updated.mods ?? []),
+        { id: 'enrage-atk', stat: 'atk', amount: 0.5, turns: 9 },
+        { id: 'enrage-crit', stat: 'critRate', amount: 0.3, turns: 9 },
+      ],
+    };
+  }
+  if (updated !== fighter) next = putUnit(next, updated);
   return next;
 }
 
 export function tickFighterTimers<T extends EffectFighter>(fighter: T): T {
+  let hp = fighter.hp;
+  const curse = (fighter.statuses ?? []).find((entry) => entry.id === 'curse_doom' && entry.turns <= 1);
+  if (curse) {
+    const lost = Math.max(0, (fighter.damageTaken ?? 0) - (curse.power ?? 0));
+    hp = Math.max(hasStatus(fighter, 'undying') || fighter.endureUsed === false ? 1 : 0, hp - Math.round(lost * 0.3));
+  }
   const mods = (fighter.mods ?? [])
     .map((mod) => ({ ...mod, turns: mod.turns - 1 }))
     .filter((mod) => mod.turns > 0);
@@ -751,17 +1485,28 @@ export function tickFighterTimers<T extends EffectFighter>(fighter: T): T {
     .filter((entry) => entry.turns > 0);
   return {
     ...fighter,
+    hp,
     mods,
     statuses,
     stealthTurns: Math.max(0, (fighter.stealthTurns ?? 0) - 1),
     tauntTurns: Math.max(0, (fighter.tauntTurns ?? 0) - 1),
     guardTurns: Math.max(0, (fighter.guardTurns ?? 0) - 1),
     critBlockTurns: Math.max(0, (fighter.critBlockTurns ?? 0) - 1),
+    magicReduceTurns: Math.max(0, (fighter.magicReduceTurns ?? 0) - 1),
+    meleeThornsTurns: Math.max(0, (fighter.meleeThornsTurns ?? 0) - 1),
+    trapTurns: Math.max(0, (fighter.trapTurns ?? 0) - 1),
+    mpCostMult: (fighter.mpCostMult ?? 1) > 1 && !hasStatus({ ...fighter, statuses }, 'thirst') ? 1 : fighter.mpCostMult,
+    delayed: statuses.some((entry) => entry.id === 'delayed') ? fighter.delayed : false,
   };
 }
 
 export function shouldSkipTurn(fighter: Fighter): string | null {
   if (fighter.staggered) return 'gục ngã';
+  if ((fighter.shieldHp ?? 0) > 0 && (hasStatus(fighter, 'stun') || hasStatus(fighter, 'immunity'))) {
+    if (hasStatus(fighter, 'freeze')) return 'bị khống chế';
+    if (hasStatus(fighter, 'spd_zero')) return 'tốc độ = 0';
+    return null;
+  }
   if (hasStatus(fighter, 'stun') || hasStatus(fighter, 'freeze')) return 'bị khống chế';
   if (hasStatus(fighter, 'spd_zero')) return 'tốc độ = 0';
   return null;
@@ -878,6 +1623,17 @@ function pickEnemy(state: BattleState, actor: Fighter, targetId: string | null):
     if (exact) return exact;
   }
   return pool[0] ?? null;
+}
+
+/** Front row is the first living opponent; back row is the last living one (pets behind the hero). */
+function pickBackRow(state: BattleState, actor: Fighter): Fighter | null {
+  const pool = opponentsOf(state, actor).filter((unit) => unit.hp > 0 && (unit.stealthTurns ?? 0) <= 0);
+  if (!pool.length) return null;
+  if (actor.side === 'wild') {
+    const pets = pool.filter((unit) => unit.side === 'ally');
+    return pets[pets.length - 1] ?? pool[pool.length - 1] ?? null;
+  }
+  return pool[pool.length - 1] ?? null;
 }
 
 function opponentsOf(state: BattleState, actor: Fighter): Fighter[] {

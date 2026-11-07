@@ -9,11 +9,16 @@ export type TurnUnit = {
   hp: number;
   side: 'player' | 'ally' | 'wild';
   initiative: boolean;
+  delayed?: boolean;
 };
 
 export function turnOrder(units: readonly TurnUnit[], round: number): string[] {
   const living = units.filter((unit) => unit.hp > 0);
-  const bySpeed = [...living].sort((a, b) => b.speed - a.speed || a.id.localeCompare(b.id));
+  const bySpeed = [...living].sort((a, b) => {
+    const delayed = Number(Boolean(a.delayed)) - Number(Boolean(b.delayed));
+    if (delayed !== 0) return delayed;
+    return b.speed - a.speed || a.id.localeCompare(b.id);
+  });
   const hero = bySpeed.find((unit) => unit.side === 'player' && unit.initiative);
   if (round <= 1 && hero) {
     return [hero.id, ...bySpeed.filter((unit) => unit.id !== hero.id).map((unit) => unit.id)];

@@ -9,16 +9,16 @@ import { theme } from '../../theme/theme';
 import { useLayout } from '../../theme/useLayout';
 import { ELEMENTS, elementLabel, type ElementId } from '../../world/combat/elements';
 import {
-  SPECIES_IDS,
+  LOCOMOTION_IDS,
   classCatalog,
   elementSkillList,
+  locomotionBasicSkills,
+  locomotionTitle,
   skillEffect,
   skillKind,
   skillMark,
   skillTarget,
-  speciesBasicSkills,
-  speciesTitle,
-  type SpeciesId,
+  type LocomotionId,
 } from '../../world/combat/kits';
 import type { Skill } from '../../world/combat/model';
 
@@ -49,31 +49,31 @@ const PROFESSION_TINT: Record<string, string> = {
 };
 
 const ELEMENT_TINT: Record<ElementId, string> = {
-  fire: '#e25b2a',
-  water: '#3d8fd6',
-  earth: '#c4a574',
-  wind: '#9fd7c8',
-  ice: '#b9e4f2',
-  lightning: '#f0d35a',
-  nature: '#7dba6a',
-  poison: '#8dce6a',
-  metal: '#d5dbe6',
+  plains: '#9fd77a',
+  mountain: '#c4b8a8',
+  forest: '#3e9a4a',
+  swamp: '#6a8f4a',
+  beach: '#e6d08a',
+  ocean: '#3d8fd6',
+  frost: '#b9e4f2',
+  savanna: '#d4a84a',
+  volcano: '#e25b2a',
+  desert: '#e6c48a',
+  darkness: '#6a5a8a',
   light: '#f6e7a8',
-  dark: '#8d7ab8',
-  arcane: '#c9a0e8',
-  lava: '#e07040',
-  storm: '#7aa0d8',
-  sand: '#e6c48a',
-  spirit: '#d7c4ff',
+  heaven: '#f0e6c8',
+  hell: '#c43a22',
+  chaos: '#c9a0e8',
+  cosmic: '#7a90d8',
 };
 
-const SPECIES_TINT: Record<SpeciesId, string> = {
-  beast: '#c4a574',
-  bug: '#8dba6a',
-  reptile: '#7dba8a',
-  avian: '#9fd0e4',
-  aquatic: '#5b9fd6',
-  spirit: '#c9b4f0',
+const LOCOMOTION_TINT: Record<LocomotionId, string> = {
+  quadruped: '#c4a574',
+  biped: '#c9b4f0',
+  leaping: '#7dba8a',
+  crawling: '#8dba6a',
+  swimming: '#5b9fd6',
+  flying: '#9fd0e4',
 };
 
 /**
@@ -106,10 +106,16 @@ export function SkillDictionaryModal({ onClose }: Props) {
 
   const wildRows = useMemo(() => {
     const rows: Row[] = [];
-    for (const species of SPECIES_IDS) {
-      const tint = SPECIES_TINT[species];
-      for (const skill of speciesBasicSkills(species)) {
-        rows.push({ key: `species:${species}:${skill.id}`, groupId: `body:${species}`, group: speciesTitle(species), skill, tint });
+    for (const motion of LOCOMOTION_IDS) {
+      const tint = LOCOMOTION_TINT[motion];
+      for (const skill of locomotionBasicSkills(motion)) {
+        rows.push({
+          key: `loco:${motion}:${skill.id}`,
+          groupId: `body:${motion}`,
+          group: locomotionTitle(motion),
+          skill,
+          tint,
+        });
       }
     }
     for (const element of ELEMENTS) {
@@ -136,7 +142,10 @@ export function SkillDictionaryModal({ onClose }: Props) {
   const wildTabs = [{ id: 'basic', label: 'Đánh thường' }, ...ELEMENTS.map((element) => ({ id: element, label: elementLabel(element) }))];
   const tabs = book === 'hero' ? classTabs : wildTabs;
   const selectedId = book === 'hero' ? heroId : wildId;
-  const tabFont = Math.max(7, Math.min(font(10), Math.floor((width - 48) / tabs.length / 4.2)));
+  const tabFont =
+    book === 'wild'
+      ? Math.max(8, Math.min(font(10), 11))
+      : Math.max(7, Math.min(font(10), Math.floor((width - 48) / Math.max(1, tabs.length) / 4.2)));
 
   return (
     <View style={styles.scrim} testID="skill-dictionary">
@@ -163,7 +172,7 @@ export function SkillDictionaryModal({ onClose }: Props) {
             style={[styles.search, styles.searchHalf, { fontSize: font(13), minHeight: s(36), borderRadius: s(10), paddingHorizontal: s(10) }]}
           />
         </View>
-        <View style={styles.classRow}>
+        <View style={[styles.classRow, book === 'wild' && styles.classRowWrap]}>
           {tabs.map((entry) => (
             <Tab
               key={entry.id}
@@ -263,6 +272,7 @@ const styles = StyleSheet.create({
   bookHalf: { flex: 1, flexDirection: 'row', gap: 6 },
   searchHalf: { flex: 1 },
   classRow: { flexDirection: 'row', alignItems: 'stretch', gap: 2 },
+  classRowWrap: { flexWrap: 'wrap' },
   tabs: { flexDirection: 'row', gap: 6 },
   tab: {
     flex: 1,
@@ -277,7 +287,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
     paddingVertical: 2,
   },
-  tabCompact: { minHeight: 34, borderRadius: 8, paddingHorizontal: 1 },
+  tabCompact: { minHeight: 34, borderRadius: 8, paddingHorizontal: 1, minWidth: 52, flexGrow: 1, flexBasis: '11%' },
   tabOn: { borderColor: theme.gold, backgroundColor: theme.goldDeep },
   tabLabel: { color: theme.muted, fontWeight: '800', textAlign: 'center' },
   tabLabelOn: { color: theme.ink },

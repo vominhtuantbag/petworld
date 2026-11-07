@@ -16,6 +16,8 @@ import {
   beginTurnAuras,
   castSkill,
   isSilenced,
+  isUltimateSkill,
+  manaCost,
   needsAllyTarget,
   needsEnemyTarget,
   retargetAttack,
@@ -76,6 +78,20 @@ export type Fighter = {
   reflectCharges?: number;
   reflectPct?: number;
   critBlockTurns?: number;
+  shieldHp?: number;
+  extraTurns?: number;
+  mpCostMult?: number;
+  nextAttackBoost?: number;
+  magicReducePct?: number;
+  magicReduceTurns?: number;
+  meleeThornsPct?: number;
+  meleeThornsTurns?: number;
+  meleeThornsBurn?: boolean;
+  trapTurns?: number;
+  trapPct?: number;
+  delayed?: boolean;
+  enraged?: boolean;
+  endureUsed?: boolean;
   /** The basic attack used in this fight. Heroes choose it before battle. */
   basic: Skill;
   /** Class basics offered on the setup screen. Monsters keep the one they rolled. */
@@ -224,7 +240,9 @@ export function tickCooldowns(fighter: Fighter): Fighter {
 }
 
 export function skillReady(fighter: Fighter, skill: Skill): boolean {
-  return fighter.mp >= skill.mana && (fighter.cooldowns[skill.id] ?? 0) <= 0;
+  if ((fighter.cooldowns[skill.id] ?? 0) > 0) return false;
+  if (fighter.statuses?.some((entry) => entry.id === 'sealed' && entry.turns > 0) && isUltimateSkill(skill)) return false;
+  return fighter.mp >= manaCost(fighter, skill);
 }
 
 export const COMBAT_ITEMS: ItemId[] = [
@@ -275,6 +293,9 @@ export type BattleState = {
   /** Medic bio-field: heal party at turn start. */
   bioFieldTurns?: number;
   bioFieldPct?: number;
+  chantTurns?: number;
+  chantHpPct?: number;
+  chantMpPct?: number;
 };
 
 export function makePlayer(input: {
@@ -499,7 +520,7 @@ export function actAlly(state: BattleState, foeId: string | null, skillId: strin
   if (skill) {
     ready = {
       ...ready,
-      mp: ready.mp - skill.mana,
+      mp: ready.mp - manaCost(ready, skill),
       cooldowns: { ...ready.cooldowns, [skill.id]: skill.cooldown },
     };
   }
@@ -516,6 +537,9 @@ export function actAlly(state: BattleState, foeId: string | null, skillId: strin
 
 export function actItem(state: BattleState, itemId: ItemId): BattleState {
   if (!isPlayerTurn(state)) return state;
+  if (state.player.statuses?.some((entry) => entry.id === 'item_lock' && entry.turns > 0)) {
+    return { ...state, log: `${state.player.name} bị khóa vật phẩm.` };
+  }
   const stack = state.bag.find((entry) => entry.itemId === itemId);
   if (!stack) return { ...state, log: 'Hết vật phẩm này.' };
   const healed = applyConsumable(toVitals(state), itemId);
@@ -615,7 +639,7 @@ export function actAuto(state: BattleState, allowAlly = false): BattleState {
     ? [...ready.skills].filter((entry) => skillReady(ready, entry)).sort((a, b) => b.power - a.power)[0]
     : undefined;
   const spent = skill
-    ? { ...ready, mp: ready.mp - skill.mana, cooldowns: { ...ready.cooldowns, [skill.id]: skill.cooldown } }
+    ? { ...ready, mp: ready.mp - manaCost(ready, skill), cooldowns: { ...ready.cooldowns, [skill.id]: skill.cooldown } }
     : ready;
   const pool = actor.side === 'wild' ? friendlies(state) : state.foes;
   const intended = weakest(pool.filter((unit) => (unit.stealthTurns ?? 0) <= 0)) ?? weakest(pool);
@@ -738,7 +762,7 @@ function strikeFoe(state: BattleState, foeId: string | null, skillId: string | n
   if (skill) {
     player = {
       ...player,
-      mp: player.mp - skill.mana,
+      mp: player.mp - manaCost(player, skill),
       cooldowns: { ...player.cooldowns, [skill.id]: skill.cooldown },
     };
   }
@@ -903,12 +927,22 @@ function clearStagger(fighter: Fighter): Fighter {
 function after(state: BattleState, actedId: string, log: string): BattleState {
   let next = { ...state, log };
   const actor = unit(next, actedId);
+  const friendsEarly = friendlies(next).some((fighter) => fighter.hp > 0);
+  if (!friendsEarly) return { ...next, over: 'lose' };
+  if (next.foes.every((foe) => foe.hp <= 0)) return { ...next, over: 'win' };
+  if (actor && actor.hp > 0 && (actor.extraTurns ?? 0) > 0) {
+    next = replace(next, { ...actor, extraTurns: (actor.extraTurns ?? 0) - 1 });
+    return { ...next, turnId: actedId };
+  }
   if (actor) next = replace(next, tickFighterTimers(actor));
   if ((next.redirectHighestTurns ?? 0) > 0) {
     next = { ...next, redirectHighestTurns: Math.max(0, (next.redirectHighestTurns ?? 0) - 1) };
   }
   if ((next.bioFieldTurns ?? 0) > 0) {
     next = { ...next, bioFieldTurns: Math.max(0, (next.bioFieldTurns ?? 0) - 1) };
+  }
+  if ((next.chantTurns ?? 0) > 0) {
+    next = { ...next, chantTurns: Math.max(0, (next.chantTurns ?? 0) - 1) };
   }
   const friends = friendlies(next).some((fighter) => fighter.hp > 0);
   if (!friends) return { ...next, over: 'lose' };

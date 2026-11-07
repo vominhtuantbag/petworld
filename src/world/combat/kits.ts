@@ -1,8 +1,8 @@
 /**
  * Skill pools and the rolls that fill a fighter's loadout.
  *
- * A monster species has three basic attacks. Generation keeps one.
- * An element has five skills. The fighter is offered the first three,
+ * A monster locomotion type has two basic attacks. Generation keeps one.
+ * A biome system has five skills. The fighter is offered the first three,
  * then keeps two of those three.
  * A hero class has two basic attacks (the player picks one before the
  * fight) and three skills, of which two are rolled when the hero is built.
@@ -11,10 +11,20 @@
 import { hashString, mulberry32 } from '../grid';
 import { heroAdvanced, type AdvancedStats } from './advanced';
 import { CLASS_KITS } from './characterSkills';
+import { biomeSkillList } from './biomeSkills';
 import { combatElement, type ElementId } from './elements';
 import type { HeroStats, Skill } from './model';
+import { locomotionBasicSkills as locomotionBasics, locomotionKit } from './petSkills';
 
 export { CLASS_KITS } from './characterSkills';
+export {
+  LOCOMOTION_IDS,
+  LOCOMOTION_TITLE,
+  locomotionBasicSkills,
+  locomotionOf,
+  locomotionTitle,
+  type LocomotionId,
+} from './petSkills';
 
 export type SpeciesId = 'beast' | 'bug' | 'reptile' | 'avian' | 'aquatic' | 'spirit';
 
@@ -24,64 +34,21 @@ export type HeroTraits = HeroStats &
   };
 
 const HERO_TRAITS: Record<string, HeroTraits> = {
-  guardian: { element: 'metal', mastery: 0.12, initiative: true, ...heroAdvanced('guardian') },
-  knight: { element: 'metal', mastery: 0.1, initiative: true, ...heroAdvanced('knight') },
-  mage: { element: 'arcane', mastery: 0.15, initiative: true, ...heroAdvanced('mage') },
+  guardian: { element: 'mountain', mastery: 0.12, initiative: true, ...heroAdvanced('guardian') },
+  knight: { element: 'mountain', mastery: 0.1, initiative: true, ...heroAdvanced('knight') },
+  mage: { element: 'chaos', mastery: 0.15, initiative: true, ...heroAdvanced('mage') },
   healer: { element: 'light', mastery: 0.1, initiative: true, ...heroAdvanced('healer') },
-  rogue: { element: 'dark', mastery: 0.08, initiative: true, ...heroAdvanced('rogue') },
-  bard: { element: 'dark', mastery: 0.08, initiative: true, ...heroAdvanced('bard') },
-  archer: { element: 'wind', mastery: 0.1, initiative: true, ...heroAdvanced('archer') },
-  ranger: { element: 'nature', mastery: 0.14, initiative: true, ...heroAdvanced('ranger') },
-  scout: { element: 'wind', mastery: 0.1, initiative: true, ...heroAdvanced('scout') },
-  monk: { element: 'spirit', mastery: 0.12, initiative: true, ...heroAdvanced('monk') },
-  wanderer: { element: 'earth', mastery: 0.1, initiative: true, ...heroAdvanced('wanderer') },
+  rogue: { element: 'darkness', mastery: 0.08, initiative: true, ...heroAdvanced('rogue') },
+  bard: { element: 'darkness', mastery: 0.08, initiative: true, ...heroAdvanced('bard') },
+  archer: { element: 'plains', mastery: 0.1, initiative: true, ...heroAdvanced('archer') },
+  ranger: { element: 'forest', mastery: 0.14, initiative: true, ...heroAdvanced('ranger') },
+  scout: { element: 'plains', mastery: 0.1, initiative: true, ...heroAdvanced('scout') },
+  monk: { element: 'heaven', mastery: 0.12, initiative: true, ...heroAdvanced('monk') },
+  wanderer: { element: 'savanna', mastery: 0.1, initiative: true, ...heroAdvanced('wanderer') },
 };
-
-function move(id: string, name: string, mana: number, power: number, cooldown: number): Skill {
-  return { id, name, mana, power, cooldown };
-}
-
-function basicTrio(prefix: string, names: readonly [string, string, string], powers: readonly [number, number, number]): Skill[] {
-  return names.map((name, index) => move(`${prefix}-basic-${index + 1}`, name, 0, powers[index], 0));
-}
-
-/** Six body families. World species ids are grouped into these pools. */
-const SPECIES_BASICS: Record<SpeciesId, Skill[]> = {
-  beast: basicTrio('beast', ['Cắn', 'Húc', 'Vồ'], [1, 1.05, 1.1]),
-  bug: basicTrio('bug', ['Chích', 'Kẹp', 'Cắn'], [1, 1.05, 1.08]),
-  reptile: basicTrio('reptile', ['Quật', 'Cắn', 'Phun'], [1, 1.08, 1.02]),
-  avian: basicTrio('avian', ['Mổ', 'Cào', 'Lao'], [1, 1.05, 1.12]),
-  aquatic: basicTrio('aquatic', ['Đớp', 'Quẫy', 'Siết'], [1, 1.05, 1.1]),
-  spirit: basicTrio('spirit', ['Chạm', 'Xé', 'Nổ'], [1, 1.08, 1.15]),
-};
-
-const ELEMENT_NAMES: Record<ElementId, readonly [string, string, string, string, string]> = {
-  fire: ['Tàn lửa', 'Bùng cháy', 'Phun trào', 'Cột lửa', 'Thiêu đốt'],
-  water: ['Súng nước', 'Vũ điệu mưa', 'Thủy triều', 'Xoáy nước', 'Sóng thần'],
-  earth: ['Đá vụn', 'Rung đất', 'Tường đá', 'Hố sâu', 'Sụp núi'],
-  wind: ['Gió cắt', 'Lốc xoáy', 'Cơn gió', 'Bão tố', 'Xé gió'],
-  ice: ['Lạnh buốt', 'Mảnh băng', 'Bão tuyết', 'Đóng băng', 'Giáo băng'],
-  lightning: ['Tia chớp', 'Sét đánh', 'Phóng điện', 'Tiếng sấm', 'Lôi kích'],
-  nature: ['Lá sắc', 'Dây leo', 'Nở hoa', 'Rễ siết', 'Mầm độc'],
-  poison: ['Phun độc', 'Chích độc', 'Độc tố', 'Sương độc', 'Ăn mòn'],
-  metal: ['Mảnh kim', 'Chém thép', 'Khiên sắt', 'Mũi giáo', 'Búa nặng'],
-  light: ['Tia sáng', 'Hào quang', 'Phán xét', 'Bình minh', 'Thánh kích'],
-  dark: ['Bóng tối', 'Nuốt chửng', 'Hút hồn', 'Đêm đen', 'Vực thẳm'],
-  arcane: ['Tia phép', 'Ấn chú', 'Nổ sao', 'Cổng phép', 'Hỗn mang'],
-  lava: ['Nham thạch', 'Dòng nham', 'Phun nham', 'Hồ dung', 'Nổ nham'],
-  storm: ['Gió sấm', 'Mưa đá', 'Lốc sét', 'Bão lớn', 'Sấm sét'],
-  sand: ['Cát bay', 'Bão cát', 'Chôn vùi', 'Xương cát', 'Cát lún'],
-  spirit: ['Linh khí', 'Hồn ảnh', 'Phán linh', 'Xuyên hồn', 'Vô ảnh'],
-};
-
-const ELEMENT_POWERS = [1.3, 1.55, 1.85, 1.65, 2.05] as const;
-const ELEMENT_MANA = [6, 10, 14, 12, 16] as const;
-const ELEMENT_COOLDOWN = [1, 2, 3, 2, 3] as const;
 
 function elementPool(element: ElementId): Skill[] {
-  return ELEMENT_NAMES[element].map((name, index) =>
-    move(`${element}-${index + 1}`, name, ELEMENT_MANA[index], ELEMENT_POWERS[index], ELEMENT_COOLDOWN[index]),
-  );
+  return biomeSkillList(element);
 }
 
 export function speciesOf(kindId: string): SpeciesId {
@@ -132,7 +99,7 @@ export type HeroKit = { basics: Skill[]; skills: Skill[] };
 
 /** One basic attack, and two skills taken from the element's first three. */
 export function rollMonsterKit(kindId: string, seed: string): MonsterKit {
-  const basics = SPECIES_BASICS[speciesOf(kindId)];
+  const basics = locomotionKit(kindId).basics;
   const offered = elementPool(combatElement(kindId)).slice(0, 3);
   const rng = rngFor(`${seed}:monster`);
   const [basic] = pickDistinct(basics, 1, rng);
@@ -162,10 +129,10 @@ export function classCatalog(professionId: string | undefined): { basics: Skill[
   return { basics: [...kit.basics], skills: [...kit.skills] };
 }
 
-/** Three species basics, then all five element skills. The first three skills can be equipped. */
+/** Two locomotion basics, then all five biome skills. The first three skills can be equipped. */
 export function monsterCatalog(kindId: string): { basics: Skill[]; skills: Skill[] } {
   return {
-    basics: [...SPECIES_BASICS[speciesOf(kindId)]],
+    basics: [...locomotionKit(kindId).basics],
     skills: elementPool(combatElement(kindId)),
   };
 }
@@ -185,18 +152,31 @@ export function speciesTitle(id: SpeciesId): string {
   return SPECIES_TITLE[id];
 }
 
-/** The three normal attacks shared by one body family. */
+/** @deprecated Prefer locomotionBasicSkills. */
 export function speciesBasicSkills(id: SpeciesId): Skill[] {
-  return SPECIES_BASICS[id].map((skill) => ({ ...skill }));
+  const mapped = {
+    beast: 'quadruped',
+    spirit: 'biped',
+    reptile: 'leaping',
+    bug: 'crawling',
+    aquatic: 'swimming',
+    avian: 'flying',
+  } as const;
+  return locomotionBasics(mapped[id]);
 }
 
-/** All five skills of one element. Pets can equip the first three. */
+/** All five skills of one biome system. Pets can equip the first three. */
 export function elementSkillList(element: ElementId): Skill[] {
   return elementPool(element);
 }
 
+export function biomeCatalogSkills(element: ElementId): Skill[] {
+  return elementPool(element);
+}
+
 export function skillKind(skill: Skill): 'basic' | 'active' | 'heal' | 'utility' {
-  if (skill.mana <= 0 && skill.cooldown <= 0) return 'basic';
+  const ultimate = /(?:-5)$/.test(skill.id);
+  if (!ultimate && skill.mana <= 0 && skill.cooldown <= 0) return 'basic';
   const hasHeal = (skill.effects ?? []).some((effect) => effect.type === 'heal');
   if (skill.power <= 0 && hasHeal) return 'heal';
   if (skill.power <= 0) return 'utility';
@@ -205,6 +185,7 @@ export function skillKind(skill: Skill): 'basic' | 'active' | 'heal' | 'utility'
 
 const TARGET_LABEL: Record<string, string> = {
   enemy: 'Một kẻ địch',
+  enemy_back: 'Hàng sau',
   enemies: 'Toàn bộ địch',
   enemy_pets: 'Pet địch',
   ally: 'Một đồng minh',

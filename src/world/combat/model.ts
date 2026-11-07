@@ -8,6 +8,7 @@ import type { ElementId } from './elements';
 /** Who a skill primarily asks the player to pick (or auto-resolves). */
 export type SkillTarget =
   | 'enemy'
+  | 'enemy_back'
   | 'enemies'
   | 'enemy_pets'
   | 'ally'
@@ -55,13 +56,47 @@ export type SkillEffect =
       /** Friendly-fire band when aoe includes allies. */
       allyHarmRange?: [number, number];
       fromStealthBonus?: number;
+      /** Ignore the selected front-liner and strike the back row. */
+      preferBackRow?: boolean;
+      /** Extra damage equal to `defBonus * caster DEF` (after DEF mods). */
+      defBonus?: number;
+      /** Multiply power when caster DEF is greater than target DEF. */
+      ifDefGreaterMult?: number;
+      /** Extra power when the target is slowed. */
+      ifSlowBonus?: number;
+      /** Extra crit damage when the target is slowed. */
+      ifSlowCritDamage?: number;
+      /** +bonus power per HP-missing step (e.g. 0.1 per 10%). */
+      missingTargetHpStep?: number;
+      missingTargetHpBonus?: number;
+      /** Heal caster for this fraction of damage dealt. */
+      lifesteal?: number;
+      /** True damage / DEF ignore when the defender's biome is listed. */
+      bypassDefVs?: string[];
+      /** Stun chance after the hit when the defender's biome is listed. */
+      stunChanceVs?: string[];
+      /** Damage = scaleFromTargetAtk * target ATK. */
+      scaleFromTargetAtk?: number;
+      /** Scale power by MP spent this cast (Ocean ultimate). */
+      mpSpentPower?: boolean;
+      /** Restore MP and reset cooldowns if the hit kills. */
+      killRestore?: boolean;
+      /** Toughness shredded per hit as a fraction of max TGH. */
+      tghPct?: number;
+      /** Random hit count [min, max]. */
+      randomHits?: [number, number];
+      statusOnHit?: { id: string; chance: number; turns: number };
+      /** Bonus power when caster current HP is greater than the target's. */
+      ifCasterHpGreater?: number;
+      /** Convert enemy shields and buffs into this true-damage strike. */
+      convertBuffsToDamage?: boolean;
     }
   | {
       type: 'heal';
       pctMax?: number;
       flat?: number;
       target?: 'self' | 'ally' | 'ally_lowest' | 'party' | 'party_pets' | 'party_lowest_two';
-      cleanse?: Array<'poison' | 'bleed' | 'burn' | 'all_debuff'>;
+      cleanse?: ('poison' | 'bleed' | 'burn' | 'all_debuff')[];
     }
   | { type: 'restore_mp'; amount?: number; pctMax?: number; target?: 'self' | 'party_pets' | 'party' }
   | {
@@ -95,7 +130,40 @@ export type SkillEffect =
   | { type: 'cd_reduce'; amount: number; target?: 'party_pets' | 'party' | 'self' }
   | { type: 'bio_field'; turns: number; pctHeal: number }
   | { type: 'strip_def'; amount: number; chance?: number; hits?: number; randomTargets?: [number, number] }
-  | { type: 'random'; options: SkillEffect[][]; chances?: number[] };
+  | { type: 'strip_buff'; stat: ModStat; count?: number }
+  | { type: 'random'; options: SkillEffect[][]; chances?: number[] }
+  | { type: 'shield'; pctMax: number; turns?: number }
+  | { type: 'extra_turn' }
+  | { type: 'delay_turn' }
+  | { type: 'mp_cost_mult'; amount: number; turns: number }
+  | { type: 'lock_energy'; turns: number; blockItems?: boolean }
+  | { type: 'pull_lowest'; defAmount: number; turns: number }
+  | { type: 'detonate_frost' }
+  | { type: 'swap_hp_pct' }
+  | { type: 'swap_stat'; stats: ('atk' | 'def')[] }
+  | { type: 'transfer_debuffs' }
+  | { type: 'seal_ultimate'; turns: number }
+  | { type: 'sacrifice_hp'; pctCurrent?: number; pctMax?: number; target?: 'self' | 'ally' }
+  | { type: 'reset_cds' }
+  | { type: 'undying'; turns: number }
+  | { type: 'endure' }
+  | { type: 'next_skill_evade' }
+  | { type: 'evade_basics'; turns: number }
+  | { type: 'barrier'; target?: 'self' | 'party' }
+  | { type: 'magic_reduce'; pct: number; turns: number }
+  | { type: 'steal_stat'; stat: 'atk' | 'def'; pct: number; turns: number }
+  | { type: 'absorb_def'; defAmount: number; absorb: number; turns: number }
+  | { type: 'hp_mp_chant'; hpPct: number; mpPct: number; turns: number }
+  | { type: 'burn_mp'; pct?: number }
+  | { type: 'convert_def_to_atk'; pct: number; turns: number }
+  | { type: 'next_attack_boost'; amount: number }
+  | { type: 'melee_thorns'; pct: number; turns: number; burn?: boolean }
+  | { type: 'enrage_below'; hpPct: number; atk: number; crit: number }
+  | { type: 'trap_cast'; turns: number; pct: number }
+  | { type: 'cleanse'; count?: number; target?: 'self' | 'ally' }
+  | { type: 'frost_stack'; stacks?: number }
+  | { type: 'cleanse_target_buffs' }
+  | { type: 'steal_mp'; pct: number };
 
 export type Skill = {
   id: string;
