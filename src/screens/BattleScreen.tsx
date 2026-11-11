@@ -9,7 +9,10 @@ import { TamingMiniGameModal } from '../components/battle/TamingMiniGameModal';
 import { TurnTimeline, type TimelineRole } from '../components/battle/TurnTimeline';
 import { BATTLE_GRID_POSITIONS, feetInView } from '../components/battle/courtSlots';
 import { CourtUnit, FaceArt, RoundButton, TimelineFace, styles, timelineFaceSize } from '../components/battle/courtChrome';
+import { GestureActionButton } from '../components/battle/GestureActionButton';
+import { QuickTargetStrip } from '../components/battle/QuickTargetStrip';
 import { getCharacter } from '../data/characters';
+import { useQuickTarget } from '../hooks/useQuickTarget';
 import { useSocket } from '../state/BattleContext';
 import { useSetup } from '../state/SetupContext';
 import { useWorld } from '../state/WorldContext';
@@ -20,6 +23,7 @@ import {
   actAuto,
   actAutoPlayer,
   actBasic,
+  actItem,
   actSkill,
   actTame,
   cancelTame,
@@ -37,6 +41,7 @@ import {
   type BattleState,
   type Fighter,
 } from '../world/combat';
+import { combatSfx } from '../world/combat/combatSfx';
 import { describeSkill } from '../world/combat/kits';
 import { floatKindFromLog, IMPACT_MS, SLASH_MS, STANCE_MS, STANCE_PX, TEAR_MS, TURN_MS } from '../world/combat/loop';
 import { upcomingQueue } from '../world/combat/order';
@@ -105,6 +110,27 @@ export function BattleScreen() {
   const [focusId, setFocusId] = useState<string | null>(opening?.battle.foes[0]?.id ?? null);
   const [basicId, setBasicId] = useState<string | null>(world.squad?.basicId ?? null);
   const [actionId, setActionId] = useState('basic');
+  const aimUnits = useMemo(() => {
+    if (!battle || battle.over) return [];
+    const ally = battle.allies.find((entry) => entry.id === battle.turnId && entry.hp > 0) ?? null;
+    const actor = ally ?? battle.player;
+    if (actionId.startsWith('item:')) return [];
+    const skill = actionId === 'basic' ? actor.basic : actor.skills.find((entry) => entry.id === actionId) ?? actor.basic;
+    const pool = needsAllyTarget(skill) ? battle.allies : battle.foes;
+    return pool.map((fighter) => ({
+      id: fighter.id,
+      hp: fighter.hp,
+      maxHp: fighter.maxHp,
+      name: fighter.name,
+      kindId: fighter.kindId,
+      tint: fighter.tint,
+    }));
+  }, [actionId, battle]);
+  const quick = useQuickTarget({
+    targets: aimUnits,
+    focusId,
+    setFocusId: (id) => setFocusId(id),
+  });
   const [tameId, setTameId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -570,42 +596,79 @@ export function BattleScreen() {
     }
   };
 
-  const confirmAttack = () => {
+  const commitAction = (skillKey: string, targetMode: 'focus' | 'lowest' | string) => {
     const current = battleRef.current;
-    if (!current || current.over || beatRef.current !== 'ready') return;
+    if (!current || current.over || beatRef.current !== 'ready' || paused) return;
     const ally = current.allies.find((entry) => entry.id === current.turnId && entry.hp > 0) ?? null;
     if (current.turnId !== 'player' && !ally) return;
-    const picked = [...current.foes, ...current.allies].find((fighter) => fighter.id === focusId && fighter.hp > 0) ?? null;
-    const foe = picked?.side === 'wild' ? picked : picked ? null : current.foes.find((fighter) => fighter.hp > 0) ?? null;
-    const allyPick = picked && picked.side !== 'wild' ? picked : current.allies.find((fighter) => fighter.hp > 0) ?? null;
+    if (skillKey.startsWith('item:')) {
+      if (ally || current.turnId !== 'player') return;
+      const itemId = skillKey.slice('item:'.length) as ItemId;
+      const next = actItem(current, itemId);
+      if (next === current) return;
+      combatSfx('cast');
+      beginStrikeRef.current(current, next);
+      return;
+    }
+    const actor = ally ?? current.player;
+    const skill = skillKey === 'basic' ? null : actor.skills.find((entry) => entry.id === skillKey) ?? null;
+    const move = skill ?? actor.basic;
+    const foePool = current.foes.filter((fighter) => fighter.hp > 0);
+    const allyPool = current.allies.filter((fighter) => fighter.hp > 0);
+    const wantAlly = skill ? needsAllyTarget(skill) : false;
+    const pool = wantAlly ? allyPool : foePool;
+    const lowest = [...pool].sort((a, b) => {
+      const ra = a.maxHp > 0 ? a.hp / a.maxHp : 1;
+      const rb = b.maxHp > 0 ? b.hp / b.maxHp : 1;
+      return ra - rb || a.hp - b.hp;
+    })[0] ?? null;
+    const exact = pool.find((fighter) => fighter.id === targetMode && fighter.hp > 0) ?? null;
+    const focused = pool.find((fighter) => fighter.id === focusId && fighter.hp > 0) ?? null;
+    const chosen = targetMode === 'lowest' ? lowest : exact ?? (targetMode === 'focus' ? focused ?? lowest : focused ?? lowest);
+    const foe = wantAlly ? null : chosen;
+    const allyPick = wantAlly ? chosen : null;
     let next = current;
     if (ally) {
-      if (actionId !== 'basic') {
-        const skill = ally.skills.find((entry) => entry.id === actionId);
-        if (!skill) return;
+      if (skill) {
         if (skillNeedsFoe(skill) && !foe) next = { ...current, log: 'Hãy chọn một quái còn sống.' };
         else if (needsAllyTarget(skill) && !allyPick) next = { ...current, log: 'Hãy chọn một pet đồng minh.' };
         else next = actAlly(current, skillNeedsFoe(skill) ? foe?.id ?? null : allyPick?.id ?? null, skill.id);
       } else if (!foe) next = { ...current, log: 'Hãy chọn một quái còn sống.' };
       else next = actAlly(current, foe.id, null);
     } else if (current.turnId === 'player') {
-      if (actionId === 'basic') {
-        const basic = current.player.basic;
+      if (!skill) {
         if (current.player.chargedPower) {
           next = foe ? actBasic(current, foe.id) : { ...current, log: 'Hãy chọn một quái còn sống.' };
-        } else if (skillNeedsFoe(basic) && !foe) next = { ...current, log: 'Hãy chọn một quái còn sống.' };
+        } else if (skillNeedsFoe(move) && !foe) next = { ...current, log: 'Hãy chọn một quái còn sống.' };
         else next = actBasic(current, foe?.id ?? 'none');
-      } else {
-        const skill = current.player.skills.find((entry) => entry.id === actionId);
-        if (!skill) return;
-        if (skillNeedsFoe(skill) && !foe) next = { ...current, log: 'Hãy chọn một quái còn sống.' };
-        else if (needsAllyTarget(skill) && !allyPick) next = { ...current, log: 'Hãy chọn một pet đồng minh.' };
-        else next = actSkill(current, skillNeedsFoe(skill) ? foe?.id ?? null : allyPick?.id ?? null, skill.id);
-      }
+      } else if (skillNeedsFoe(skill) && !foe) next = { ...current, log: 'Hãy chọn một quái còn sống.' };
+      else if (needsAllyTarget(skill) && !allyPick) next = { ...current, log: 'Hãy chọn một pet đồng minh.' };
+      else next = actSkill(current, skillNeedsFoe(skill) ? foe?.id ?? null : allyPick?.id ?? null, skill.id);
     }
     if (next === current) return;
+    combatSfx('cast');
     beginStrikeRef.current(current, next);
   };
+
+  const bindAction = (skillKey: string) => ({
+    onArm: () => {
+      setActionId(skillKey);
+      combatSfx('arm');
+    },
+    onDoubleTap: () => {
+      setActionId(skillKey);
+      commitAction(skillKey, 'lowest');
+    },
+    onHoldStart: () => {
+      setActionId(skillKey);
+      quick.beginAim();
+    },
+    onHoldMove: (dx: number, dy: number) => quick.moveAim(dx, dy),
+    onHoldEnd: (dy: number, cancelled: boolean) => {
+      const result = quick.endAim(cancelled ? 999 : dy);
+      if (result === 'cast') commitAction(skillKey, 'focus');
+    },
+  });
 
   const begin = () => {
     if (!ready) return;
@@ -755,7 +818,16 @@ export function BattleScreen() {
             shakeKey={shakes[fighter.id] ?? 0}
             fate={fates[fighter.id] ?? null}
             testID={`court-ally-${index}`}
-            onPress={battle ? undefined : () => toggleId(allyIds, rawId(fighter.id), 3, setPickedAllies)}
+            onPress={
+              battle
+                ? fighter.hp > 0
+                  ? () => {
+                      setFocusId(fighter.id);
+                      if (quick.noteUnitTap(fighter.id) === 'double') commitAction(actionId, fighter.id);
+                    }
+                  : undefined
+                : () => toggleId(allyIds, rawId(fighter.id), 3, setPickedAllies)
+            }
           />
         ))}
         {shownFoes.map((fighter, index) => (
@@ -778,7 +850,10 @@ export function BattleScreen() {
             onPress={
               battle
                 ? fighter.hp > 0
-                  ? () => setFocusId(fighter.id)
+                  ? () => {
+                      setFocusId(fighter.id);
+                      if (quick.noteUnitTap(fighter.id) === 'double') commitAction(actionId, fighter.id);
+                    }
                   : undefined
                 : () => toggleId(foeIds, fighter.id, 3, setPickedFoes)
             }
@@ -839,31 +914,29 @@ export function BattleScreen() {
               </View>
             </>
           ) : null}
-          <Text style={[styles.dockLabel, { fontSize: font(10) }]} numberOfLines={1}>
-            {battle && marked
-              ? `${marked.name}: ${marked.basic?.name ?? 'Đòn thường'} · ${(marked.skills ?? []).map((skill) => skill.name).join(' · ')}`
-              : 'Mục tiêu'}
-          </Text>
-          <View style={styles.targetRow}>
-            {battle
-              ? battle.foes.map((fighter, index) => {
-                  const on = marked?.id === fighter.id;
-                  return (
-                    <Pressable
-                      key={fighter.id}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Mục tiêu ${index + 1} ${fighter.name}`}
-                      testID={`target-${index + 1}`}
-                      disabled={fighter.hp <= 0}
-                      onPress={() => setFocusId(fighter.id)}
-                      style={[styles.square, { width: s(44), height: s(44) }, on && styles.targetOn, fighter.hp <= 0 && styles.fainted]}
-                    >
-                      <Text style={styles.slotIndex}>{index + 1}</Text>
-                      <FaceArt kindId={fighter.kindId} tint={fighter.tint} name={fighter.name} size={s(26)} facing="left" />
-                    </Pressable>
-                  );
-                })
-              : cards.slice(0, 6).map((fighter) => {
+          {battle ? (
+            <QuickTargetStrip
+              units={aimUnits}
+              focusId={quick.aiming ? focusId : marked?.id ?? focusId}
+              aiming={quick.aiming}
+              size={s(44)}
+              testIDPrefix="target"
+              onSelect={(id) => {
+                setFocusId(id);
+                quick.noteUnitTap(id);
+              }}
+              onDoubleSelect={(id) => {
+                setFocusId(id);
+                commitAction(actionId, id);
+              }}
+            />
+          ) : (
+            <>
+              <Text style={[styles.dockLabel, { fontSize: font(10) }]} numberOfLines={1}>
+                Mục tiêu
+              </Text>
+              <View style={styles.targetRow}>
+                {cards.slice(0, 6).map((fighter) => {
                   const on = foeIds.includes(fighter.id);
                   return (
                     <Pressable
@@ -877,7 +950,9 @@ export function BattleScreen() {
                     </Pressable>
                   );
                 })}
-          </View>
+              </View>
+            </>
+          )}
         </View>
         <View style={styles.commands}>
           {!battle ? (
@@ -919,54 +994,61 @@ export function BattleScreen() {
                   dim={nets <= 0}
                   testID="tame-open"
                   onPress={openTame}
-                  size={s(48)}
+                  size={s(52)}
                   font={font(10)}
                 />
               )}
-              <RoundButton
+              <GestureActionButton
                 label="Đánh thường"
                 hint={`Đòn đánh thường ${(actingAlly ?? battle.player).basic?.name ?? 'Đòn thường'}`}
-                square
                 picked={actionId === 'basic'}
                 disabled={!commandTurn}
                 testID="battle-basic"
-                onPress={() => setActionId('basic')}
-                size={s(48)}
+                size={s(52)}
                 font={font(10)}
+                {...bindAction('basic')}
               />
               {((actingAlly ?? battle.player).skills ?? []).slice(0, 2).map((skill, index) => {
                 const actor = actingAlly ?? battle.player;
                 const wait = actor.cooldowns[skill.id] ?? 0;
                 const locked = wait > 0 || actor.mp < skill.mana;
                 return (
-                  <RoundButton
+                  <GestureActionButton
                     key={skill.id}
                     label={wait > 0 ? `CD ${wait}` : skill.name}
                     hint={describeSkill(skill)}
-                    square
                     tint="#7fd0c4"
                     hot={actionId === skill.id}
+                    picked={actionId === skill.id}
                     disabled={!commandTurn || locked}
                     dim={locked}
                     testID={`battle-skill-${index + 1}`}
-                    onPress={() => setActionId(skill.id)}
-                    size={s(48)}
+                    size={s(52)}
                     font={font(10)}
+                    {...bindAction(skill.id)}
                   />
                 );
               })}
-              <RoundButton
-                label="Xác nhận"
-                hint="Xác nhận tấn công"
-                square
-                tint="#e23a22"
-                hot
-                disabled={!commandTurn}
-                testID="battle-confirm"
-                onPress={confirmAttack}
-                size={s(48)}
-                font={font(10)}
-              />
+              {(battle.bag ?? [])
+                .filter((stack) => COMBAT_ITEMS.includes(stack.itemId))
+                .slice(0, 2)
+                .map((stack) => {
+                  const key = `item:${stack.itemId}`;
+                  return (
+                    <GestureActionButton
+                      key={key}
+                      label={`${shortItem(stack.itemId)} ×${stack.qty}`}
+                      hint={ITEMS[stack.itemId].nameVi}
+                      tint={ITEMS[stack.itemId].tint}
+                      picked={actionId === key}
+                      disabled={!playerTurn}
+                      testID={`battle-item-${stack.itemId}`}
+                      size={s(48)}
+                      font={font(9)}
+                      {...bindAction(key)}
+                    />
+                  );
+                })}
             </>
           )}
         </View>

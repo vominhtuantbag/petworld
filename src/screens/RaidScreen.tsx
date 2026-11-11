@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Linking, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TamingMiniGameModal } from '../components/battle/TamingMiniGameModal';
 import { FloatingCombatText } from '../components/battle/FloatingCombatText';
+import { GestureActionButton } from '../components/battle/GestureActionButton';
+import { QuickTargetStrip } from '../components/battle/QuickTargetStrip';
 import { TurnTimeline } from '../components/battle/TurnTimeline';
 import { feetInView } from '../components/battle/courtSlots';
 import { CharacterAvatar } from '../components/CharacterAvatar';
-import { CourtUnit, FaceArt, RoundButton, TimelineFace, styles as court, timelineFaceSize, type CourtActor } from '../components/battle/courtChrome';
+import { CourtUnit, RoundButton, TimelineFace, styles as court, timelineFaceSize, type CourtActor } from '../components/battle/courtChrome';
 import { getCharacter } from '../data/characters';
+import { useQuickTarget } from '../hooks/useQuickTarget';
 import { useSocketCombatFx } from '../hooks/useSocketCombatFx';
+import { combatSfx } from '../world/combat/combatSfx';
 import type { RaidUnitView } from '../net/protocol';
 import { useBattle } from '../state/BattleContext';
 import { useWorld } from '../state/WorldContext';
@@ -25,9 +29,8 @@ type Pick = 'attack' | 0 | 1;
 
 /**
  * One co-op boss arena on the PvP court. No extra floors. Speed timeline,
- * target row, and Đánh thường → Kỹ năng 1 → Kỹ năng 2 → Xác nhận. Confirm
- * resolves the turn early. At 0 a hero auto-attacks. Foes swing on their own
- * clock. The boss is drawn at 2×.
+ * Quick Target strip, and hold-drag / double-tap casts. At 0 a hero auto-attacks.
+ * Foes swing on their own clock. The boss is drawn at 2×.
  */
 export function RaidScreen() {
   const battle = useBattle();
@@ -40,6 +43,24 @@ export function RaidScreen() {
   const [now, setNow] = useState(Date.now());
   const [picked, setPicked] = useState<Pick>('attack');
   const [focusId, setFocusId] = useState<string | null>(null);
+  const aimUnits = useMemo(
+    () =>
+      (snapshot?.units ?? [])
+        .filter((unit) => unit.side === 'foe')
+        .map((unit) => ({
+          id: unit.id,
+          hp: unit.hp,
+          maxHp: unit.maxHp,
+          name: unit.name,
+          tint: unit.tint,
+        })),
+    [snapshot],
+  );
+  const quick = useQuickTarget({
+    targets: aimUnits,
+    focusId,
+    setFocusId: (id) => setFocusId(id),
+  });
   const claimed = useRef<string | null>(null);
   const ticketRoom = useRef<string | null>(null);
 
@@ -109,7 +130,6 @@ export function RaidScreen() {
   const skill2Wait = skillCard2?.wait ?? 0;
   const skill1Locked = skill1Wait > 0 || (actor != null && (skillCard1?.mana ?? 0) > (actor.mp ?? 0));
   const skill2Locked = skill2Wait > 0 || (actor != null && (skillCard2?.mana ?? 0) > (actor.mp ?? 0));
-  const pickedLabel = picked === 0 ? skill1 : picked === 1 ? skill2 : 'Đánh thường';
   const lastLine = snapshot.log[snapshot.log.length - 1] ?? '';
   const resultTitle = snapshot.victory ? 'Chiến thắng' : 'Thất bại';
   const rewardLine = rewardText(snapshot.rewards);
@@ -121,13 +141,43 @@ export function RaidScreen() {
         ? `${seconds}s. ${actor?.name ?? 'Bạn'} đang ra đòn. ${lastLine}`
         : `Đợi ${actor?.name ?? 'đối thủ'}. ${lastLine}`;
 
-  const confirm = () => {
-    if (!yourTurn || !focus) return;
-    if (picked === 0 && skill1Locked) return;
-    if (picked === 1 && skill2Locked) return;
-    if (picked === 'attack') battle.sendRaidAction('attack', focus.id);
-    else battle.sendRaidAction('skill', focus.id, picked);
+  const fire = (choice: Pick, targetMode: 'focus' | 'lowest' | string) => {
+    if (!yourTurn) return;
+    if (choice === 0 && skill1Locked) return;
+    if (choice === 1 && skill2Locked) return;
+    const pool = foes.filter((unit) => unit.hp > 0);
+    const lowest = [...pool].sort((a, b) => {
+      const ra = a.maxHp > 0 ? a.hp / a.maxHp : 1;
+      const rb = b.maxHp > 0 ? b.hp / b.maxHp : 1;
+      return ra - rb || a.hp - b.hp;
+    })[0] ?? null;
+    const exact = pool.find((unit) => unit.id === targetMode) ?? null;
+    const target = targetMode === 'lowest' ? lowest : exact ?? focus ?? lowest;
+    if (!target) return;
+    combatSfx('cast');
+    if (choice === 'attack') battle.sendRaidAction('attack', target.id);
+    else battle.sendRaidAction('skill', target.id, choice);
   };
+
+  const bind = (choice: Pick) => ({
+    onArm: () => {
+      setPicked(choice);
+      combatSfx('arm');
+    },
+    onDoubleTap: () => {
+      setPicked(choice);
+      fire(choice, 'lowest');
+    },
+    onHoldStart: () => {
+      setPicked(choice);
+      quick.beginAim();
+    },
+    onHoldMove: (dx: number, dy: number) => quick.moveAim(dx, dy),
+    onHoldEnd: (dy: number, cancelled: boolean) => {
+      const result = quick.endAim(cancelled ? 999 : dy);
+      if (result === 'cast') fire(choice, 'focus');
+    },
+  });
 
   const claim = () => {
     if (snapshot.victory && snapshot.rewards && claimed.current !== snapshot.roomId) {
@@ -211,7 +261,14 @@ export function RaidScreen() {
                 character={face.character}
                 hairColor={face.hairColor}
                 outfitColor={face.outfitColor}
-                onPress={unit.side === 'foe' && unit.hp > 0 ? () => setFocusId(unit.id) : undefined}
+                onPress={
+                  unit.side === 'foe' && unit.hp > 0
+                    ? () => {
+                        setFocusId(unit.id);
+                        if (quick.noteUnitTap(unit.id) === 'double') fire(picked, unit.id);
+                      }
+                    : undefined
+                }
                 step={steps[unit.id] ?? null}
                 slashKey={slashes[unit.id] ?? 0}
                 shakeKey={shakes[unit.id] ?? 0}
@@ -242,80 +299,58 @@ export function RaidScreen() {
 
         <View style={court.dock}>
           <View style={court.targets}>
-            <Text style={[court.dockLabel, { fontSize: font(10) }]} numberOfLines={1}>
-              {focus ? `${focus.name}: ${pickedLabel}` : 'Mục tiêu'}
-            </Text>
-            <View style={court.targetRow}>
-              {foes.map((unit, index) => {
-                const on = focus?.id === unit.id;
-                return (
-                  <Pressable
-                    key={unit.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Mục tiêu ${index + 1} ${unit.name}`}
-                    testID={`raid-target-${index + 1}`}
-                    disabled={unit.hp <= 0 || finished}
-                    onPress={() => setFocusId(unit.id)}
-                    style={[court.square, { width: s(44), height: s(44) }, on && court.targetOn, unit.hp <= 0 && court.fainted]}
-                  >
-                    <Text style={court.slotIndex}>{index + 1}</Text>
-                    <FaceArt tint={unit.tint} name={unit.name} size={s(26)} facing="left" />
-                  </Pressable>
-                );
-              })}
-            </View>
+            <QuickTargetStrip
+              units={aimUnits}
+              focusId={focus?.id ?? focusId}
+              aiming={quick.aiming}
+              size={s(44)}
+              testIDPrefix="raid-target"
+              onSelect={(id) => {
+                setFocusId(id);
+                quick.noteUnitTap(id);
+              }}
+              onDoubleSelect={(id) => {
+                setFocusId(id);
+                fire(picked, id);
+              }}
+            />
           </View>
           <View style={court.commands}>
             {finished ? null : (
               <>
-                <RoundButton
+                <GestureActionButton
                   label="Đánh thường"
                   hint="Đòn đánh thường"
-                  square
                   picked={picked === 'attack'}
                   disabled={!yourTurn}
                   testID="raid-attack"
-                  onPress={() => setPicked('attack')}
-                  size={s(48)}
+                  size={s(52)}
                   font={font(10)}
+                  {...bind('attack')}
                 />
-                <RoundButton
+                <GestureActionButton
                   label={skill1Wait > 0 ? `CD ${skill1Wait}` : skill1}
                   hint={`${skill1} · MP ${skillCard1?.mana ?? 0}`}
-                  square
                   tint="#7fd0c4"
                   picked={picked === 0}
                   disabled={!yourTurn || skill1Locked}
                   dim={skill1Locked}
                   testID="raid-skill-1"
-                  onPress={() => setPicked(0)}
-                  size={s(48)}
+                  size={s(52)}
                   font={font(10)}
+                  {...bind(0)}
                 />
-                <RoundButton
+                <GestureActionButton
                   label={skill2Wait > 0 ? `CD ${skill2Wait}` : skill2}
                   hint={`${skill2} · MP ${skillCard2?.mana ?? 0}`}
-                  square
                   tint="#7fd0c4"
                   picked={picked === 1}
                   disabled={!yourTurn || skill2Locked}
                   dim={skill2Locked}
                   testID="raid-skill-2"
-                  onPress={() => setPicked(1)}
-                  size={s(48)}
+                  size={s(52)}
                   font={font(10)}
-                />
-                <RoundButton
-                  label="Xác nhận"
-                  hint="Xác nhận đòn"
-                  square
-                  tint="#e23a22"
-                  hot
-                  disabled={!yourTurn || !focus || (picked === 0 && skill1Locked) || (picked === 1 && skill2Locked)}
-                  testID="raid-confirm"
-                  onPress={confirm}
-                  size={s(48)}
-                  font={font(10)}
+                  {...bind(1)}
                 />
               </>
             )}

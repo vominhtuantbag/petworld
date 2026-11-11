@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FloatingCombatText } from '../components/battle/FloatingCombatText';
+import { GestureActionButton } from '../components/battle/GestureActionButton';
+import { QuickTargetStrip } from '../components/battle/QuickTargetStrip';
 import { TurnTimeline } from '../components/battle/TurnTimeline';
 import { BATTLE_GRID_POSITIONS, feetInView } from '../components/battle/courtSlots';
 import { RankStars } from '../components/arena/RankStars';
 import { CharacterAvatar } from '../components/CharacterAvatar';
-import { CourtUnit, FaceArt, RoundButton, TimelineFace, styles as court, timelineFaceSize, type CourtActor } from '../components/battle/courtChrome';
+import { CourtUnit, RoundButton, TimelineFace, styles as court, timelineFaceSize, type CourtActor } from '../components/battle/courtChrome';
 import { getCharacter } from '../data/characters';
+import { useQuickTarget } from '../hooks/useQuickTarget';
 import { useSocketCombatFx } from '../hooks/useSocketCombatFx';
+import { combatSfx } from '../world/combat/combatSfx';
 import type { DuelUnitView } from '../net/protocol';
 import { useBattle } from '../state/BattleContext';
 import { theme } from '../theme/theme';
@@ -26,7 +30,7 @@ type Pick = 'attack' | 0 | 1;
 
 /**
  * Same court as a wild fight. Each hero and pet acts on its own speed turn.
- * Confirm resolves that turn immediately. At 0 the server swings a basic attack.
+ * Hold-drag / double-tap casts immediately. At 0 the server swings a basic attack.
  */
 export function ArenaScreen() {
   const battle = useBattle();
@@ -38,6 +42,24 @@ export function ArenaScreen() {
   const [now, setNow] = useState(Date.now());
   const [picked, setPicked] = useState<Pick>('attack');
   const [focusId, setFocusId] = useState<string | null>(null);
+  const aimUnits = useMemo(
+    () =>
+      (snapshot?.units ?? [])
+        .filter((unit) => unit.side === 'opponent')
+        .map((unit) => ({
+          id: unit.id,
+          hp: unit.hp,
+          maxHp: unit.maxHp,
+          name: unit.name,
+          tint: unit.kind === 'hero' ? '#d9897a' : '#c4a574',
+        })),
+    [snapshot],
+  );
+  const quick = useQuickTarget({
+    targets: aimUnits,
+    focusId,
+    setFocusId: (id) => setFocusId(id),
+  });
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 200);
@@ -111,7 +133,6 @@ export function ArenaScreen() {
   const skill2Wait = skillCard2?.wait ?? 0;
   const skill1Locked = skill1Wait > 0 || (actor != null && (skillCard1?.mana ?? 0) > (actor.mp ?? 0));
   const skill2Locked = skill2Wait > 0 || (actor != null && (skillCard2?.mana ?? 0) > (actor.mp ?? 0));
-  const pickedLabel = picked === 0 ? skill1 : picked === 1 ? skill2 : 'Đánh thường';
   const lastLine = snapshot.log[snapshot.log.length - 1] ?? '';
   const log = finished
     ? `${resultTitle}. ${lastLine}`
@@ -125,12 +146,47 @@ export function ArenaScreen() {
     return { character: null, hairColor: undefined, outfitColor: undefined };
   };
 
-  const confirm = () => {
-    if (!yourTurn || !focus) return;
-    if (picked === 0 && skill1Locked) return;
-    if (picked === 1 && skill2Locked) return;
-    if (picked === 'attack') battle.sendAction('attack', focus.id);
-    else battle.sendAction('skill', focus.id, picked);
+  const fire = (choice: Pick, targetMode: 'focus' | 'lowest' | string) => {
+    if (!yourTurn) return;
+    if (choice === 0 && skill1Locked) return;
+    if (choice === 1 && skill2Locked) return;
+    const pool = [foeHero, ...foePets].filter((unit) => unit.hp > 0);
+    const lowest = [...pool].sort((a, b) => {
+      const ra = a.maxHp > 0 ? a.hp / a.maxHp : 1;
+      const rb = b.maxHp > 0 ? b.hp / b.maxHp : 1;
+      return ra - rb || a.hp - b.hp;
+    })[0] ?? null;
+    const exact = pool.find((unit) => unit.id === targetMode) ?? null;
+    const target = targetMode === 'lowest' ? lowest : exact ?? focus ?? lowest;
+    if (!target) return;
+    combatSfx('cast');
+    if (choice === 'attack') battle.sendAction('attack', target.id);
+    else battle.sendAction('skill', target.id, choice);
+  };
+
+  const bind = (choice: Pick) => ({
+    onArm: () => {
+      setPicked(choice);
+      combatSfx('arm');
+    },
+    onDoubleTap: () => {
+      setPicked(choice);
+      fire(choice, 'lowest');
+    },
+    onHoldStart: () => {
+      setPicked(choice);
+      quick.beginAim();
+    },
+    onHoldMove: (dx: number, dy: number) => quick.moveAim(dx, dy),
+    onHoldEnd: (dy: number, cancelled: boolean) => {
+      const result = quick.endAim(cancelled ? 999 : dy);
+      if (result === 'cast') fire(choice, 'focus');
+    },
+  });
+
+  const markFoe = (id: string) => {
+    setFocusId(id);
+    if (quick.noteUnitTap(id) === 'double') fire(picked, id);
   };
 
   return (
@@ -231,7 +287,7 @@ export function ArenaScreen() {
             character={foeCharacter}
             hairColor={snapshot.opponent.hairColor}
             outfitColor={snapshot.opponent.outfitColor}
-            onPress={foeHero.hp > 0 ? () => setFocusId(foeHero.id) : undefined}
+            onPress={foeHero.hp > 0 ? () => markFoe(foeHero.id) : undefined}
             step={steps[foeHero.id] ?? null}
             slashKey={slashes[foeHero.id] ?? 0}
             shakeKey={shakes[foeHero.id] ?? 0}
@@ -249,7 +305,7 @@ export function ArenaScreen() {
               barWidth={s(86)}
               front={FOE_PET_CELLS[index] === 'G19'}
               testID={`court-foe-${index}`}
-              onPress={unit.hp > 0 ? () => setFocusId(unit.id) : undefined}
+              onPress={unit.hp > 0 ? () => markFoe(unit.id) : undefined}
               step={steps[unit.id] ?? null}
               slashKey={slashes[unit.id] ?? 0}
               shakeKey={shakes[unit.id] ?? 0}
@@ -278,84 +334,72 @@ export function ArenaScreen() {
 
         <View style={court.dock}>
           <View style={court.targets}>
-            <Text style={[court.dockLabel, { fontSize: font(10) }]} numberOfLines={1}>
-              {focus ? `${focus.name}: ${pickedLabel}` : 'Mục tiêu'}
-            </Text>
-            <View style={court.targetRow}>
-              {[foeHero, ...foePets].map((unit, index) => {
-                const on = focus?.id === unit.id;
-                return (
-                  <Pressable
-                    key={unit.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Mục tiêu ${index + 1} ${unit.name}`}
-                    testID={`target-${index + 1}`}
-                    disabled={unit.hp <= 0 || finished}
-                    onPress={() => setFocusId(unit.id)}
-                    style={[court.square, { width: s(44), height: s(44) }, on && court.targetOn, unit.hp <= 0 && court.fainted]}
-                  >
-                    <Text style={court.slotIndex}>{index + 1}</Text>
-                    {unit.kind === 'hero' && foeCharacter ? (
-                      <CharacterAvatar character={foeCharacter} hairColor={snapshot.opponent.hairColor} outfitColor={snapshot.opponent.outfitColor} size={s(26)} />
-                    ) : (
-                      <FaceArt tint={PET_TINTS[index] ?? foeTint(unit)} name={unit.name} size={s(26)} facing="left" />
-                    )}
-                  </Pressable>
-                );
-              })}
-            </View>
+            <QuickTargetStrip
+              units={aimUnits.map((unit) =>
+                unit.id === foeHero.id && foeCharacter
+                  ? {
+                      ...unit,
+                      portrait: (
+                        <CharacterAvatar
+                          character={foeCharacter}
+                          hairColor={snapshot.opponent.hairColor}
+                          outfitColor={snapshot.opponent.outfitColor}
+                          size={s(26)}
+                        />
+                      ),
+                    }
+                  : unit,
+              )}
+              focusId={focus?.id ?? focusId}
+              aiming={quick.aiming}
+              size={s(44)}
+              testIDPrefix="target"
+              onSelect={(id) => {
+                setFocusId(id);
+                quick.noteUnitTap(id);
+              }}
+              onDoubleSelect={(id) => {
+                setFocusId(id);
+                fire(picked, id);
+              }}
+            />
           </View>
           <View style={court.commands}>
             {finished ? null : (
               <>
-                <RoundButton
+                <GestureActionButton
                   label="Đánh thường"
                   hint="Đòn đánh thường"
-                  square
                   picked={picked === 'attack'}
                   disabled={!yourTurn}
                   testID="action-attack"
-                  onPress={() => setPicked('attack')}
-                  size={s(48)}
+                  size={s(52)}
                   font={font(10)}
+                  {...bind('attack')}
                 />
-                <RoundButton
+                <GestureActionButton
                   label={skill1Wait > 0 ? `CD ${skill1Wait}` : skill1}
                   hint={`${skill1} · MP ${skillCard1?.mana ?? 0}`}
-                  square
                   tint="#7fd0c4"
                   picked={picked === 0}
                   disabled={!yourTurn || skill1Locked}
                   dim={skill1Locked}
                   testID="action-skill-1"
-                  onPress={() => setPicked(0)}
-                  size={s(48)}
+                  size={s(52)}
                   font={font(10)}
+                  {...bind(0)}
                 />
-                <RoundButton
+                <GestureActionButton
                   label={skill2Wait > 0 ? `CD ${skill2Wait}` : skill2}
                   hint={`${skill2} · MP ${skillCard2?.mana ?? 0}`}
-                  square
                   tint="#7fd0c4"
                   picked={picked === 1}
                   disabled={!yourTurn || skill2Locked}
                   dim={skill2Locked}
                   testID="action-skill-2"
-                  onPress={() => setPicked(1)}
-                  size={s(48)}
+                  size={s(52)}
                   font={font(10)}
-                />
-                <RoundButton
-                  label="Xác nhận"
-                  hint="Xác nhận đòn"
-                  square
-                  tint="#e23a22"
-                  hot
-                  disabled={!yourTurn || !focus || (picked === 0 && skill1Locked) || (picked === 1 && skill2Locked)}
-                  testID="battle-confirm"
-                  onPress={confirm}
-                  size={s(48)}
-                  font={font(10)}
+                  {...bind(1)}
                 />
               </>
             )}

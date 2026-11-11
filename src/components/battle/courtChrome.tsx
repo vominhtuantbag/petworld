@@ -362,8 +362,8 @@ export const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
-  dock: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 8, minHeight: 58, paddingHorizontal: 8, paddingBottom: 6 },
-  targets: { gap: 2 },
+  dock: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 8, minHeight: 64, paddingHorizontal: 8, paddingBottom: 6 },
+  targets: { gap: 2, flexShrink: 1 },
   dockLabel: {
     color: '#f6f1e7',
     fontWeight: '700',
@@ -376,7 +376,15 @@ export const styles = StyleSheet.create({
   rosterRow: { flexWrap: 'wrap', maxWidth: 220 },
   target: { overflow: 'hidden', borderWidth: 2, borderColor: '#9aa89f', backgroundColor: '#d7d2c8' },
   targetOn: { borderColor: '#ff2d2d' },
-  commands: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: 6 },
+  commands: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    alignItems: 'flex-end',
+    gap: 6,
+    maxWidth: '62%',
+  },
   square: {
     alignItems: 'center',
     justifyContent: 'center',
