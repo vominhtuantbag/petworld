@@ -7,6 +7,9 @@
  * Crit = CRIT_DMG when the roll is within CRIT_RATE, otherwise 1
  * Element = 2, 1, or 0.5
  * Final = max(1, floor(raw * 100 / (100 + effective DEF))) when the attack lands
+ *
+ * Status overlays (Accuracy Down, Burn ATK cut, Critical Mark, nullify/evade)
+ * are applied upstream in skillEffects.computeHit before this helper runs.
  */
 
 import { doesHit, effectiveDefense, normalizeAdvanced, type AdvancedInput } from './advanced';

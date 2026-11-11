@@ -15,6 +15,9 @@ import { turnOrder } from './combat/order';
 import {
   beginTurnAuras,
   castSkill,
+  canSwapOrFlee,
+  collectDisplayStatuses,
+  effectiveSpeed,
   isSilenced,
   isUltimateSkill,
   manaCost,
@@ -33,6 +36,7 @@ import type { Encounter, ItemId, Stack, Vitals } from './types';
 export type { Skill };
 export { applyMastery, masteryOf, rollHeroKit, rollMonsterKit };
 export { needsAllyTarget, needsEnemyTarget };
+export { canSwapOrFlee, collectDisplayStatuses, effectiveSpeed };
 
 export type Fighter = {
   id: string;
@@ -482,7 +486,10 @@ export function startBattle(
   maxStamina: number,
 ): BattleState {
   const round = 1;
-  const order = turnOrder([player, ...allies, ...foes], round);
+  const order = turnOrder(
+    [player, ...allies, ...foes].map((unit) => ({ ...unit, speed: effectiveSpeed(unit) })),
+    round,
+  );
   return {
     player,
     allies,
@@ -974,7 +981,10 @@ function after(state: BattleState, actedId: string, log: string): BattleState {
     if (found) return found;
   }
   const round = next.round + 1;
-  const order = turnOrder(everyone(next), round);
+  const order = turnOrder(
+    everyone(next).map((unit) => ({ ...unit, speed: effectiveSpeed(unit) })),
+    round,
+  );
   const wrap = pickNext(order, -1);
   if (wrap) return { ...wrap, round, order };
   return { ...next, round, order, turnId: order[0] ?? next.turnId };

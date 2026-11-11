@@ -6,6 +6,15 @@
 import { resolveStatusApplication, type StatusEntry, type StatusId } from './advanced';
 import { finalDamage } from './damage';
 import type { Skill, SkillEffect, SkillTarget, StatMod, ModStat } from './model';
+import {
+  ENGINE_DEBUFF_IDS,
+  accuracyMultiplier,
+  burnAttackMultiplier,
+  canSwapOrFlee,
+  collectDisplayStatuses,
+  effectiveSpeed,
+  resolveStatusDefaults,
+} from './statuses';
 
 /** Minimal battle shapes to avoid circular imports with combat.ts. */
 export type EffectFighter = {
@@ -87,33 +96,20 @@ type Fighter = EffectFighter;
 
 type CastResult = { state: BattleState; log: string };
 
-const DEBUFF_IDS: StatusId[] = [
-  'poison',
-  'freeze',
-  'stun',
-  'slow',
-  'silence',
-  'blind',
-  'bleed',
-  'burn',
-  'spd_zero',
-  'bound',
-  'energy_lock',
-  'item_lock',
-  'miasma',
-  'thirst',
-  'curse_doom',
-  'sealed',
-  'block_swap',
-  'quicksand',
-];
+const DEBUFF_IDS: StatusId[] = ENGINE_DEBUFF_IDS;
 
 const RANDOM_HIT_STATUSES: StatusId[] = ['burn', 'freeze', 'poison', 'stun'];
+
+export { canSwapOrFlee, collectDisplayStatuses, effectiveSpeed };
 
 export function manaCost(fighter: EffectFighter, skill: Skill): number {
   const thirst = hasStatus(fighter, 'thirst') || (fighter.mpCostMult ?? 1) > 1;
   const mult = Math.max(1, fighter.mpCostMult ?? (thirst ? 2 : 1));
   return Math.max(0, Math.round((skill.mana || 0) * mult));
+}
+
+export function fighterBlockedFromSwap(fighter: EffectFighter): boolean {
+  return !canSwapOrFlee(fighter);
 }
 
 export function isUltimateSkill(skill: Skill | null | undefined): boolean {
@@ -338,11 +334,21 @@ function applyEffect(
       return applyStealStat(state, actor, effect, targetId);
     case 'absorb_def':
       return applyAbsorbDef(state, actor, effect, targetId);
-    case 'hp_mp_chant':
-      return {
-        state: { ...state, chantTurns: effect.turns, chantHpPct: effect.hpPct, chantMpPct: effect.mpPct },
-        notes: [`Chuông cầu nguyện ${effect.turns} lượt.`],
+    case 'hp_mp_chant': {
+      let chanted: BattleState = {
+        ...state,
+        chantTurns: effect.turns,
+        chantHpPct: effect.hpPct,
+        chantMpPct: effect.mpPct,
       };
+      for (const unit of [chanted.player, ...chanted.allies].filter((entry) => entry.hp > 0)) {
+        chanted = putUnit(
+          chanted,
+          withStatus(unit, { id: 'regen', turns: effect.turns, power: effect.hpPct, power2: effect.mpPct }),
+        );
+      }
+      return { state: chanted, notes: [`Chuông cầu nguyện ${effect.turns} lượt.`] };
+    }
     case 'burn_mp':
       return applyBurnMp(state, actor, effect, targetId);
     case 'convert_def_to_atk':
@@ -634,7 +640,7 @@ function computeHit(
   const evaMods = modSum(defender, 'eva');
   const armPenMods = modSum(attacker, 'armPen');
 
-  let attack = (attacker.attack || 0) * (1 + atkMods);
+  let attack = (attacker.attack || 0) * (1 + atkMods) * burnAttackMultiplier(attacker);
   if (effect.scaleFromDef) attack = (attacker.defense || 0) * (1 + modSum(attacker, 'def'));
   if (effect.scaleFromTargetAtk) attack = (defender.attack || 0) * effect.scaleFromTargetAtk;
   if (effect.missingHpPower != null) {
@@ -650,10 +656,11 @@ function computeHit(
   const mark = getStatus(defender, 'mark');
   let armPen = (attacker.armPen || 0) + (effect.armPenBonus ?? 0) + armPenMods + (mark?.power2 ?? 0);
   let critRate = (attacker.critRate || 0) + (effect.critRateBonus ?? 0) + critMods + (mark?.power ?? 0);
+  // Critical Mark: guarantee the next landed strike is a crit, then consume.
+  if (mark) critRate = 1;
   if (defender.critBlockTurns && defender.critBlockTurns > 0) critRate = 0;
 
-  // Blind on attacker: already in acc mods via status-applied mods.
-  const acc = Math.max(0.05, (attacker.acc || 0.9) + accMods);
+  const acc = Math.max(0.05, ((attacker.acc || 0.9) + accMods) * accuracyMultiplier(attacker));
   const eva = Math.max(0, (defender.eva || 0) + evaMods);
   let defense = Math.max(0, (defender.defense || 0) * (1 + defMods));
   if (defender.staggered) defense = Math.round(defense * 0.5);
@@ -661,7 +668,9 @@ function computeHit(
   const ignoreDef = Boolean(effect.trueDamage || effect.bypassDefVs?.includes(defender.element));
   if (ignoreDef) {
     const raw = Math.max(1, Math.round(attack * power));
-    return { damage: raw, miss: false, crit: false, staggered: false, target: takeHit(defender, raw, fromSkill) };
+    let target = takeHit(defender, raw, fromSkill);
+    if (mark) target = { ...target, statuses: (target.statuses ?? []).filter((entry) => entry.id !== 'mark') };
+    return { damage: raw, miss: false, crit: Boolean(mark), staggered: false, target };
   }
 
   const slowCrit = effect.ifSlowCritDamage && (hasStatus(defender, 'slow') || modSum(defender, 'spd') < 0) ? effect.ifSlowCritDamage : 0;
@@ -685,7 +694,11 @@ function computeHit(
     const casterDef = (attacker.defense || 0) * (1 + modSum(attacker, 'def'));
     dealt += Math.max(0, Math.round(casterDef * effect.defBonus));
   }
-  return { damage: dealt, miss: hit.miss, crit: hit.crit, staggered: false, target: takeHit(defender, dealt, fromSkill) };
+  let target = takeHit(defender, dealt, fromSkill);
+  if (!hit.miss && mark) {
+    target = { ...target, statuses: (target.statuses ?? []).filter((entry) => entry.id !== 'mark') };
+  }
+  return { damage: dealt, miss: hit.miss, crit: hit.crit, staggered: false, target };
 }
 
 function takeHit(defender: Fighter, dealt: number, fromSkill: boolean): Fighter {
@@ -729,6 +742,9 @@ function applyHeal(
           return !effect.cleanse!.includes(entry.id as 'poison' | 'bleed' | 'burn');
         }),
       };
+      if (effect.cleanse.includes('all_debuff')) {
+        healed = withStatus(healed, { id: 'cleanse_flash', turns: 1 });
+      }
     }
     next = putUnit(next, healed);
     notes.push(`Hồi ${amount} cho ${unit.name}.`);
@@ -782,29 +798,84 @@ function applyStatusEffect(
 
   const notes: string[] = [];
   let next = state;
+  const statusId = effect.id as StatusId;
+  const defaults = resolveStatusDefaults(statusId, effect.turns, effect.power);
   const targets = resolveStatusTargets(next, actor, effect, targetId);
   for (const unit of targets) {
-    if (hasStatus(unit, 'immunity') && DEBUFF_IDS.includes(effect.id as StatusId)) {
-      notes.push(`${unit.name} miễn nhiễm.`);
+    const live = findUnit(next, unit.id) ?? unit;
+    if (hasStatus(live, 'immunity') && DEBUFF_IDS.includes(statusId)) {
+      notes.push(`${live.name} miễn nhiễm.`);
       continue;
     }
-    const roll = resolveStatusApplication(effect.chance, effect.turns, unit.res || 0, rng());
+    // Stun Immunity also hard-blocks stun/freeze even if a future skill bypasses the DEBUFF list.
+    if (hasStatus(live, 'immunity') && (statusId === 'stun' || statusId === 'freeze')) {
+      notes.push(`${live.name} miễn nhiễm khống chế.`);
+      continue;
+    }
+    const roll = resolveStatusApplication(effect.chance, defaults.turns, live.res || 0, rng());
     if (!roll.applied) {
-      notes.push(`${unit.name} kháng hiệu ứng.`);
+      notes.push(`${live.name} kháng hiệu ứng.`);
       continue;
     }
-    next = putUnit(
-      next,
-      withStatus(unit, {
-        id: effect.id as StatusId,
-        turns: roll.duration,
-        power: effect.id === 'curse_doom' ? unit.damageTaken ?? 0 : effect.power,
-        sourceId: actor.id,
-      }),
-    );
-    notes.push(`${unit.name} dính ${effect.id} (${roll.duration}).`);
+    let tagged = withStatus(live, {
+      id: statusId,
+      turns: roll.duration,
+      power: statusId === 'curse_doom' ? live.damageTaken ?? 0 : defaults.power,
+      sourceId: actor.id,
+    });
+    tagged = syncStatusSecondaryMods(tagged, statusId, roll.duration, defaults.power);
+    next = putUnit(next, tagged);
+    if (statusId === 'slow' || statusId === 'spd_zero') {
+      next = delayUnitInOrder(next, tagged.id);
+    }
+    notes.push(`${tagged.name} dính ${statusId} (${roll.duration}).`);
   }
   return { state: next, notes };
+}
+
+/** Pair lasting statuses with the stat mods the damage pipeline already reads. */
+function syncStatusSecondaryMods(
+  fighter: Fighter,
+  statusId: StatusId,
+  turns: number,
+  power?: number,
+): Fighter {
+  const mods = [...(fighter.mods ?? [])];
+  const push = (stat: ModStat, amount: number, id: string) => {
+    mods.push({ id, stat, amount, turns });
+  };
+  if (statusId === 'blind' && !(mods.some((mod) => mod.stat === 'acc' && mod.amount < 0))) {
+    push('acc', -(power ?? 0.3), `status-blind-${turns}`);
+  }
+  if (statusId === 'slow' && !(mods.some((mod) => mod.stat === 'spd' && mod.amount < 0))) {
+    push('spd', -(power ?? 0.3), `status-slow-${turns}`);
+  }
+  if (statusId === 'burn' && !(mods.some((mod) => mod.stat === 'atk' && mod.amount < 0))) {
+    push('atk', -0.2, `status-burn-atk-${turns}`);
+  }
+  if (statusId === 'atk_down') push('atk', -(power ?? 0.22), `status-atk-down-${turns}`);
+  if (statusId === 'def_down') push('def', -(power ?? 0.35), `status-def-down-${turns}`);
+  if (statusId === 'atk_up') push('atk', power ?? 0.4, `status-atk-up-${turns}`);
+  if (statusId === 'def_up') push('def', power ?? 0.35, `status-def-up-${turns}`);
+  if (statusId === 'spd_up') push('spd', power ?? 0.5, `status-spd-up-${turns}`);
+  return mods.length === (fighter.mods ?? []).length ? fighter : { ...fighter, mods };
+}
+
+function delayUnitInOrder(state: BattleState, unitId: string): BattleState {
+  if (!state.order.includes(unitId)) return state;
+  const rest = state.order.filter((id) => id !== unitId);
+  return { ...state, order: [...rest, unitId] };
+}
+
+function mirrorModStatus(stat: ModStat, amount: number, turns: number): StatusEntry | null {
+  if (stat === 'atk' && amount > 0) return { id: 'atk_up', turns, power: amount };
+  if (stat === 'atk' && amount < 0) return { id: 'atk_down', turns, power: Math.abs(amount) };
+  if (stat === 'def' && amount > 0) return { id: 'def_up', turns, power: amount };
+  if (stat === 'def' && amount < 0) return { id: 'def_down', turns, power: Math.abs(amount) };
+  if (stat === 'spd' && amount > 0) return { id: 'spd_up', turns, power: amount };
+  if (stat === 'spd' && amount < 0) return { id: 'slow', turns, power: Math.abs(amount) };
+  if (stat === 'acc' && amount < 0) return { id: 'blind', turns, power: Math.abs(amount) };
+  return null;
 }
 
 function applyModEffect(
@@ -819,14 +890,19 @@ function applyModEffect(
   let next = state;
   const targets = resolveModTargets(next, actor, effect.target ?? 'self', targetId);
   for (const unit of targets) {
+    const live = findUnit(next, unit.id) ?? unit;
     const mod: StatMod = {
       id: `${effect.stat}-${Date.now()}-${Math.floor(rng() * 9999)}`,
       stat: effect.stat,
       amount: effect.amount,
       turns: effect.turns,
     };
-    next = putUnit(next, { ...unit, mods: [...(unit.mods ?? []), mod] });
-    notes.push(`${unit.name} ${effect.stat} ${effect.amount >= 0 ? '+' : ''}${Math.round(effect.amount * 100)}%.`);
+    let tagged: Fighter = { ...live, mods: [...(live.mods ?? []), mod] };
+    const mirror = mirrorModStatus(effect.stat, effect.amount, effect.turns);
+    if (mirror) tagged = withStatus(tagged, mirror);
+    if (effect.stat === 'spd' && effect.amount < 0) next = delayUnitInOrder(next, tagged.id);
+    next = putUnit(next, tagged);
+    notes.push(`${tagged.name} ${effect.stat} ${effect.amount >= 0 ? '+' : ''}${Math.round(effect.amount * 100)}%.`);
   }
   // Wanderer fate "ally" without targetId: buff lowest HP ally
   return { state: next, notes };
@@ -1062,7 +1138,10 @@ function applyMpCostMult(
   const foe = pickEnemy(state, actor, targetId);
   if (!foe) return { state, notes: [] };
   return {
-    state: putUnit(state, { ...foe, mpCostMult: effect.amount }),
+    state: putUnit(
+      state,
+      withStatus({ ...foe, mpCostMult: effect.amount }, { id: 'thirst', turns: effect.turns, power: effect.amount }),
+    ),
     notes: [`${foe.name} tốn ×${effect.amount} MP trong ${effect.turns} lượt.`],
   };
 }
@@ -1278,14 +1357,20 @@ function applyConvertDefToAtk(
 ): { state: BattleState; notes: string[] } {
   const shifted = (actor.defense * effect.pct) / Math.max(1, actor.attack);
   return {
-    state: putUnit(state, {
-      ...actor,
-      mods: [
-        ...(actor.mods ?? []),
-        { id: 'shift-atk', stat: 'atk' as ModStat, amount: shifted, turns: effect.turns },
-        { id: 'shift-def', stat: 'def' as ModStat, amount: -effect.pct, turns: effect.turns },
-      ],
-    }),
+    state: putUnit(
+      state,
+      withStatus(
+        {
+          ...actor,
+          mods: [
+            ...(actor.mods ?? []),
+            { id: 'shift-atk', stat: 'atk' as ModStat, amount: shifted, turns: effect.turns },
+            { id: 'shift-def', stat: 'def' as ModStat, amount: -effect.pct, turns: effect.turns },
+          ],
+        },
+        { id: 'stat_convert', turns: effect.turns, power: effect.pct },
+      ),
+    ),
     notes: [`${actor.name} đổi ${Math.round(effect.pct * 100)}% DEF thành ATK.`],
   };
 }
@@ -1336,8 +1421,13 @@ function applyCleanse(
       : actor;
   const debuffs = (unit.statuses ?? []).filter((entry) => DEBUFF_IDS.includes(entry.id));
   const drop = new Set(debuffs.slice(0, effect.count ?? 1).map((entry) => entry.id));
+  const cleared = {
+    ...unit,
+    statuses: (unit.statuses ?? []).filter((entry) => !drop.has(entry.id)),
+    mods: (unit.mods ?? []).filter((mod) => mod.amount >= 0 || !drop.size),
+  };
   return {
-    state: putUnit(state, { ...unit, statuses: (unit.statuses ?? []).filter((entry) => !drop.has(entry.id)) }),
+    state: putUnit(state, withStatus(cleared, { id: 'cleanse_flash', turns: 1 })),
     notes: [`Gỡ ${drop.size} debuff khỏi ${unit.name}.`],
   };
 }
@@ -1443,10 +1533,17 @@ export function beginTurnAuras(state: BattleState, fighterId: string): BattleSta
   const fighter = findUnit(next, fighterId);
   if (!fighter) return next;
   let hp = fighter.hp;
+  let mp = fighter.mp;
   let shield = fighter.shieldHp ?? 0;
   for (const status of fighter.statuses ?? []) {
-    if ((status.id === 'poison' || status.id === 'bleed' || status.id === 'burn') && status.power) {
+    if ((status.id === 'poison' || status.id === 'bleed' || status.id === 'burn' || status.id === 'miasma') && status.power) {
       hp = Math.max(0, hp - Math.max(1, Math.round(fighter.maxHp * status.power)));
+    }
+    if (status.id === 'regen' && status.power) {
+      hp = Math.min(fighter.maxHp, hp + Math.max(1, Math.round(fighter.maxHp * status.power)));
+      if (status.power2) {
+        mp = Math.min(fighter.maxMp, mp + Math.max(1, Math.round(fighter.maxMp * status.power2)));
+      }
     }
     if (status.id === 'quicksand' && shield > 0) {
       shield = Math.max(0, shield - Math.max(1, Math.round((fighter.maxHp || 1) * 0.1)));
@@ -1454,7 +1551,10 @@ export function beginTurnAuras(state: BattleState, fighterId: string): BattleSta
   }
   if (hp <= 0 && hasStatus(fighter, 'undying')) hp = 1;
   if (hp <= 0 && fighter.endureUsed === false) hp = 1;
-  let updated: Fighter = hp !== fighter.hp || shield !== (fighter.shieldHp ?? 0) ? { ...fighter, hp, shieldHp: shield } : fighter;
+  let updated: Fighter =
+    hp !== fighter.hp || mp !== fighter.mp || shield !== (fighter.shieldHp ?? 0)
+      ? { ...fighter, hp, mp, shieldHp: shield }
+      : fighter;
   if (!updated.enraged && updated.element === 'volcano' && updated.maxHp > 0 && updated.hp / updated.maxHp < 0.3) {
     updated = {
       ...updated,

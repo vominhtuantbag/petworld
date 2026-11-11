@@ -4,9 +4,12 @@ import { CharacterAvatar } from '../CharacterAvatar';
 import { portraitScaleX } from '../world/facing';
 import { monsterPortrait } from '../world/MonsterToken';
 import type { CharacterDefinition } from '../../data/characters';
+import type { StatusEntry } from '../../world/combat/advanced';
+import type { StatMod } from '../../world/combat/model';
 import { theme } from '../../theme/theme';
 import { CourtFx, type Fate, type Step } from './CourtFx';
 import { overheadDrop } from './courtSlots';
+import { StatusIcons } from './StatusIcons';
 import type { TimelineRole } from './TurnTimeline';
 
 /** Fields the court HUD reads. A full combat fighter satisfies this. */
@@ -22,6 +25,14 @@ export type CourtActor = {
   maxMp: number;
   attack: number;
   defense: number;
+  statuses?: StatusEntry[];
+  mods?: StatMod[];
+  shieldHp?: number;
+  endureUsed?: boolean;
+  mpCostMult?: number;
+  reflectCharges?: number;
+  reflectPct?: number;
+  meleeThornsTurns?: number;
 };
 
 export function timelineFaceSize(screenW: number, insetL: number, insetR: number, count: number, preferred: number, reserved: number): number {
@@ -75,9 +86,11 @@ export function CourtUnit({
   const attack = Math.round(fighter.attack);
   const defense = Math.round(fighter.defense);
   const boxW = Math.max(size + 28, barWidth);
-  const chrome = 44;
+  const hasShield = (fighter.shieldHp ?? 0) > 0;
+  const chrome = hasShield ? 58 : 44;
   const labelWidth = Math.max(barWidth, Math.round(statFont * 13));
   const drop = overheadDrop(slot.y, size, chrome);
+  const iconSize = Math.max(12, Math.round(size * 0.14));
   return (
     <Pressable
       accessibilityRole="button"
@@ -103,9 +116,15 @@ export function CourtUnit({
             ATK {attack} / DEF {defense}
           </Text>
           <FloatBar value={fighter.hp} max={fighter.maxHp} tint="#3cba45" width={barWidth} />
+          {hasShield ? (
+            <FloatBar value={fighter.shieldHp ?? 0} max={Math.max(fighter.shieldHp ?? 1, fighter.maxHp)} tint="#4dabf7" width={barWidth} />
+          ) : null}
           <FloatBar value={fighter.mp} max={fighter.maxMp} tint="#2f6fe0" width={barWidth} />
         </View>
         <View style={[styles.spriteWrap, { width: size, height: size }]}>
+          <View pointerEvents="none" style={[styles.statusRow, { top: -Math.round(iconSize * 1.7), width: size + 24 }]}>
+            <StatusIcons fighter={fighter} size={iconSize} max={size >= 90 ? 6 : 4} />
+          </View>
           {active ? <View style={[styles.greenRing, { width: size * 0.9, height: size * 0.32 }]} /> : null}
           {character && hairColor && outfitColor ? (
             <View style={{ transform: [{ scaleX: portraitScaleX(face === 'left' ? -1 : 1, character.professionId, character.gender) }] }}>
@@ -267,6 +286,7 @@ export const styles = StyleSheet.create({
   unit: { position: 'absolute', alignItems: 'center' },
   hud: { position: 'absolute', left: 0, alignItems: 'center' },
   spriteWrap: { alignItems: 'center', justifyContent: 'flex-end' },
+  statusRow: { position: 'absolute', left: -12, alignItems: 'center', zIndex: 6 },
   greenRing: {
     position: 'absolute',
     bottom: 2,

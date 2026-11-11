@@ -43,7 +43,16 @@ export type StatusId =
   | 'trap'
   | 'thorns'
   | 'chant'
-  | 'quicksand';
+  | 'quicksand'
+  /** Catalog-aligned lasting tags for the 29-status HUD. */
+  | 'regen'
+  | 'atk_up'
+  | 'atk_down'
+  | 'def_up'
+  | 'def_down'
+  | 'spd_up'
+  | 'stat_convert'
+  | 'cleanse_flash';
 
 export type StatusEntry = {
   id: StatusId;
