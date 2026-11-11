@@ -4,7 +4,7 @@
  */
 
 import { resolveStatusApplication, type StatusEntry, type StatusId } from './advanced';
-import { finalDamage } from './damage';
+import { DEFEND_DAMAGE_MULT, finalDamage } from './damage';
 import type { Skill, SkillEffect, SkillTarget, StatMod, ModStat } from './model';
 import {
   ENGINE_DEBUFF_IDS,
@@ -15,6 +15,8 @@ import {
   effectiveSpeed,
   resolveStatusDefaults,
 } from './statuses';
+
+export const DEFEND_STATUS_ID: StatusId = 'defend';
 
 /** Minimal battle shapes to avoid circular imports with combat.ts. */
 export type EffectFighter = {
@@ -711,6 +713,9 @@ function takeHit(defender: Fighter, dealt: number, fromSkill: boolean): Fighter 
   }
   if (fromSkill && remaining > 0 && (defender.magicReduceTurns ?? 0) > 0) {
     remaining = Math.max(0, Math.round(remaining * (1 - (defender.magicReducePct ?? 0))));
+  }
+  if (remaining > 0 && hasStatus(defender, DEFEND_STATUS_ID)) {
+    remaining = Math.max(0, Math.round(remaining * DEFEND_DAMAGE_MULT));
   }
   let hp = defender.hp - remaining;
   let endureUsed = defender.endureUsed;
@@ -1532,10 +1537,19 @@ export function beginTurnAuras(state: BattleState, fighterId: string): BattleSta
   }
   const fighter = findUnit(next, fighterId);
   if (!fighter) return next;
-  let hp = fighter.hp;
-  let mp = fighter.mp;
-  let shield = fighter.shieldHp ?? 0;
-  for (const status of fighter.statuses ?? []) {
+  // Phòng thủ ends at the start of this unit's next action turn.
+  let liveFighter = fighter;
+  if (hasStatus(fighter, DEFEND_STATUS_ID)) {
+    liveFighter = {
+      ...fighter,
+      statuses: (fighter.statuses ?? []).filter((entry) => entry.id !== DEFEND_STATUS_ID),
+    };
+    next = putUnit(next, liveFighter);
+  }
+  let hp = liveFighter.hp;
+  let mp = liveFighter.mp;
+  let shield = liveFighter.shieldHp ?? 0;
+  for (const status of liveFighter.statuses ?? []) {
     if ((status.id === 'poison' || status.id === 'bleed' || status.id === 'burn' || status.id === 'miasma') && status.power) {
       hp = Math.max(0, hp - Math.max(1, Math.round(fighter.maxHp * status.power)));
     }
@@ -1549,12 +1563,12 @@ export function beginTurnAuras(state: BattleState, fighterId: string): BattleSta
       shield = Math.max(0, shield - Math.max(1, Math.round((fighter.maxHp || 1) * 0.1)));
     }
   }
-  if (hp <= 0 && hasStatus(fighter, 'undying')) hp = 1;
-  if (hp <= 0 && fighter.endureUsed === false) hp = 1;
+  if (hp <= 0 && hasStatus(liveFighter, 'undying')) hp = 1;
+  if (hp <= 0 && liveFighter.endureUsed === false) hp = 1;
   let updated: Fighter =
-    hp !== fighter.hp || mp !== fighter.mp || shield !== (fighter.shieldHp ?? 0)
-      ? { ...fighter, hp, mp, shieldHp: shield }
-      : fighter;
+    hp !== liveFighter.hp || mp !== liveFighter.mp || shield !== (liveFighter.shieldHp ?? 0)
+      ? { ...liveFighter, hp, mp, shieldHp: shield }
+      : liveFighter;
   if (!updated.enraged && updated.element === 'volcano' && updated.maxHp > 0 && updated.hp / updated.maxHp < 0.3) {
     updated = {
       ...updated,
@@ -1566,7 +1580,7 @@ export function beginTurnAuras(state: BattleState, fighterId: string): BattleSta
       ],
     };
   }
-  if (updated !== fighter) next = putUnit(next, updated);
+  if (updated !== liveFighter) next = putUnit(next, updated);
   return next;
 }
 
@@ -1581,7 +1595,7 @@ export function tickFighterTimers<T extends EffectFighter>(fighter: T): T {
     .map((mod) => ({ ...mod, turns: mod.turns - 1 }))
     .filter((mod) => mod.turns > 0);
   const statuses = (fighter.statuses ?? [])
-    .map((entry) => ({ ...entry, turns: entry.turns - 1 }))
+    .map((entry) => (entry.id === DEFEND_STATUS_ID ? entry : { ...entry, turns: entry.turns - 1 }))
     .filter((entry) => entry.turns > 0);
   return {
     ...fighter,

@@ -126,6 +126,12 @@ export function CourtUnit({
             <StatusIcons fighter={fighter} size={iconSize} max={size >= 90 ? 6 : 4} />
           </View>
           {active ? <View style={[styles.greenRing, { width: size * 0.9, height: size * 0.32 }]} /> : null}
+          {fighter.statuses?.some((entry) => entry.id === 'defend' && entry.turns > 0) ? (
+            <View
+              pointerEvents="none"
+              style={[styles.defendAura, { width: size * 1.08, height: size * 1.08, borderRadius: size }]}
+            />
+          ) : null}
           {character && hairColor && outfitColor ? (
             <View style={{ transform: [{ scaleX: portraitScaleX(face === 'left' ? -1 : 1, character.professionId, character.gender) }] }}>
               <CharacterAvatar character={character} hairColor={hairColor} outfitColor={outfitColor} size={Math.round(size * 0.82)} />
@@ -295,6 +301,16 @@ export const styles = StyleSheet.create({
     borderColor: '#7dffb2',
     backgroundColor: 'rgba(80, 220, 120, 0.35)',
   },
+  defendAura: {
+    position: 'absolute',
+    borderWidth: 3,
+    borderColor: 'rgba(77, 171, 247, 0.95)',
+    backgroundColor: 'rgba(47, 111, 224, 0.22)',
+    shadowColor: '#4dabf7',
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+  },
   redRing: {
     position: 'absolute',
     bottom: 4,
@@ -362,7 +378,17 @@ export const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
-  dock: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 8, minHeight: 64, paddingHorizontal: 8, paddingBottom: 6 },
+  dock: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 8,
+    minHeight: 64,
+    paddingHorizontal: 8,
+    paddingBottom: 6,
+    overflow: 'visible',
+    zIndex: 20,
+  },
   targets: { gap: 2, flexShrink: 1 },
   dockLabel: {
     color: '#f6f1e7',
@@ -384,6 +410,8 @@ export const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: 6,
     maxWidth: '62%',
+    overflow: 'visible',
+    zIndex: 30,
   },
   square: {
     alignItems: 'center',

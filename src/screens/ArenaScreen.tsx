@@ -41,6 +41,7 @@ export function ArenaScreen() {
   const [stageBox, setStageBox] = useState({ x: 0, y: 0 });
   const [now, setNow] = useState(Date.now());
   const [picked, setPicked] = useState<Pick>('attack');
+  const [aimKey, setAimKey] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const aimUnits = useMemo(
     () =>
@@ -68,6 +69,7 @@ export function ArenaScreen() {
 
   useEffect(() => {
     setPicked('attack');
+    setAimKey(null);
   }, [snapshot?.turnId]);
 
   const units = snapshot?.units ?? [];
@@ -164,25 +166,56 @@ export function ArenaScreen() {
     else battle.sendAction('skill', target.id, choice);
   };
 
-  const bind = (choice: Pick) => ({
-    onArm: () => {
-      setPicked(choice);
-      combatSfx('arm');
-    },
-    onDoubleTap: () => {
-      setPicked(choice);
-      fire(choice, 'lowest');
-    },
-    onHoldStart: () => {
-      setPicked(choice);
-      quick.beginAim();
-    },
-    onHoldMove: (dx: number, dy: number) => quick.moveAim(dx, dy),
-    onHoldEnd: (dy: number, cancelled: boolean) => {
-      const result = quick.endAim(cancelled ? 999 : dy);
-      if (result === 'cast') fire(choice, 'focus');
-    },
-  });
+  const bind = (choice: Pick) => {
+    const key = String(choice);
+    return {
+      onArm: () => {
+        setPicked(choice);
+        setAimKey(null);
+        combatSfx('arm');
+      },
+      onDoubleTap: () => {
+        setPicked(choice);
+        setAimKey(null);
+        fire(choice, 'lowest');
+      },
+      onHoldStart: () => {
+        setPicked(choice);
+        setAimKey(key);
+        quick.beginAim();
+      },
+      onHoldMove: (dx: number, dy: number) => quick.moveAim(dx, dy),
+      onHoldEnd: (dy: number, cancelled: boolean) => {
+        const result = quick.endAim(cancelled ? 999 : dy);
+        setAimKey(null);
+        if (result === 'cast') fire(choice, 'focus');
+      },
+    };
+  };
+
+  const aimPopup = (
+    <QuickTargetStrip
+      units={aimUnits.map((unit) =>
+        unit.id === foeHero.id && foeCharacter
+          ? {
+              ...unit,
+              portrait: (
+                <CharacterAvatar
+                  character={foeCharacter}
+                  hairColor={snapshot.opponent.hairColor}
+                  outfitColor={snapshot.opponent.outfitColor}
+                  size={s(26)}
+                />
+              ),
+            }
+          : unit,
+      )}
+      focusId={focus?.id ?? focusId}
+      aiming
+      size={s(36)}
+      testIDPrefix="target"
+    />
+  );
 
   const markFoe = (id: string) => {
     setFocusId(id);
@@ -334,35 +367,11 @@ export function ArenaScreen() {
 
         <View style={court.dock}>
           <View style={court.targets}>
-            <QuickTargetStrip
-              units={aimUnits.map((unit) =>
-                unit.id === foeHero.id && foeCharacter
-                  ? {
-                      ...unit,
-                      portrait: (
-                        <CharacterAvatar
-                          character={foeCharacter}
-                          hairColor={snapshot.opponent.hairColor}
-                          outfitColor={snapshot.opponent.outfitColor}
-                          size={s(26)}
-                        />
-                      ),
-                    }
-                  : unit,
-              )}
-              focusId={focus?.id ?? focusId}
-              aiming={quick.aiming}
-              size={s(44)}
-              testIDPrefix="target"
-              onSelect={(id) => {
-                setFocusId(id);
-                quick.noteUnitTap(id);
-              }}
-              onDoubleSelect={(id) => {
-                setFocusId(id);
-                fire(picked, id);
-              }}
-            />
+            {focus ? (
+              <Text style={[court.dockLabel, { fontSize: font(10) }]} numberOfLines={1}>
+                {focus.name}
+              </Text>
+            ) : null}
           </View>
           <View style={court.commands}>
             {finished ? null : (
@@ -371,6 +380,8 @@ export function ArenaScreen() {
                   label="Đánh thường"
                   hint="Đòn đánh thường"
                   picked={picked === 'attack'}
+                  aiming={aimKey === 'attack' && quick.aiming}
+                  aimPopup={aimPopup}
                   disabled={!yourTurn}
                   testID="action-attack"
                   size={s(52)}
@@ -382,6 +393,8 @@ export function ArenaScreen() {
                   hint={`${skill1} · MP ${skillCard1?.mana ?? 0}`}
                   tint="#7fd0c4"
                   picked={picked === 0}
+                  aiming={aimKey === '0' && quick.aiming}
+                  aimPopup={aimPopup}
                   disabled={!yourTurn || skill1Locked}
                   dim={skill1Locked}
                   testID="action-skill-1"
@@ -394,12 +407,28 @@ export function ArenaScreen() {
                   hint={`${skill2} · MP ${skillCard2?.mana ?? 0}`}
                   tint="#7fd0c4"
                   picked={picked === 1}
+                  aiming={aimKey === '1' && quick.aiming}
+                  aimPopup={aimPopup}
                   disabled={!yourTurn || skill2Locked}
                   dim={skill2Locked}
                   testID="action-skill-2"
                   size={s(52)}
                   font={font(10)}
                   {...bind(1)}
+                />
+                <RoundButton
+                  label="Phòng thủ"
+                  hint="Giảm sát thương đến lượt sau"
+                  square
+                  tint="#2f6fe0"
+                  disabled={!yourTurn}
+                  testID="arena-defend"
+                  onPress={() => {
+                    combatSfx('cast');
+                    battle.sendAction('defend');
+                  }}
+                  size={s(52)}
+                  font={font(10)}
                 />
               </>
             )}

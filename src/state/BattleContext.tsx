@@ -57,7 +57,7 @@ type BattleContextValue = {
   queueWaitSec: number;
   refreshArena: () => void;
   readyDraft: (petIds: string[], banId: string | null) => void;
-  sendAction: (action: 'attack' | 'skill', targetId: string, skill?: 0 | 1) => void;
+  sendAction: (action: 'attack' | 'skill' | 'defend', targetId?: string, skill?: 0 | 1) => void;
   leaveBattle: () => void;
   sendChallenge: (toUserId: string) => void;
   acceptChallenge: (challengeId: string) => void;
@@ -69,7 +69,7 @@ type BattleContextValue = {
   joinRaid: (body: RaidJoin) => void;
   readyRaid: () => void;
   leaveRaid: () => void;
-  sendRaidAction: (action: 'attack' | 'skill', targetId: string, skill?: 0 | 1) => void;
+  sendRaidAction: (action: 'attack' | 'skill' | 'defend', targetId?: string, skill?: 0 | 1) => void;
   sendRaidTame: (bonuses: number[]) => void;
   partyInvite: PartyInviteView | null;
   party: PartyMemberView[];
@@ -443,8 +443,8 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     socketRef.current?.emit('arena:draft_ready', { matchId, petIds, banId });
   }, []);
 
-  const sendAction = useCallback((action: 'attack' | 'skill', targetId: string, skill?: 0 | 1) => {
-    socketRef.current?.emit('battle:action', { action, targetId, skill: skill ?? 0 });
+  const sendAction = useCallback((action: 'attack' | 'skill' | 'defend', targetId?: string, skill?: 0 | 1) => {
+    socketRef.current?.emit('battle:action', { action, targetId: targetId ?? '', skill: skill ?? 0 });
   }, []);
 
   const leaveBattle = useCallback(() => {
@@ -496,8 +496,8 @@ export function BattleProvider({ children }: { children: ReactNode }) {
     setRaidLobby(null);
   }, []);
 
-  const sendRaidAction = useCallback((action: 'attack' | 'skill', targetId: string, skill?: 0 | 1) => {
-    socketRef.current?.emit('raid:action', { action, targetId, skill: skill ?? 0 });
+  const sendRaidAction = useCallback((action: 'attack' | 'skill' | 'defend', targetId?: string, skill?: 0 | 1) => {
+    socketRef.current?.emit('raid:action', { action, targetId: targetId ?? '', skill: skill ?? 0 });
   }, []);
 
   const sendRaidTame = useCallback((bonuses: number[]) => {

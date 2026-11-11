@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { PanResponder, StyleSheet, Text, View } from 'react-native';
 
 import { HOLD_MS } from '../../hooks/useQuickTarget';
@@ -15,6 +15,9 @@ type Props = {
   dim?: boolean;
   picked?: boolean;
   hot?: boolean;
+  /** When true, renders `aimPopup` anchored above this button. */
+  aiming?: boolean;
+  aimPopup?: ReactNode;
   onArm: () => void;
   onDoubleTap: () => void;
   onHoldStart: () => void;
@@ -24,6 +27,7 @@ type Props = {
 
 /**
  * Thumb-zone skill key. Tap arms, double-tap fires, hold+drag aims, release casts.
+ * Hold shows an optional Quick Target popup directly above the button.
  */
 export function GestureActionButton({
   label,
@@ -36,6 +40,8 @@ export function GestureActionButton({
   dim,
   picked,
   hot,
+  aiming,
+  aimPopup,
   onArm,
   onDoubleTap,
   onHoldStart,
@@ -117,32 +123,48 @@ export function GestureActionButton({
   ).current;
 
   return (
-    <View
-      {...pan.panHandlers}
-      accessibilityRole="button"
-      accessibilityLabel={hint ?? label}
-      accessibilityState={{ disabled: Boolean(disabled), selected: Boolean(picked) }}
-      testID={testID}
-      style={[
-        court.square,
-        {
-          width: size,
-          height: size,
-          backgroundColor: tint ?? '#24352f',
-        },
-        hot && !picked && court.roundHot,
-        picked && court.picked,
-        (disabled || dim) && court.fainted,
-        picked && local.held,
-      ]}
-    >
-      <Text style={[court.roundLabel, { fontSize: font }]} numberOfLines={2}>
-        {label}
-      </Text>
+    <View style={local.wrap}>
+      {aiming && aimPopup ? (
+        <View pointerEvents="none" style={local.popup}>
+          {aimPopup}
+        </View>
+      ) : null}
+      <View
+        {...pan.panHandlers}
+        accessibilityRole="button"
+        accessibilityLabel={hint ?? label}
+        accessibilityState={{ disabled: Boolean(disabled), selected: Boolean(picked) }}
+        testID={testID}
+        style={[
+          court.square,
+          {
+            width: size,
+            height: size,
+            backgroundColor: tint ?? '#24352f',
+          },
+          hot && !picked && court.roundHot,
+          picked && court.picked,
+          (disabled || dim) && court.fainted,
+          (picked || aiming) && local.held,
+        ]}
+      >
+        <Text style={[court.roundLabel, { fontSize: font }]} numberOfLines={2}>
+          {label}
+        </Text>
+      </View>
     </View>
   );
 }
 
 const local = StyleSheet.create({
+  wrap: { position: 'relative', zIndex: 2 },
+  popup: {
+    position: 'absolute',
+    bottom: '100%',
+    right: 0,
+    marginBottom: 8,
+    zIndex: 40,
+    elevation: 40,
+  },
   held: { transform: [{ scale: 1.05 }] },
 });

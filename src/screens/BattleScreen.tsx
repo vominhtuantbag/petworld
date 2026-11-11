@@ -23,7 +23,7 @@ import {
   actAuto,
   actAutoPlayer,
   actBasic,
-  actItem,
+  actDefend,
   actSkill,
   actTame,
   cancelTame,
@@ -110,11 +110,11 @@ export function BattleScreen() {
   const [focusId, setFocusId] = useState<string | null>(opening?.battle.foes[0]?.id ?? null);
   const [basicId, setBasicId] = useState<string | null>(world.squad?.basicId ?? null);
   const [actionId, setActionId] = useState('basic');
+  const [aimKey, setAimKey] = useState<string | null>(null);
   const aimUnits = useMemo(() => {
     if (!battle || battle.over) return [];
     const ally = battle.allies.find((entry) => entry.id === battle.turnId && entry.hp > 0) ?? null;
     const actor = ally ?? battle.player;
-    if (actionId.startsWith('item:')) return [];
     const skill = actionId === 'basic' ? actor.basic : actor.skills.find((entry) => entry.id === actionId) ?? actor.basic;
     const pool = needsAllyTarget(skill) ? battle.allies : battle.foes;
     return pool.map((fighter) => ({
@@ -131,6 +131,9 @@ export function BattleScreen() {
     focusId,
     setFocusId: (id) => setFocusId(id),
   });
+  const aimPopup = (
+    <QuickTargetStrip units={aimUnits} focusId={focusId} aiming size={s(36)} testIDPrefix="target" />
+  );
   const [tameId, setTameId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -181,6 +184,7 @@ export function BattleScreen() {
   );
   useEffect(() => {
     setActionId('basic');
+    setAimKey(null);
   }, [battle?.turnId]);
   // Step C: 30s human turn clock (adventure / mines). Resets each new turn.
   useEffect(() => {
@@ -601,11 +605,10 @@ export function BattleScreen() {
     if (!current || current.over || beatRef.current !== 'ready' || paused) return;
     const ally = current.allies.find((entry) => entry.id === current.turnId && entry.hp > 0) ?? null;
     if (current.turnId !== 'player' && !ally) return;
-    if (skillKey.startsWith('item:')) {
-      if (ally || current.turnId !== 'player') return;
-      const itemId = skillKey.slice('item:'.length) as ItemId;
-      const next = actItem(current, itemId);
+    if (skillKey === 'defend') {
+      const next = actDefend(current);
       if (next === current) return;
+      setAimKey(null);
       combatSfx('cast');
       beginStrikeRef.current(current, next);
       return;
@@ -653,19 +656,23 @@ export function BattleScreen() {
   const bindAction = (skillKey: string) => ({
     onArm: () => {
       setActionId(skillKey);
+      setAimKey(null);
       combatSfx('arm');
     },
     onDoubleTap: () => {
       setActionId(skillKey);
+      setAimKey(null);
       commitAction(skillKey, 'lowest');
     },
     onHoldStart: () => {
       setActionId(skillKey);
+      setAimKey(skillKey);
       quick.beginAim();
     },
     onHoldMove: (dx: number, dy: number) => quick.moveAim(dx, dy),
     onHoldEnd: (dy: number, cancelled: boolean) => {
       const result = quick.endAim(cancelled ? 999 : dy);
+      setAimKey(null);
       if (result === 'cast') commitAction(skillKey, 'focus');
     },
   });
@@ -914,23 +921,7 @@ export function BattleScreen() {
               </View>
             </>
           ) : null}
-          {battle ? (
-            <QuickTargetStrip
-              units={aimUnits}
-              focusId={quick.aiming ? focusId : marked?.id ?? focusId}
-              aiming={quick.aiming}
-              size={s(44)}
-              testIDPrefix="target"
-              onSelect={(id) => {
-                setFocusId(id);
-                quick.noteUnitTap(id);
-              }}
-              onDoubleSelect={(id) => {
-                setFocusId(id);
-                commitAction(actionId, id);
-              }}
-            />
-          ) : (
+          {!battle ? (
             <>
               <Text style={[styles.dockLabel, { fontSize: font(10) }]} numberOfLines={1}>
                 Mục tiêu
@@ -952,7 +943,11 @@ export function BattleScreen() {
                 })}
               </View>
             </>
-          )}
+          ) : marked ? (
+            <Text style={[styles.dockLabel, { fontSize: font(10) }]} numberOfLines={1}>
+              {marked.name}
+            </Text>
+          ) : null}
         </View>
         <View style={styles.commands}>
           {!battle ? (
@@ -1002,6 +997,8 @@ export function BattleScreen() {
                 label="Đánh thường"
                 hint={`Đòn đánh thường ${(actingAlly ?? battle.player).basic?.name ?? 'Đòn thường'}`}
                 picked={actionId === 'basic'}
+                aiming={aimKey === 'basic' && quick.aiming}
+                aimPopup={aimPopup}
                 disabled={!commandTurn}
                 testID="battle-basic"
                 size={s(52)}
@@ -1020,6 +1017,8 @@ export function BattleScreen() {
                     tint="#7fd0c4"
                     hot={actionId === skill.id}
                     picked={actionId === skill.id}
+                    aiming={aimKey === skill.id && quick.aiming}
+                    aimPopup={aimPopup}
                     disabled={!commandTurn || locked}
                     dim={locked}
                     testID={`battle-skill-${index + 1}`}
@@ -1029,26 +1028,17 @@ export function BattleScreen() {
                   />
                 );
               })}
-              {(battle.bag ?? [])
-                .filter((stack) => COMBAT_ITEMS.includes(stack.itemId))
-                .slice(0, 2)
-                .map((stack) => {
-                  const key = `item:${stack.itemId}`;
-                  return (
-                    <GestureActionButton
-                      key={key}
-                      label={`${shortItem(stack.itemId)} ×${stack.qty}`}
-                      hint={ITEMS[stack.itemId].nameVi}
-                      tint={ITEMS[stack.itemId].tint}
-                      picked={actionId === key}
-                      disabled={!playerTurn}
-                      testID={`battle-item-${stack.itemId}`}
-                      size={s(48)}
-                      font={font(9)}
-                      {...bindAction(key)}
-                    />
-                  );
-                })}
+              <RoundButton
+                label="Phòng thủ"
+                hint="Giảm 25% sát thương đến lượt sau"
+                square
+                tint="#2f6fe0"
+                disabled={!commandTurn}
+                testID="battle-defend"
+                onPress={() => commitAction('defend', 'focus')}
+                size={s(52)}
+                font={font(10)}
+              />
             </>
           )}
         </View>

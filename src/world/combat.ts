@@ -7,7 +7,7 @@ import {
   type StatusEntry,
   type StatusId,
 } from './combat/advanced';
-import { finalDamage, type DamageResult } from './combat/damage';
+import { DEFEND_DAMAGE_MULT, finalDamage, type DamageResult } from './combat/damage';
 import { combatElement, type ElementId } from './combat/elements';
 import { applyMastery, classCatalog, heroTraits, masteryOf, monsterCatalog, resolvePetLoadout, rollHeroKit, rollMonsterKit } from './combat/kits';
 import type { Skill, StatMod } from './combat/model';
@@ -17,6 +17,7 @@ import {
   castSkill,
   canSwapOrFlee,
   collectDisplayStatuses,
+  DEFEND_STATUS_ID,
   effectiveSpeed,
   isSilenced,
   isUltimateSkill,
@@ -514,6 +515,24 @@ export function actSkill(state: BattleState, foeId: string | null, skillId: stri
   return strikeFoe(state, foeId, skillId);
 }
 
+/**
+ * Phòng thủ: −25% incoming damage until this unit's next turn starts.
+ * Ends the current turn immediately.
+ */
+export function actDefend(state: BattleState): BattleState {
+  if (state.over) return state;
+  const actor = unit(state, state.turnId);
+  if (!actor || actor.hp <= 0) return state;
+  if (actor.side !== 'player' && actor.side !== 'ally') return state;
+  const ready = tickCooldowns(actor);
+  const others = (ready.statuses ?? []).filter((entry) => entry.id !== DEFEND_STATUS_ID);
+  const guarded: Fighter = {
+    ...ready,
+    statuses: [...others, { id: DEFEND_STATUS_ID, turns: 99, power: 1 - DEFEND_DAMAGE_MULT }],
+  };
+  return after(replace(state, guarded), ready.id, `${ready.name} phòng thủ (−25% sát thương đến lượt sau).`);
+}
+
 /** The pet whose turn it is. Manual play waits for this; auto battle calls it itself. */
 export function actAlly(state: BattleState, foeId: string | null, skillId: string | null): BattleState {
   if (state.over) return state;
@@ -857,9 +876,11 @@ function resolveStrike(attacker: Fighter, defender: Fighter, multiplier: number,
   if (hit.miss) {
     return { hit, target: defender, staggered: false };
   }
+  const defending = defender.statuses?.some((entry) => entry.id === DEFEND_STATUS_ID && entry.turns > 0);
+  const damage = defending ? Math.max(0, Math.round(hit.damage * DEFEND_DAMAGE_MULT)) : hit.damage;
   let target: Fighter = {
     ...defender,
-    hp: Math.max(0, defender.hp - hit.damage),
+    hp: Math.max(0, defender.hp - damage),
   };
   const armorBreak = isArmorBreakSkill(multiplier, skillName);
   const chip = toughnessDamage(target.maxTgh || 100, {

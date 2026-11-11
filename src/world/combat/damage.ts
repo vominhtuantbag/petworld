@@ -10,12 +10,16 @@
  *
  * Status overlays (Accuracy Down, Burn ATK cut, Critical Mark, nullify/evade)
  * are applied upstream in skillEffects.computeHit before this helper runs.
+ * Defend stance applies DEFEND_DAMAGE_MULT to remaining HP damage in takeHit.
  */
 
 import { doesHit, effectiveDefense, normalizeAdvanced, type AdvancedInput } from './advanced';
 import { elementMultiplier, type ElementId } from './elements';
 
 export { DEFAULT_CRIT_DAMAGE } from './advanced';
+
+/** Incoming damage multiplier while Phòng thủ is active (25% reduction). */
+export const DEFEND_DAMAGE_MULT = 0.75;
 
 export type DamageInput = {
   attack: number;

@@ -52,7 +52,9 @@ export type StatusId =
   | 'def_down'
   | 'spd_up'
   | 'stat_convert'
-  | 'cleanse_flash';
+  | 'cleanse_flash'
+  /** Stance: −25% incoming damage until the unit's next turn starts. */
+  | 'defend';
 
 export type StatusEntry = {
   id: StatusId;
