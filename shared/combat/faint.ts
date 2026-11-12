@@ -16,23 +16,18 @@ export function isLiving(unit: { hp: number } | null | undefined): boolean {
   return Boolean(unit && unit.hp > 0);
 }
 
+/** True when the skill carries a dedicated revive/resurrection effect. */
+export function isReviveSkill(skill: Skill | null | undefined): boolean {
+  if (!skill) return false;
+  return (skill.effects ?? []).some((effect) => effect.type === 'revive');
+}
+
 /**
- * Ally heal/rescue skills may pick a unit at 0 HP.
- * Enemy skills and non-heal buffs never may.
+ * Only dedicated revive skills may pick a unit at 0 HP.
+ * Normal attacks, heals, buffs, debuffs, and AoE never may.
  */
 export function allowsFallenTargets(skill: Skill | null | undefined): boolean {
-  if (!skill) return false;
-  const target = skill.target ?? 'enemy';
-  if (target === 'enemy' || target === 'enemies' || target === 'enemy_back' || target === 'enemy_pets') {
-    return false;
-  }
-  const skillAllowsAlly = skill.target === 'ally' || skill.target === 'ally_pet';
-  if (!skillAllowsAlly) return false;
-  return (skill.effects ?? []).some((effect) => {
-    if (effect.type !== 'heal') return false;
-    const healTarget = effect.target ?? 'ally';
-    return healTarget === 'ally' || healTarget === 'ally_lowest';
-  });
+  return isReviveSkill(skill);
 }
 
 /** Filter a target pool for UI / engine selection. */

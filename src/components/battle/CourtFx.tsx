@@ -22,7 +22,7 @@ type Props = {
 
 /**
  * Short stance, then a 0.5s downward sword, then the impact shake.
- * A killing blow tears the body in half for 0.5s, then it stays gone.
+ * A killing blow plays a tear FX, then the body returns as a fainted placeholder (50% opacity from CourtUnit).
  */
 export function CourtFx({ children, step, slashKey, shakeKey, fate, hitDir = 1 }: Props) {
   const shiftX = useRef(new Animated.Value(0)).current;
@@ -95,8 +95,14 @@ export function CourtFx({ children, step, slashKey, shakeKey, fate, hitDir = 1 }
       return () => motion.stop();
     }
     setTorn(true);
+    tear.setValue(0);
     const motion = Animated.timing(tear, { toValue: 1, duration: 500, easing: Easing.inOut(Easing.cubic), useNativeDriver: true });
-    motion.start();
+    motion.start(({ finished }) => {
+      if (!finished) return;
+      // Keep the unit on the court as a fainted ghost (CourtUnit sets opacity 0.5).
+      setTorn(false);
+      tear.setValue(0);
+    });
     return () => motion.stop();
   }, [fate, heart, tear]);
 
@@ -112,6 +118,7 @@ export function CourtFx({ children, step, slashKey, shakeKey, fate, hitDir = 1 }
   const heartScale = heart.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] });
 
   const width = box.w || 80;
+  // During the tear burst, hide the live sprite; afterward restore it for the fainted state.
   const body = torn ? null : children;
 
   return (

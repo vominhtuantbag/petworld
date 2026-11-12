@@ -224,6 +224,8 @@ function applyEffect(
       );
     case 'heal':
       return applyHeal(state, actor, effect, targetId);
+    case 'revive':
+      return applyRevive(state, actor, effect, targetId);
     case 'restore_mp':
       return applyRestoreMp(state, actor, effect);
     case 'status':
@@ -736,7 +738,8 @@ function applyHeal(
 ): { state: BattleState; notes: string[] } {
   const notes: string[] = [];
   let next = state;
-  const targets = resolveHealTargets(next, actor, effect.target ?? 'self', targetId);
+  // Standard heals never touch fainted units — only `revive` may.
+  const targets = resolveHealTargets(next, actor, effect.target ?? 'self', targetId).filter((unit) => unit.hp > 0);
   for (const unit of targets) {
     const amount = Math.max(1, Math.round((effect.pctMax ?? 0) * unit.maxHp + (effect.flat ?? 0)));
     let healed = { ...unit, hp: Math.min(unit.maxHp, unit.hp + amount) };
@@ -756,6 +759,37 @@ function applyHeal(
     notes.push(`Hồi ${amount} cho ${unit.name}.`);
   }
   return { state: next, notes };
+}
+
+/** Dedicated resurrection — only valid targets are allies at HP === 0. */
+function applyRevive(
+  state: BattleState,
+  actor: Fighter,
+  effect: Extract<SkillEffect, { type: 'revive' }>,
+  targetId: string | null,
+): { state: BattleState; notes: string[] } {
+  const team = actor.side === 'wild' ? state.foes : [state.player, ...state.allies];
+  const fallen = team.filter((unit) => unit.hp <= 0 && unit.id !== actor.id);
+  const picked =
+    (targetId ? fallen.find((unit) => unit.id === targetId) : undefined) ??
+    fallen[0] ??
+    null;
+  if (!picked) return { state, notes: ['Không có đồng minh ngất để hồi sinh.'] };
+  const amount = Math.max(1, Math.round((effect.pctMax ?? 0.3) * picked.maxHp + (effect.flat ?? 0)));
+  let raised = { ...picked, hp: Math.min(picked.maxHp, amount) };
+  if (effect.cleanse?.length) {
+    raised = {
+      ...raised,
+      statuses: (raised.statuses ?? []).filter((entry) => {
+        if (effect.cleanse!.includes('all_debuff')) return !DEBUFF_IDS.includes(entry.id);
+        return !effect.cleanse!.includes(entry.id as 'poison' | 'bleed' | 'burn');
+      }),
+    };
+  }
+  return {
+    state: putUnit(state, raised),
+    notes: [`Hồi sinh ${picked.name} (+${amount} HP).`],
+  };
 }
 
 function applyRestoreMp(
@@ -1674,8 +1708,8 @@ function resolveHealTargets(
   if (mode === 'self') return [actor];
   if (mode === 'ally' || mode === undefined) {
     const ally = targetId ? findUnit(state, targetId) : null;
-    // Ally heals may revive (HP === 0); still reject wild enemies.
-    if (ally && ally.side !== 'wild') return [ally];
+    // Standard heals require a living ally (fainted units need `revive`).
+    if (ally && ally.side !== 'wild' && ally.hp > 0) return [ally];
     return state.allies.filter((unit) => unit.hp > 0).slice(0, 1);
   }
   if (mode === 'ally_lowest') {

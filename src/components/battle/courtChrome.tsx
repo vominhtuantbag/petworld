@@ -133,10 +133,10 @@ export function CourtUnit({
           ? `${fighter.name}, ngất`
           : `${fighter.name}, HP ${Math.round(fighter.hp)}/${Math.round(fighter.maxHp)}`
       }
-      accessibilityState={{ disabled: fainted || !onPress }}
+      accessibilityState={{ disabled: !onPress }}
       testID={testID}
-      disabled={!onPress || fainted}
-      onPress={fainted ? undefined : onPress}
+      disabled={!onPress}
+      onPress={onPress}
       style={[
         styles.unit,
         {
@@ -178,11 +178,18 @@ export function CourtUnit({
             />
           ) : null}
           {character && hairColor && outfitColor ? (
-            <View style={{ transform: [{ scaleX: portraitScaleX(face === 'left' ? -1 : 1, character.professionId, character.gender) }] }}>
+            <View
+              style={{
+                transform: [{ scaleX: portraitScaleX(face === 'left' ? -1 : 1, character.professionId, character.gender) }],
+                opacity: fainted ? 0.9 : 1,
+              }}
+            >
               <CharacterAvatar character={character} hairColor={hairColor} outfitColor={outfitColor} size={Math.round(size * 0.82)} />
             </View>
           ) : (
-            <FaceArt kindId={fighter.kindId} tint={fighter.tint} name={fighter.name} size={size} facing={face} />
+            <View style={fainted ? styles.ghostTint : null}>
+              <FaceArt kindId={fighter.kindId} tint={fighter.tint} name={fighter.name} size={size} facing={face} />
+            </View>
           )}
           {targeted && !fainted ? (
             <View pointerEvents="none" style={[styles.redRing, { width: size * 1.05, height: size * 0.72, borderRadius: size }]} />
@@ -545,4 +552,5 @@ export const styles = StyleSheet.create({
   roundLabel: { color: '#fff', fontWeight: '800', textAlign: 'center' },
   fainted: { opacity: FAINT_OPACITY },
   faintedSprite: { opacity: 1 },
+  ghostTint: { opacity: 0.85 },
 });

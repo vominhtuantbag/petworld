@@ -184,8 +184,8 @@ export const CLASS_KITS: Record<string, ClassKit> = {
       ]),
     ],
     skills: [
-      sk('healer-revive', 'Mũi Tiêm Hồi Sức', 8, 0, 2, 'Hồi 30% max HP 1 pet và gỡ bleed/poison.', 'ally_pet', [
-        { type: 'heal', pctMax: 0.3, target: 'ally', cleanse: ['poison', 'bleed', 'burn'] },
+      sk('healer-revive', 'Mũi Tiêm Hồi Sức', 8, 0, 2, 'Hồi sinh 1 pet ngất (30% max HP) và gỡ bleed/poison.', 'ally_pet', [
+        { type: 'revive', pctMax: 0.3, cleanse: ['poison', 'bleed', 'burn'] },
       ]),
       sk('healer-rage', 'Thuốc Tăng Lực Cuồng Báo', 10, 0, 3, 'Pet +40% ATK 2 lượt nhưng mất 5% HP/lượt.', 'ally_pet', [
         { type: 'mod', stat: 'atk', amount: 0.4, turns: 2, target: 'ally' },

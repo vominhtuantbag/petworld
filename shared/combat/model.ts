@@ -98,6 +98,13 @@ export type SkillEffect =
       target?: 'self' | 'ally' | 'ally_lowest' | 'party' | 'party_pets' | 'party_lowest_two';
       cleanse?: ('poison' | 'bleed' | 'burn' | 'all_debuff')[];
     }
+  /** Bring a fainted ally (HP === 0) back; only this effect may target KO units. */
+  | {
+      type: 'revive';
+      pctMax?: number;
+      flat?: number;
+      cleanse?: ('poison' | 'bleed' | 'burn' | 'all_debuff')[];
+    }
   | { type: 'restore_mp'; amount?: number; pctMax?: number; target?: 'self' | 'party_pets' | 'party' }
   | {
       type: 'status';
