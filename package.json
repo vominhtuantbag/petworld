@@ -34,6 +34,8 @@
     "export:web": "expo export -p web",
     "server": "npm --prefix server run dev",
     "build:combat": "npm run build --prefix shared/combat",
+    "build:server": "npm --prefix server install --include=dev && npm --prefix server run build",
+    "start:server": "npm --prefix server start",
     "lint": "expo lint"
   },
   "private": true

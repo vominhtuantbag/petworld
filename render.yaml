@@ -1,0 +1,15 @@
+# Render Blueprint — set Root Directory to `server` in the dashboard
+# (or use this file's rootDir). Shared combat must compile before start.
+services:
+  - type: web
+    name: petworld-server
+    runtime: node
+    rootDir: server
+    plan: free
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
