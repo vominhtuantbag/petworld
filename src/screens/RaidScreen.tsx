@@ -51,7 +51,7 @@ export function RaidScreen() {
   const aimUnits = useMemo(
     () =>
       (snapshot?.units ?? [])
-        .filter((unit) => unit.side === 'foe')
+        .filter((unit) => unit.side === 'foe' && unit.hp > 0)
         .map((unit) => ({
           id: unit.id,
           hp: unit.hp,

@@ -9,6 +9,7 @@ import type { StatusEntry } from '../../world/combat/advanced';
 import { locomotionOf } from '../../world/combat/petSkills';
 import type { StatMod } from '../../world/combat/model';
 import { combatSfx } from '../../world/combat/combatSfx';
+import { FAINT_OPACITY } from '../../world/combat/faint';
 import { theme } from '../../theme/theme';
 import { CourtFx, type Fate, type Step } from './CourtFx';
 import { overheadDrop } from './courtSlots';
@@ -89,8 +90,9 @@ export function CourtUnit({
   onPress?: () => void;
 }) {
   void statFont;
+  const fainted = fighter.hp <= 0;
   const boxW = Math.max(size + 28, barWidth);
-  const hasShield = (fighter.shieldHp ?? 0) > 0;
+  const hasShield = !fainted && (fighter.shieldHp ?? 0) > 0;
   const barH = 4;
   const iconSize = Math.max(12, Math.round(size * 0.14));
   const iconPad = Math.round(iconSize + 10);
@@ -108,6 +110,7 @@ export function CourtUnit({
 
   useEffect(() => {
     idle.setValue(0);
+    if (fainted) return;
     const loop = Animated.loop(
       Animated.sequence([
         Animated.delay(phase),
@@ -117,7 +120,7 @@ export function CourtUnit({
     );
     loop.start();
     return () => loop.stop();
-  }, [idle, phase]);
+  }, [fainted, idle, phase]);
 
   const breathY = idle.interpolate({ inputRange: [0, 1], outputRange: flying ? [-4, 4] : [0, 0] });
   const breathScaleY = idle.interpolate({ inputRange: [0, 1], outputRange: flying ? [1, 1] : [1, 1.03] });
@@ -125,10 +128,15 @@ export function CourtUnit({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${fighter.name}, HP ${Math.round(fighter.hp)}/${Math.round(fighter.maxHp)}`}
+      accessibilityLabel={
+        fainted
+          ? `${fighter.name}, ngất`
+          : `${fighter.name}, HP ${Math.round(fighter.hp)}/${Math.round(fighter.maxHp)}`
+      }
+      accessibilityState={{ disabled: fainted || !onPress }}
       testID={testID}
-      disabled={!onPress}
-      onPress={onPress}
+      disabled={!onPress || fainted}
+      onPress={fainted ? undefined : onPress}
       style={[
         styles.unit,
         {
@@ -136,8 +144,9 @@ export function CourtUnit({
           top: slot.y,
           width: boxW,
           height: size,
-          zIndex: (front ? 56 : 8 + Math.min(40, Math.round(slot.y / 8))) + (active ? 4 : 0),
+          zIndex: (front ? 56 : 8 + Math.min(40, Math.round(slot.y / 8))) + (active && !fainted ? 4 : 0),
           transform: [{ translateX: -(boxW / 2) }, { translateY: -size }],
+          opacity: fainted ? FAINT_OPACITY : 1,
         },
       ]}
     >
@@ -145,7 +154,7 @@ export function CourtUnit({
         <View pointerEvents="none" style={[styles.hud, { top: -chrome + drop, width: labelWidth, marginLeft: (boxW - labelWidth) / 2 }]}>
           <StatusIcons fighter={fighter} size={iconSize} max={size >= 90 ? 6 : 4} />
           <FloatBar value={fighter.hp} max={fighter.maxHp} tint="#e53935" width={barWidth} height={barH} />
-          <FloatBar value={fighter.mp} max={fighter.maxMp} tint="#2f6fe0" width={barWidth} height={barH} />
+          {!fainted ? <FloatBar value={fighter.mp} max={fighter.maxMp} tint="#2f6fe0" width={barWidth} height={barH} /> : null}
           {hasShield ? (
             <FloatBar value={fighter.shieldHp ?? 0} max={Math.max(fighter.shieldHp ?? 1, fighter.maxHp)} tint="#43a047" width={barWidth} height={barH} />
           ) : null}
@@ -158,10 +167,11 @@ export function CourtUnit({
               height: size,
               transform: [{ translateY: breathY }, { scaleY: breathScaleY }],
             },
+            fainted && styles.faintedSprite,
           ]}
         >
-          {active ? <View style={[styles.greenRing, { width: size * 0.9, height: size * 0.32 }]} /> : null}
-          {fighter.statuses?.some((entry) => entry.id === 'defend' && entry.turns > 0) ? (
+          {active && !fainted ? <View style={[styles.greenRing, { width: size * 0.9, height: size * 0.32 }]} /> : null}
+          {!fainted && fighter.statuses?.some((entry) => entry.id === 'defend' && entry.turns > 0) ? (
             <View
               pointerEvents="none"
               style={[styles.defendAura, { width: size * 1.08, height: size * 1.08, borderRadius: size }]}
@@ -174,7 +184,7 @@ export function CourtUnit({
           ) : (
             <FaceArt kindId={fighter.kindId} tint={fighter.tint} name={fighter.name} size={size} facing={face} />
           )}
-          {targeted ? (
+          {targeted && !fainted ? (
             <View pointerEvents="none" style={[styles.redRing, { width: size * 1.05, height: size * 0.72, borderRadius: size }]} />
           ) : null}
         </Animated.View>
@@ -533,5 +543,6 @@ export const styles = StyleSheet.create({
   roundHot: { borderColor: '#7dffb2' },
   picked: { borderWidth: 5, borderColor: '#2f6fe0', borderStyle: 'solid' },
   roundLabel: { color: '#fff', fontWeight: '800', textAlign: 'center' },
-  fainted: { opacity: 0.35 },
+  fainted: { opacity: FAINT_OPACITY },
+  faintedSprite: { opacity: 1 },
 });

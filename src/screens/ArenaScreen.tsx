@@ -50,7 +50,7 @@ export function ArenaScreen() {
   const aimUnits = useMemo(
     () =>
       (snapshot?.units ?? [])
-        .filter((unit) => unit.side === 'opponent')
+        .filter((unit) => unit.side === 'opponent' && unit.hp > 0)
         .map((unit) => ({
           id: unit.id,
           hp: unit.hp,

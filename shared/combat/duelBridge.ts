@@ -15,22 +15,9 @@ import {
   rollMonsterKit,
   type HeroSkillLoadout,
 } from './kits.js';
+import { executeCombatAction } from './executeCombatAction.js';
 import type { Skill, StatMod } from './model.js';
-import {
-  beginTurnAuras,
-  castSkill,
-  DEFEND_STATUS_ID,
-  isSilenced,
-  manaCost,
-  needsAllyTarget,
-  needsEnemyTarget,
-  retargetAttack,
-  shouldSkipTurn,
-  tickFighterTimers,
-  type EffectBattleState,
-  type EffectFighter,
-} from './skillEffects.js';
-import { DEFEND_DAMAGE_MULT } from './damage.js';
+import { type EffectBattleState, type EffectFighter } from './skillEffects.js';
 
 export type DuelSkillCard = Skill;
 
@@ -310,18 +297,6 @@ function syncUnits(units: DuelCombatUnit[], state: EffectBattleState): DuelComba
   });
 }
 
-function tickCooldowns(fighter: EffectFighter): EffectFighter {
-  const cooldowns: Record<string, number> = {};
-  for (const [id, value] of Object.entries(fighter.cooldowns ?? {})) {
-    cooldowns[id] = Math.max(0, value - 1);
-  }
-  return { ...fighter, cooldowns };
-}
-
-function skillReady(fighter: EffectFighter, skill: Skill): boolean {
-  return (fighter.cooldowns[skill.id] ?? 0) <= 0 && fighter.mp >= manaCost(fighter, skill);
-}
-
 function pickLastHit(
   before: DuelCombatUnit[],
   after: DuelCombatUnit[],
@@ -366,7 +341,7 @@ const arenaTeams = (a: DuelCombatUnit, b: DuelCombatUnit) =>
 const raidTeams = (a: DuelCombatUnit, b: DuelCombatUnit) => (a.kind === 'hero') === (b.kind === 'hero');
 
 /**
- * Resolve one PvP/raid action with the shared PvE skill + status engine.
+ * Arena / proximity PvP adapter — converts unit arrays, then calls executeCombatAction.
  */
 export function resolveDuelAction(
   units: DuelCombatUnit[],
@@ -380,107 +355,29 @@ export function resolveDuelAction(
   const actor = units.find((unit) => unit.id === actorId && unit.hp > 0);
   if (!actor) return { units, log: 'Không có đơn vị hành động.', lastHit: null, skipped: true };
 
-  let state = toEffectState(units, actorId, actorId, sameTeam);
-  state = beginTurnAuras(state, actorId);
-
-  const live = state.player.id === actorId ? state.player : state.allies.find((entry) => entry.id === actorId);
-  if (!live || live.hp <= 0) {
-    return { units: syncUnits(units, state), log: 'Đơn vị đã ngã.', lastHit: null, skipped: true };
-  }
-
-  if (actor.staggered) {
-    const cleared = { ...live, staggered: false };
-    state = putLocal(state, cleared);
-    return {
-      units: syncUnits(units, state),
-      log: `${actor.name} gục ngã và bỏ lượt (−50% DEF hết).`,
-      lastHit: null,
-      skipped: true,
-    };
-  }
-
-  const skip = shouldSkipTurn(live);
-  if (skip) {
-    const ticked = tickFighterTimers(tickCooldowns(live));
-    state = putLocal(state, ticked);
-    return { units: syncUnits(units, state), log: skip, lastHit: null, skipped: true };
-  }
-
-  let ready = tickFighterTimers(tickCooldowns(live));
-
-  if (action === 'defend') {
-    const others = (ready.statuses ?? []).filter((entry) => entry.id !== DEFEND_STATUS_ID);
-    ready = {
-      ...ready,
-      statuses: [...others, { id: DEFEND_STATUS_ID, turns: 99, power: 1 - DEFEND_DAMAGE_MULT }],
-    };
-    state = putLocal(state, ready);
-    return {
-      units: syncUnits(units, state),
-      log: `${ready.name} phòng thủ (−25% sát thương đến lượt sau).`,
-      lastHit: null,
-    };
-  }
-
-  const skill = action === 'skill' ? ready.skills[skillIndex] ?? ready.skills[0] ?? null : null;
-  if (action === 'skill' && !skill) {
-    return { units: syncUnits(units, state), log: 'Kỹ năng không hợp lệ.', lastHit: null, skipped: true };
-  }
-  if (skill && !skillReady(ready, skill)) {
-    return {
-      units: syncUnits(units, state),
-      log: `${skill.name} chưa sẵn sàng.`,
-      lastHit: null,
-      skipped: true,
-    };
-  }
-  if (skill && isSilenced(ready)) {
-    return {
-      units: syncUnits(units, state),
-      log: `${ready.name} bị câm lặng — chỉ đánh thường.`,
-      lastHit: null,
-      skipped: true,
-    };
-  }
-
-  if (skill) {
-    ready = {
-      ...ready,
-      mp: ready.mp - manaCost(ready, skill),
-      cooldowns: { ...ready.cooldowns, [skill.id]: skill.cooldown },
-    };
-  }
-  state = putLocal(state, ready);
-
-  let focusId = targetId ?? null;
-  const move = skill ?? ready.basic;
-  if (needsEnemyTarget(move)) {
-    const intended = state.foes.find((entry) => entry.id === focusId && entry.hp > 0) ?? null;
-    const foe = retargetAttack(state, ready, intended);
-    if (!foe) {
-      return { units: syncUnits(units, state), log: 'Hãy chọn một mục tiêu còn sống.', lastHit: null, skipped: true };
-    }
-    focusId = foe.id;
-  } else if (needsAllyTarget(move) && !focusId) {
-    focusId = state.allies.find((entry) => entry.hp > 0)?.id ?? ready.id;
-  }
-
-  const before = syncUnits(units, state);
-  const cast = castSkill(state, ready.id, skill, focusId, rng);
-  const afterUnits = syncUnits(units, cast.state);
-  const logLine = `${ready.name} dùng ${skill ? skill.name : ready.basic.name}. ${cast.log}`.trim();
-  const crit = /chí mạng|crit/i.test(cast.log);
-  const miss = /trượt|miss|né/i.test(cast.log);
-  const lastHit = pickLastHit(before, afterUnits, ready.id, focusId, skill?.name ?? ready.basic.name);
+  const before = units;
+  const state = toEffectState(units, actorId, actorId, sameTeam);
+  const resolved = executeCombatAction({
+    state,
+    actorId,
+    action,
+    skillIndex,
+    targetId: targetId ?? null,
+    rng,
+    beginTurn: true,
+  });
+  const afterUnits = syncUnits(units, resolved.state);
+  const crit = /chí mạng|crit/i.test(resolved.log);
+  const miss = /trượt|miss|né/i.test(resolved.log);
+  const lastHit = pickLastHit(before, afterUnits, actorId, resolved.focusId, resolved.skillName);
   if (lastHit) {
     lastHit.crit = crit;
     lastHit.miss = miss && lastHit.damage <= 0;
   }
-
-  return { units: afterUnits, log: logLine, lastHit };
+  return { units: afterUnits, log: resolved.log, lastHit, skipped: resolved.skipped };
 }
 
-/** Raid party vs monsters — same engine, different team split. */
+/** Raid adapter — same executeCombatAction, party split by hero/monster. */
 export function resolveRaidAction(
   units: DuelCombatUnit[],
   actorId: string,
@@ -490,14 +387,6 @@ export function resolveRaidAction(
   rng: () => number = Math.random,
 ): DuelCastResult {
   return resolveDuelAction(units, actorId, action, skillIndex, targetId, rng, raidTeams);
-}
-
-function putLocal(state: EffectBattleState, fighter: EffectFighter): EffectBattleState {
-  if (fighter.id === state.player.id) return { ...state, player: fighter };
-  if (fighter.side === 'ally') {
-    return { ...state, allies: state.allies.map((entry) => (entry.id === fighter.id ? fighter : entry)) };
-  }
-  return { ...state, foes: state.foes.map((entry) => (entry.id === fighter.id ? fighter : entry)) };
 }
 
 /** Wire status entries for client HUD. */

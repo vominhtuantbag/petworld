@@ -45,6 +45,7 @@ import {
   type Fighter,
 } from '../world/combat';
 import { combatSfx } from '../world/combat/combatSfx';
+import { allowsFallenTargets, selectableCombatants } from '../world/combat/faint';
 import { describeSkill } from '../world/combat/kits';
 import { floatKindFromLog, IMPACT_MS, SLASH_MS, STANCE_MS, STANCE_PX, TEAR_MS, TURN_MS } from '../world/combat/loop';
 import { upcomingQueue } from '../world/combat/order';
@@ -120,8 +121,11 @@ export function BattleScreen() {
     const ally = battle.allies.find((entry) => entry.id === battle.turnId && entry.hp > 0) ?? null;
     const actor = ally ?? battle.player;
     const skill = actionId === 'basic' ? actor.basic : actor.skills.find((entry) => entry.id === actionId) ?? actor.basic;
-    const pool = needsAllyTarget(skill) ? battle.allies : battle.foes;
-    return pool.map((fighter) => ({
+    const allyAim = needsAllyTarget(skill);
+    const pool = allyAim ? battle.allies : battle.foes;
+    // Enemy aim never includes KO units; ally revive/heal skills may.
+    const selectable = selectableCombatants(pool, allyAim ? skill : null);
+    return selectable.map((fighter) => ({
       id: fighter.id,
       hp: fighter.hp,
       maxHp: fighter.maxHp,
@@ -620,17 +624,17 @@ export function BattleScreen() {
     const actor = ally ?? current.player;
     const skill = skillKey === 'basic' ? null : actor.skills.find((entry) => entry.id === skillKey) ?? null;
     const move = skill ?? actor.basic;
-    const foePool = current.foes.filter((fighter) => fighter.hp > 0);
-    const allyPool = current.allies.filter((fighter) => fighter.hp > 0);
     const wantAlly = skill ? needsAllyTarget(skill) : false;
+    const foePool = current.foes.filter((fighter) => fighter.hp > 0);
+    const allyPool = selectableCombatants(current.allies, wantAlly ? skill : null);
     const pool = wantAlly ? allyPool : foePool;
     const lowest = [...pool].sort((a, b) => {
       const ra = a.maxHp > 0 ? a.hp / a.maxHp : 1;
       const rb = b.maxHp > 0 ? b.hp / b.maxHp : 1;
       return ra - rb || a.hp - b.hp;
     })[0] ?? null;
-    const exact = pool.find((fighter) => fighter.id === targetMode && fighter.hp > 0) ?? null;
-    const focused = pool.find((fighter) => fighter.id === focusId && fighter.hp > 0) ?? null;
+    const exact = pool.find((fighter) => fighter.id === targetMode) ?? null;
+    const focused = pool.find((fighter) => fighter.id === focusId) ?? null;
     const chosen = targetMode === 'lowest' ? lowest : exact ?? (targetMode === 'focus' ? focused ?? lowest : focused ?? lowest);
     const foe = wantAlly ? null : chosen;
     const allyPick = wantAlly ? chosen : null;
@@ -879,12 +883,18 @@ export function BattleScreen() {
             testID={`court-ally-${index}`}
             onPress={
               battle
-                ? fighter.hp > 0
-                  ? () => {
+                ? (() => {
+                    const actor =
+                      battle.allies.find((entry) => entry.id === battle.turnId && entry.hp > 0) ?? battle.player;
+                    const skill =
+                      actionId === 'basic' ? actor.basic : actor.skills.find((entry) => entry.id === actionId) ?? actor.basic;
+                    const canPick = fighter.hp > 0 || (needsAllyTarget(skill) && allowsFallenTargets(skill));
+                    if (!canPick) return undefined;
+                    return () => {
                       setFocusId(fighter.id);
                       if (quick.noteUnitTap(fighter.id) === 'double') commitAction(actionId, fighter.id);
-                    }
-                  : undefined
+                    };
+                  })()
                 : () => toggleId(allyIds, rawId(fighter.id), 3, setPickedAllies)
             }
           />

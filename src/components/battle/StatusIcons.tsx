@@ -126,6 +126,18 @@ export function StatusIconArt({
           <Line x1="8" y1="2" x2="8" y2="6" stroke={accent} strokeWidth={stroke} />
         </Svg>
       );
+    case 'faint_ghost':
+      return (
+        <Svg width={s} height={s} viewBox="0 0 16 16">
+          <Path
+            d="M8 2 C11 2, 13 4.5, 13 7.5 C13 10, 12 12, 12 14 L10 12.5 L8 14 L6 12.5 L4 14 C4 12, 3 10, 3 7.5 C3 4.5, 5 2, 8 2 Z"
+            fill={accent}
+            opacity={0.55}
+          />
+          <Circle cx="6.2" cy="7" r="0.9" fill="#111" />
+          <Circle cx="9.8" cy="7" r="0.9" fill="#111" />
+        </Svg>
+      );
     case 'arrow_down':
       return (
         <Svg width={s} height={s} viewBox="0 0 16 16">

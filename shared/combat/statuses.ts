@@ -38,7 +38,9 @@ export type CatalogStatusKey =
   | 'atk_up'
   | 'reflect'
   | 'nullify'
-  | 'undying';
+  | 'undying'
+  /** Derived KO marker when HP hits 0 (not a timed engine DoT). */
+  | 'fainted';
 
 export type StatusPolarity = 'debuff' | 'buff';
 
@@ -79,7 +81,8 @@ export type StatusVisual = {
     | 'sword_up'
     | 'reflect_ring'
     | 'null_dome'
-    | 'immortal_halo';
+    | 'immortal_halo'
+    | 'faint_ghost';
 };
 
 export type StatusDefinition = {
@@ -411,6 +414,15 @@ export const STATUS_CATALOG: Record<CatalogStatusKey, StatusDefinition> = {
     blurb: 'Khóa HP không dưới 1 trong 1 lượt định mệnh.',
     visual: { glyph: '☼', tint: '#3a2808', accent: '#ffd43b', art: 'immortal_halo' },
   },
+  fainted: {
+    key: 'fainted',
+    nameVi: 'Ngất',
+    nameEn: 'Fainted',
+    polarity: 'debuff',
+    defaultTurns: 99,
+    blurb: 'HP = 0. Không thể chọn làm mục tiêu (trừ hồi sinh).',
+    visual: { glyph: '☠', tint: '#1a1a1e', accent: '#9e9e9e', art: 'faint_ghost' },
+  },
 };
 
 export const DEBUFF_CATALOG_KEYS: CatalogStatusKey[] = [
@@ -429,6 +441,7 @@ export const DEBUFF_CATALOG_KEYS: CatalogStatusKey[] = [
   'atk_down',
   'sealed',
   'block_swap',
+  'fainted',
 ];
 
 export const BUFF_CATALOG_KEYS: CatalogStatusKey[] = [
@@ -480,6 +493,7 @@ export type DisplayStatus = {
 };
 
 export type StatusCarrier = {
+  hp?: number;
   statuses?: StatusEntry[];
   mods?: StatMod[];
   shieldHp?: number;
@@ -587,6 +601,11 @@ export function resistsControl(carrier: StatusCarrier): boolean {
  * Caps at 6 so the HUD stays readable.
  */
 export function collectDisplayStatuses(carrier: StatusCarrier, max = 6): DisplayStatus[] {
+  // Knocked-out units only show the Fainted plate (hide combat buffs/debuffs).
+  if ((carrier.hp ?? 1) <= 0) {
+    return [{ key: 'fainted', turns: 99, def: STATUS_CATALOG.fainted }];
+  }
+
   const byKey = new Map<CatalogStatusKey, DisplayStatus>();
 
   const upsert = (key: CatalogStatusKey, turns: number, power?: number) => {

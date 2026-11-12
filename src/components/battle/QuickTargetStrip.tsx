@@ -119,7 +119,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   chipOn: { borderColor: '#ff2d2d' },
-  down: { opacity: 0.35 },
+  down: { opacity: 0.5 },
   index: {
     position: 'absolute',
     top: 1,

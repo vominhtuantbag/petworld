@@ -9,24 +9,22 @@ import {
 } from './combat/advanced';
 import { DEFEND_DAMAGE_MULT, finalDamage, type DamageResult } from './combat/damage';
 import { combatElement, type ElementId } from './combat/elements';
+import { executeCombatAction, isSkillReady, tickCombatCooldowns } from './combat/executeCombatAction';
 import { applyMastery, classCatalog, heroTraits, masteryOf, monsterCatalog, resolvePetLoadout, rollHeroKit, rollMonsterKit } from './combat/kits';
 import type { Skill, StatMod } from './combat/model';
 import { turnOrder } from './combat/order';
 import {
   beginTurnAuras,
-  castSkill,
   canSwapOrFlee,
   collectDisplayStatuses,
   DEFEND_STATUS_ID,
   effectiveSpeed,
   isSilenced,
-  isUltimateSkill,
-  manaCost,
   needsAllyTarget,
   needsEnemyTarget,
-  retargetAttack,
   shouldSkipTurn,
   tickFighterTimers,
+  type EffectBattleState,
 } from './combat/skillEffects';
 import { monsterMana, professionPools } from './growth';
 import { ITEMS, applyConsumable, removeOne } from './items';
@@ -38,6 +36,7 @@ export type { Skill };
 export { applyMastery, masteryOf, rollHeroKit, rollMonsterKit };
 export { needsAllyTarget, needsEnemyTarget };
 export { canSwapOrFlee, collectDisplayStatuses, effectiveSpeed };
+export { executeCombatAction } from './combat/executeCombatAction';
 
 export type Fighter = {
   id: string;
@@ -237,17 +236,11 @@ export function zoneAt(position: number): (typeof TAMING_ZONES)[number] {
 }
 
 export function tickCooldowns(fighter: Fighter): Fighter {
-  const cooldowns: Record<string, number> = {};
-  for (const [id, left] of Object.entries(fighter.cooldowns)) {
-    if (left > 1) cooldowns[id] = left - 1;
-  }
-  return { ...fighter, cooldowns };
+  return tickCombatCooldowns(fighter);
 }
 
 export function skillReady(fighter: Fighter, skill: Skill): boolean {
-  if ((fighter.cooldowns[skill.id] ?? 0) > 0) return false;
-  if (fighter.statuses?.some((entry) => entry.id === 'sealed' && entry.turns > 0) && isUltimateSkill(skill)) return false;
-  return fighter.mp >= manaCost(fighter, skill);
+  return isSkillReady(fighter, skill);
 }
 
 export const COMBAT_ITEMS: ItemId[] = [
@@ -524,13 +517,14 @@ export function actDefend(state: BattleState): BattleState {
   const actor = unit(state, state.turnId);
   if (!actor || actor.hp <= 0) return state;
   if (actor.side !== 'player' && actor.side !== 'ally') return state;
-  const ready = tickCooldowns(actor);
-  const others = (ready.statuses ?? []).filter((entry) => entry.id !== DEFEND_STATUS_ID);
-  const guarded: Fighter = {
-    ...ready,
-    statuses: [...others, { id: DEFEND_STATUS_ID, turns: 99, power: 1 - DEFEND_DAMAGE_MULT }],
-  };
-  return after(replace(state, guarded), ready.id, `${ready.name} phòng thủ (−25% sát thương đến lượt sau).`);
+  const resolved = executeCombatAction({
+    state: state as unknown as EffectBattleState,
+    actorId: actor.id,
+    action: 'defend',
+    beginTurn: false,
+  });
+  if (resolved.skipped) return { ...state, log: resolved.log };
+  return after(mergePveState(state, resolved.state), actor.id, resolved.log);
 }
 
 /** The pet whose turn it is. Manual play waits for this; auto battle calls it itself. */
@@ -538,27 +532,18 @@ export function actAlly(state: BattleState, foeId: string | null, skillId: strin
   if (state.over) return state;
   const actor = unit(state, state.turnId);
   if (!actor || actor.side !== 'ally' || actor.hp <= 0) return state;
-  let ready = tickCooldowns(actor);
-  const skill = skillId ? ready.skills.find((entry) => entry.id === skillId) ?? null : null;
+  const skill = skillId ? actor.skills.find((entry) => entry.id === skillId) ?? null : null;
   if (skillId && !skill) return state;
-  if (skill && !skillReady(ready, skill)) return { ...state, log: `${skill.name} chưa sẵn sàng.` };
-  if (isSilenced(ready) && skill) return { ...state, log: `${ready.name} bị câm lặng — chỉ đánh thường.` };
-  if (skill) {
-    ready = {
-      ...ready,
-      mp: ready.mp - manaCost(ready, skill),
-      cooldowns: { ...ready.cooldowns, [skill.id]: skill.cooldown },
-    };
-  }
-  let next = replace(state, ready);
-  if (needsEnemyTarget(skill) || (!skill && needsEnemyTarget(ready.basic))) {
-    const intended = next.foes.find((entry) => entry.id === foeId && entry.hp > 0) ?? null;
-    const foe = retargetAttack(next, ready, intended);
-    if (!foe) return { ...state, log: 'Hãy chọn một quái còn sống.' };
-    foeId = foe.id;
-  }
-  const cast = castSkill(next, ready.id, skill, foeId);
-  return after(cast.state as BattleState, ready.id, `${ready.name} dùng ${skill ? skill.name : ready.basic.name}. ${cast.log}`);
+  const resolved = executeCombatAction({
+    state: state as unknown as EffectBattleState,
+    actorId: actor.id,
+    action: skill ? 'skill' : 'attack',
+    skill,
+    targetId: foeId,
+    beginTurn: false,
+  });
+  if (resolved.skipped) return { ...state, log: resolved.log };
+  return after(mergePveState(state, resolved.state), actor.id, resolved.log);
 }
 
 export function actItem(state: BattleState, itemId: ItemId): BattleState {
@@ -654,27 +639,21 @@ export function actAuto(state: BattleState, allowAlly = false): BattleState {
   if (!actor || actor.hp <= 0) return after(state, state.turnId, state.log);
   if (actor.side === 'ally' && !allowAlly) return state;
   if (actor.side !== 'wild' && actor.side !== 'ally') return state;
-  const ready = tickCooldowns(actor);
-  const skip = shouldSkipTurn(ready);
-  if (skip) {
-    const cleared = { ...ready, staggered: false };
-    return after(replace(state, cleared), ready.id, `${ready.name} ${skip} và bỏ lượt.`);
-  }
-  const canSkill = !isSilenced(ready);
+  const canSkill = !isSilenced(actor);
   const skill = canSkill
-    ? [...ready.skills].filter((entry) => skillReady(ready, entry)).sort((a, b) => b.power - a.power)[0]
+    ? [...actor.skills].filter((entry) => skillReady(actor, entry)).sort((a, b) => b.power - a.power)[0]
     : undefined;
-  const spent = skill
-    ? { ...ready, mp: ready.mp - manaCost(ready, skill), cooldowns: { ...ready.cooldowns, [skill.id]: skill.cooldown } }
-    : ready;
   const pool = actor.side === 'wild' ? friendlies(state) : state.foes;
   const intended = weakest(pool.filter((unit) => (unit.stealthTurns ?? 0) <= 0)) ?? weakest(pool);
-  const target = retargetAttack(state, spent, intended ?? null);
-  if (!target && needsEnemyTarget(skill ?? spent.basic)) return after(replace(state, spent), spent.id, state.log);
-  let next = replace(state, spent);
-  const cast = castSkill(next, spent.id, skill ?? null, target?.id ?? null);
-  const name = skill ? skill.name : spent.basic.name;
-  return after(cast.state as BattleState, spent.id, `${spent.name} dùng ${name}. ${cast.log}`);
+  const resolved = executeCombatAction({
+    state: state as unknown as EffectBattleState,
+    actorId: actor.id,
+    action: skill ? 'skill' : 'attack',
+    skill: skill ?? null,
+    targetId: intended?.id ?? null,
+    beginTurn: true,
+  });
+  return after(mergePveState(state, resolved.state), actor.id, resolved.log);
 }
 
 /** Auto-battle for the player: heal when low, otherwise the strongest ready skill. */
@@ -770,41 +749,51 @@ export function battleVitals(state: BattleState, maxHp: number, maxMana: number)
 
 function strikeFoe(state: BattleState, foeId: string | null, skillId: string | null): BattleState {
   if (!isPlayerTurn(state)) return state;
-  let player = tickCooldowns(state.player);
-  const skill = skillId ? player.skills.find((entry) => entry.id === skillId) ?? null : null;
+  const skill = skillId ? state.player.skills.find((entry) => entry.id === skillId) ?? null : null;
   if (skillId && !skill) return state;
-  if (skill && !skillReady(player, skill)) return { ...state, log: `${skill.name} chưa sẵn sàng.` };
-  if (isSilenced(player) && skill) return { ...state, log: `${player.name} bị câm lặng — chỉ đánh thường.` };
+  const resolved = executeCombatAction({
+    state: state as unknown as EffectBattleState,
+    actorId: state.player.id,
+    action: skill ? 'skill' : 'attack',
+    skill,
+    targetId: foeId,
+    beginTurn: false,
+  });
+  if (resolved.skipped) return { ...state, log: resolved.log };
+  return after(mergePveState(state, resolved.state), 'player', resolved.log);
+}
 
-  // Fire charged snipe if waiting.
-  if (!skill && player.chargedPower) {
-    const intended = state.foes.find((entry) => entry.id === foeId && entry.hp > 0) ?? null;
-    const foe = retargetAttack(state, player, intended);
-    if (!foe) return { ...state, log: 'Hãy chọn một quái còn sống.' };
-    const cast = castSkill({ ...state, player }, player.id, null, foe.id);
-    return after(cast.state as BattleState, 'player', cast.log);
+/** Merge engine state back onto PvE BattleState without dropping bag/tamed/UI fields. */
+function mergePveState(prev: BattleState, next: EffectBattleState): BattleState {
+  const byId = new Map<string, Fighter>();
+  const asFighter = (entry: EffectBattleState['player']): Fighter | undefined => {
+    const prior = unit(prev, entry.id);
+    if (!prior) return undefined;
+    return { ...prior, ...entry, skills: entry.skills as Skill[], basic: entry.basic } as Fighter;
+  };
+  const player = asFighter(next.player);
+  if (player) byId.set(player.id, player);
+  for (const ally of next.allies) {
+    const merged = asFighter(ally);
+    if (merged) byId.set(merged.id, merged);
   }
-
-  if (skill) {
-    player = {
-      ...player,
-      mp: player.mp - manaCost(player, skill),
-      cooldowns: { ...player.cooldowns, [skill.id]: skill.cooldown },
-    };
+  for (const foe of next.foes) {
+    const merged = asFighter(foe);
+    if (merged) byId.set(merged.id, merged);
   }
-  let next: BattleState = { ...state, player };
-  const move = skill ?? player.basic;
-  if (needsEnemyTarget(move)) {
-    const intended = next.foes.find((entry) => entry.id === foeId && entry.hp > 0) ?? null;
-    const foe = retargetAttack(next, player, intended);
-    if (!foe) return { ...state, log: 'Hãy chọn một quái còn sống.' };
-    foeId = foe.id;
-  } else if (needsAllyTarget(move) && !foeId) {
-    const pet = next.allies.find((entry) => entry.hp > 0);
-    foeId = pet?.id ?? null;
-  }
-  const cast = castSkill(next, player.id, skill, foeId);
-  return after(cast.state as BattleState, 'player', cast.log);
+  return {
+    ...prev,
+    player: byId.get(prev.player.id) ?? prev.player,
+    allies: prev.allies.map((ally) => byId.get(ally.id) ?? ally),
+    foes: prev.foes.map((foe) => byId.get(foe.id) ?? foe),
+    redirectHighestTurns: next.redirectHighestTurns,
+    bioFieldTurns: next.bioFieldTurns,
+    bioFieldPct: next.bioFieldPct,
+    chantTurns: next.chantTurns,
+    chantHpPct: next.chantHpPct,
+    chantMpPct: next.chantMpPct,
+    log: next.log || prev.log,
+  };
 }
 
 function isPlayerTurn(state: BattleState): boolean {

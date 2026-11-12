@@ -5,6 +5,7 @@
 
 import { resolveStatusApplication, type StatusEntry, type StatusId } from './advanced.js';
 import { DEFEND_DAMAGE_MULT, finalDamage } from './damage.js';
+import { allowsFallenTargets } from './faint.js';
 import type { Skill, SkillEffect, SkillTarget, StatMod, ModStat } from './model.js';
 import {
   ENGINE_DEBUFF_IDS,
@@ -1635,14 +1636,15 @@ export function retargetAttack(
   attacker: Fighter,
   intended: Fighter | null,
 ): Fighter | null {
-  if (!intended) return null;
   const enemies = opponentsOf(state, attacker).filter((unit) => unit.hp > 0 && (unit.stealthTurns ?? 0) <= 0);
   if (!enemies.length) return null;
   if ((state.redirectHighestTurns ?? 0) > 0 && attacker.side === 'wild') {
-    return [...enemies].sort((a, b) => b.hp - a.hp || a.id.localeCompare(b.id))[0] ?? intended;
+    return [...enemies].sort((a, b) => b.hp - a.hp || a.id.localeCompare(b.id))[0] ?? null;
   }
   const taunter = enemies.find((unit) => (unit.tauntTurns ?? 0) > 0);
   if (taunter) return taunter;
+  if (!intended || intended.hp <= 0) return enemies[0] ?? null;
+  if (!enemies.some((unit) => unit.id === intended.id)) return enemies[0] ?? null;
   if ((intended.stealthTurns ?? 0) > 0) return enemies[0] ?? null;
   return intended;
 }
@@ -1672,6 +1674,7 @@ function resolveHealTargets(
   if (mode === 'self') return [actor];
   if (mode === 'ally' || mode === undefined) {
     const ally = targetId ? findUnit(state, targetId) : null;
+    // Ally heals may revive (HP === 0); still reject wild enemies.
     if (ally && ally.side !== 'wild') return [ally];
     return state.allies.filter((unit) => unit.hp > 0).slice(0, 1);
   }
@@ -1696,7 +1699,8 @@ function resolveStatusTargets(
   if (mode === 'self') return [actor];
   if (mode === 'ally') {
     const ally = targetId ? findUnit(state, targetId) : null;
-    return ally && ally.side !== 'wild' ? [ally] : state.allies.filter((unit) => unit.hp > 0).slice(0, 1);
+    if (ally && ally.side !== 'wild' && ally.hp > 0) return [ally];
+    return state.allies.filter((unit) => unit.hp > 0).slice(0, 1);
   }
   if (mode === 'party_pets') return state.allies.filter((unit) => unit.hp > 0);
   if (mode === 'enemies') return opponentsOf(state, actor).filter((unit) => unit.hp > 0);
