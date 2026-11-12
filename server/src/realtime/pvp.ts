@@ -322,15 +322,30 @@ function readPets(payload: unknown): DuelPet[] {
   const pets: DuelPet[] = [];
   for (const entry of raw.slice(0, 3)) {
     if (!entry || typeof entry !== 'object') continue;
-    const row = entry as { name?: unknown; level?: unknown; hp?: unknown; maxHp?: unknown };
+    const row = entry as Record<string, unknown>;
     const name = typeof row.name === 'string' ? row.name.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 24) : '';
     if (!name) continue;
     const maxHp = clamp(row.maxHp, 1, 99_999);
+    const id = typeof row.id === 'string' ? row.id.trim().slice(0, 80) : undefined;
+    const kindId = typeof row.kindId === 'string' ? row.kindId.trim().slice(0, 64) : undefined;
+    const basicId = typeof row.basicId === 'string' ? row.basicId.trim().slice(0, 80) : undefined;
+    const skillIds = Array.isArray(row.skillIds)
+      ? row.skillIds.filter((value): value is string => typeof value === 'string').map((value) => value.trim().slice(0, 80)).filter(Boolean).slice(0, 4)
+      : undefined;
     pets.push({
+      id: id || undefined,
       name,
       level: clamp(row.level, 1, 200),
       hp: Math.min(maxHp, clamp(row.hp, 0, 99_999)),
       maxHp,
+      kindId: kindId || undefined,
+      basicId: basicId || undefined,
+      skillIds: skillIds?.length ? skillIds : undefined,
+      attack: row.attack != null ? clamp(row.attack, 1, 99_999) : undefined,
+      defense: row.defense != null ? clamp(row.defense, 0, 99_999) : undefined,
+      speed: row.speed != null ? clamp(row.speed, 1, 9_999) : undefined,
+      mp: row.mp != null ? clamp(row.mp, 0, 99_999) : undefined,
+      maxMp: row.maxMp != null ? clamp(row.maxMp, 1, 99_999) : undefined,
     });
   }
   return pets;

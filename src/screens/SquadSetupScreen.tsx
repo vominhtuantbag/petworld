@@ -48,7 +48,24 @@ export function SquadSetupScreen() {
     slotsRef.current.flatMap((id) => {
       const pet = captured.find((monster) => monster.id === id && monster.hp > 0);
       if (!pet) return [];
-      return [{ name: pet.name, level: pet.level, hp: pet.hp, maxHp: pet.maxHp }];
+      const loadout = resolvePetLoadout(pet);
+      return [
+        {
+          id: pet.id,
+          name: pet.name,
+          level: pet.level,
+          hp: pet.hp,
+          maxHp: pet.maxHp,
+          kindId: pet.kindId,
+          basicId: loadout.basicId,
+          skillIds: loadout.skillIds,
+          attack: pet.attack,
+          defense: pet.defense,
+          speed: pet.speed,
+          mp: pet.mp,
+          maxMp: pet.maxMp,
+        },
+      ];
     });
 
   useEffect(() => {

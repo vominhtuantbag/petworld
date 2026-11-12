@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Pressable, Text, View } from 'react-native';
+import { Animated, Image, Pressable, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CourtFx, type Fate, type Step } from '../components/battle/CourtFx';
 import { EndGameModal, type ExpMember, type LootSlot } from '../components/battle/EndGameModal';
 import { FloatingCombatText } from '../components/battle/FloatingCombatText';
+import { useCombatJuice } from '../components/battle/JuiceOverlay';
 import { TamingMiniGameModal } from '../components/battle/TamingMiniGameModal';
 import { TurnTimeline, type TimelineRole } from '../components/battle/TurnTimeline';
 import { BATTLE_GRID_POSITIONS, feetInView } from '../components/battle/courtSlots';
+import { BattleInfoPanel } from '../components/battle/BattleInfoPanel';
 import { CourtUnit, FaceArt, RoundButton, TimelineFace, styles, timelineFaceSize } from '../components/battle/courtChrome';
 import { GestureActionButton } from '../components/battle/GestureActionButton';
 import { QuickTargetStrip } from '../components/battle/QuickTargetStrip';
+import { CharacterAvatar } from '../components/CharacterAvatar';
 import { getCharacter } from '../data/characters';
 import { useQuickTarget } from '../hooks/useQuickTarget';
 import { useSocket } from '../state/BattleContext';
@@ -64,6 +67,7 @@ export function BattleScreen() {
   const socket = useSocket();
   const { s, font } = useLayout();
   const insets = useSafeAreaInsets();
+  const juice = useCombatJuice();
   const [screen, setScreen] = useState({ w: 0, h: 0 });
   const [stageBox, setStageBox] = useState({ x: 0, y: 0 });
   const foot = (cell: string) => feetInView(cell, screen.w, screen.h, insets.left + stageBox.x, insets.top + stageBox.y);
@@ -722,7 +726,25 @@ export function BattleScreen() {
     if (list.includes(id)) set(list.filter((entry) => entry !== id));
     else if (list.length < max) set([...list, id]);
   };
-  const faceSize = timelineFaceSize(screen.w, insets.left, insets.right, turnQueue.length, s(30), s(72) + s(78) + 36);
+  const faceSize = timelineFaceSize(screen.w, insets.left, insets.right, turnQueue.length, s(28), s(168) * 2 + 28);
+  const activeFighter = battle && !battle.over ? lineup.find((entry) => entry.id === battle.turnId) ?? null : null;
+  const targetFighter = marked;
+  const panelOf = (fighter: typeof player | null) =>
+    fighter
+      ? {
+          id: fighter.id,
+          name: fighter.name,
+          tint: fighter.tint,
+          hp: fighter.hp,
+          maxHp: fighter.maxHp,
+          mp: fighter.mp,
+          maxMp: fighter.maxMp,
+          shieldHp: fighter.shieldHp,
+          level: fighter.level,
+          element: fighter.element,
+          kindId: fighter.kindId,
+        }
+      : null;
 
   return (
     <View
@@ -737,57 +759,87 @@ export function BattleScreen() {
       <SafeAreaView style={styles.frame} edges={['top', 'bottom', 'left', 'right']}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <RoundButton
-            label={
-              battle?.over
-                ? 'Hết'
-                : turnDeadline != null && handsOff && !auto
-                  ? `${Math.max(0, Math.ceil((turnDeadline - clockNow) / 1000))}s`
-                  : '—'
+          <BattleInfoPanel
+            title="Đang lượt"
+            side="left"
+            unit={panelOf(activeFighter)}
+            avatarSize={s(40)}
+            testID="info-active"
+            portrait={
+              activeFighter?.side === 'player' && character ? (
+                <CharacterAvatar character={character} hairColor={setup.player.hairColor} outfitColor={setup.player.outfitColor} size={s(38)} />
+              ) : undefined
             }
-            hint="Thời gian lượt (30s)"
-            onPress={() => undefined}
-            size={s(36)}
-            width={s(56)}
-            font={font(12)}
           />
-          <RoundButton label={paused ? '▶' : 'Dừng'} hint="Tạm dừng" disabled={!battle || Boolean(battle.over)} hot={paused} onPress={() => setPaused((value) => !value)} testID="battle-pause" size={s(36)} width={s(64)} font={font(12)} />
-          <RoundButton label={auto ? 'Tự: Bật' : 'Tự: Tắt'} hint={auto ? 'Tắt tự động đánh' : 'Bật tự động đánh'} disabled={!battle || Boolean(battle.over)} hot={auto} onPress={() => setAuto((value) => !value)} testID="battle-auto" size={s(36)} width={s(78)} font={font(11)} />
-          {world.encounter?.mine ? (
-            <RoundButton
-              label={mineLabel(world.encounter.mineFloor ?? world.mineFloor ?? 1, mineWaveRef.current)}
-              hint="Sóng hầm mỏ"
-              onPress={() => undefined}
-              size={s(36)}
-              width={s(72)}
-              font={font(12)}
-            />
-          ) : null}
         </View>
-        <TurnTimeline
-          ids={turnQueue}
-          activeId={battle && !battle.over ? battle.turnId : null}
-          size={faceSize}
-          renderFace={(id, role) => {
-            const fighter = lineup.find((entry) => entry.id === id);
-            if (!fighter) return null;
-            return (
-              <TimelineFace
-                fighter={fighter}
-                active={role === 'now'}
-                role={role}
-                size={faceSize}
-                character={fighter.side === 'player' ? character : null}
-                hairColor={setup.player?.hairColor}
-                outfitColor={setup.player?.outfitColor}
+        <View style={styles.headerCenter}>
+          <TurnTimeline
+            ids={turnQueue}
+            activeId={battle && !battle.over ? battle.turnId : null}
+            size={faceSize}
+            renderFace={(id, role) => {
+              const fighter = lineup.find((entry) => entry.id === id);
+              if (!fighter) return null;
+              return (
+                <TimelineFace
+                  fighter={fighter}
+                  active={role === 'now'}
+                  role={role}
+                  size={faceSize}
+                  character={fighter.side === 'player' ? character : null}
+                  hairColor={setup.player?.hairColor}
+                  outfitColor={setup.player?.outfitColor}
+                />
+              );
+            }}
+          />
+          <View style={styles.headerControls}>
+            <RoundButton
+              label={
+                battle?.over
+                  ? 'Hết'
+                  : turnDeadline != null && handsOff && !auto
+                    ? `${Math.max(0, Math.ceil((turnDeadline - clockNow) / 1000))}s`
+                    : '—'
+              }
+              hint="Thời gian lượt (30s)"
+              onPress={() => undefined}
+              size={s(32)}
+              width={s(52)}
+              font={font(11)}
+            />
+            <RoundButton label={paused ? '▶' : 'Dừng'} hint="Tạm dừng" disabled={!battle || Boolean(battle.over)} hot={paused} onPress={() => setPaused((value) => !value)} testID="battle-pause" size={s(32)} width={s(56)} font={font(11)} />
+            <RoundButton label={auto ? 'Tự: Bật' : 'Tự: Tắt'} hint={auto ? 'Tắt tự động đánh' : 'Bật tự động đánh'} disabled={!battle || Boolean(battle.over)} hot={auto} onPress={() => setAuto((value) => !value)} testID="battle-auto" size={s(32)} width={s(70)} font={font(10)} />
+            {world.encounter?.mine ? (
+              <RoundButton
+                label={mineLabel(world.encounter.mineFloor ?? world.mineFloor ?? 1, mineWaveRef.current)}
+                hint="Sóng hầm mỏ"
+                onPress={() => undefined}
+                size={s(32)}
+                width={s(64)}
+                font={font(11)}
               />
-            );
-          }}
-        />
+            ) : null}
+          </View>
+        </View>
+        <View style={styles.headerRight}>
+          <BattleInfoPanel
+            title="Mục tiêu"
+            side="right"
+            unit={panelOf(targetFighter)}
+            avatarSize={s(40)}
+            testID="info-target"
+            portrait={
+              targetFighter?.side === 'player' && character ? (
+                <CharacterAvatar character={character} hairColor={setup.player.hairColor} outfitColor={setup.player.outfitColor} size={s(38)} />
+              ) : undefined
+            }
+          />
+        </View>
       </View>
 
-      <View
-        style={styles.stage}
+      <Animated.View
+        style={[styles.stage, juice.stageStyle]}
         onLayout={(event) => {
           const { x, y } = event.nativeEvent.layout;
           setStageBox((current) => (current.x === x && current.y === y ? current : { x, y }));
@@ -878,6 +930,7 @@ export function BattleScreen() {
               kind={note.kind}
               x={anchor.x + (index - (stack.length - 1) / 2) * 16}
               y={anchor.y}
+              onImpact={juice.trigger}
               onDone={() => setFloats((current) => current.filter((entry) => entry.id !== note.id))}
             />
           );
@@ -891,7 +944,8 @@ export function BattleScreen() {
               : `Chọn 3 địch${allyNeed ? ` và ${allyNeed} đồng đội` : ''}${itemNeed ? ' và 1 vật phẩm' : ''}.`}
           </Text>
         )}
-      </View>
+      </Animated.View>
+      {juice.overlay}
 
       <View style={styles.dock}>
         <View style={styles.targets}>

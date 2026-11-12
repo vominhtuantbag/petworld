@@ -1,7 +1,8 @@
 import { useRef, type ReactNode } from 'react';
-import { PanResponder, StyleSheet, Text, View } from 'react-native';
+import { Animated, PanResponder, StyleSheet, Text, View } from 'react-native';
 
 import { HOLD_MS } from '../../hooks/useQuickTarget';
+import { combatSfx } from '../../world/combat/combatSfx';
 import { styles as court } from './courtChrome';
 
 type Props = {
@@ -27,7 +28,7 @@ type Props = {
 
 /**
  * Thumb-zone skill key. Tap arms, double-tap fires, hold+drag aims, release casts.
- * Hold shows an optional Quick Target popup directly above the button.
+ * Press-in scales to 95% with a click; release springs back with a glow pulse.
  */
 export function GestureActionButton({
   label,
@@ -55,6 +56,8 @@ export function GestureActionButton({
   const dyRef = useRef(0);
   const disabledRef = useRef(disabled);
   const handlers = useRef({ onArm, onDoubleTap, onHoldStart, onHoldMove, onHoldEnd });
+  const press = useRef(new Animated.Value(0)).current;
+  const ripple = useRef(new Animated.Value(0)).current;
   disabledRef.current = disabled;
   handlers.current = { onArm, onDoubleTap, onHoldStart, onHoldMove, onHoldEnd };
 
@@ -63,6 +66,19 @@ export function GestureActionButton({
       clearTimeout(holdTimer.current);
       holdTimer.current = null;
     }
+  };
+
+  const pressIn = () => {
+    combatSfx('click');
+    ripple.setValue(0);
+    Animated.timing(press, { toValue: 1, duration: 70, useNativeDriver: true }).start();
+  };
+
+  const pressOut = (pulse: boolean) => {
+    Animated.spring(press, { toValue: 0, friction: 5, tension: 220, useNativeDriver: true }).start();
+    if (!pulse) return;
+    ripple.setValue(0);
+    Animated.timing(ripple, { toValue: 1, duration: 320, useNativeDriver: true }).start();
   };
 
   const pan = useRef(
@@ -75,6 +91,7 @@ export function GestureActionButton({
         held.current = false;
         tapping.current = true;
         dyRef.current = 0;
+        pressIn();
         clearHold();
         holdTimer.current = setTimeout(() => {
           held.current = true;
@@ -92,17 +109,22 @@ export function GestureActionButton({
         if (held.current) handlers.current.onHoldMove(gesture.dx, gesture.dy);
       },
       onPanResponderRelease: () => {
-        if (disabledRef.current) return;
+        if (disabledRef.current) {
+          pressOut(false);
+          return;
+        }
         clearHold();
         if (held.current) {
           held.current = false;
           tapping.current = false;
+          pressOut(true);
           handlers.current.onHoldEnd(dyRef.current, false);
           return;
         }
         const now = Date.now();
         const doubled = now - lastTapAt.current < HOLD_MS + 80 && tapping.current;
         tapping.current = false;
+        pressOut(true);
         if (doubled) {
           lastTapAt.current = 0;
           handlers.current.onDoubleTap();
@@ -113,6 +135,7 @@ export function GestureActionButton({
       },
       onPanResponderTerminate: () => {
         clearHold();
+        pressOut(false);
         if (held.current) {
           held.current = false;
           handlers.current.onHoldEnd(dyRef.current, true);
@@ -122,6 +145,11 @@ export function GestureActionButton({
     }),
   ).current;
 
+  const scale = press.interpolate({ inputRange: [0, 1], outputRange: [1, 0.95] });
+  const shade = press.interpolate({ inputRange: [0, 1], outputRange: [0, 0.22] });
+  const rippleScale = ripple.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.55] });
+  const rippleOpacity = ripple.interpolate({ inputRange: [0, 0.2, 1], outputRange: [0, 0.55, 0] });
+
   return (
     <View style={local.wrap}>
       {aiming && aimPopup ? (
@@ -129,29 +157,46 @@ export function GestureActionButton({
           {aimPopup}
         </View>
       ) : null}
-      <View
-        {...pan.panHandlers}
-        accessibilityRole="button"
-        accessibilityLabel={hint ?? label}
-        accessibilityState={{ disabled: Boolean(disabled), selected: Boolean(picked) }}
-        testID={testID}
-        style={[
-          court.square,
-          {
-            width: size,
-            height: size,
-            backgroundColor: tint ?? '#24352f',
-          },
-          hot && !picked && court.roundHot,
-          picked && court.picked,
-          (disabled || dim) && court.fainted,
-          (picked || aiming) && local.held,
-        ]}
-      >
-        <Text style={[court.roundLabel, { fontSize: font }]} numberOfLines={2}>
-          {label}
-        </Text>
-      </View>
+      <Animated.View style={{ transform: [{ scale }] }}>
+        <View
+          {...pan.panHandlers}
+          accessibilityRole="button"
+          accessibilityLabel={hint ?? label}
+          accessibilityState={{ disabled: Boolean(disabled), selected: Boolean(picked) }}
+          testID={testID}
+          style={[
+            court.square,
+            {
+              width: size,
+              height: size,
+              backgroundColor: tint ?? '#24352f',
+              overflow: 'visible',
+            },
+            hot && !picked && court.roundHot,
+            picked && court.picked,
+            (disabled || dim) && court.fainted,
+            (picked || aiming) && local.held,
+          ]}
+        >
+          <Text style={[court.roundLabel, { fontSize: font }]} numberOfLines={2}>
+            {label}
+          </Text>
+          <Animated.View pointerEvents="none" style={[local.shade, { opacity: shade }]} />
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              local.ripple,
+              {
+                width: size,
+                height: size,
+                borderRadius: size / 2,
+                opacity: rippleOpacity,
+                transform: [{ scale: rippleScale }],
+              },
+            ]}
+          />
+        </View>
+      </Animated.View>
     </View>
   );
 }
@@ -167,4 +212,14 @@ const local = StyleSheet.create({
     elevation: 40,
   },
   held: { transform: [{ scale: 1.05 }] },
+  shade: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: '#000',
+  },
+  ripple: {
+    position: 'absolute',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 224, 130, 0.95)',
+    backgroundColor: 'rgba(255, 224, 130, 0.18)',
+  },
 });

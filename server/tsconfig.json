@@ -8,7 +8,10 @@
     "esModuleInterop": true,
     "types": ["node"],
     "rootDir": "src",
-    "outDir": "dist"
+    "outDir": "dist",
+    "paths": {
+      "@game/combat/*": ["../shared/combat/dist/*"]
+    }
   },
   "include": ["src"]
 }

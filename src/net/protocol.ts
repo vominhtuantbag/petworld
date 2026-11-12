@@ -13,6 +13,20 @@ export type DuelPet = {
   level: number;
   hp: number;
   maxHp: number;
+  kindId?: string;
+  basicId?: string;
+  skillIds?: string[];
+  attack?: number;
+  defense?: number;
+  speed?: number;
+  mp?: number;
+  maxMp?: number;
+};
+
+export type DuelStatusView = {
+  id: string;
+  turns: number;
+  power?: number;
 };
 
 export type DraftPetView = {
@@ -22,6 +36,13 @@ export type DraftPetView = {
   level: number;
   hp: number;
   maxHp: number;
+  basicId?: string;
+  skillIds?: string[];
+  attack?: number;
+  defense?: number;
+  speed?: number;
+  mp?: number;
+  maxMp?: number;
 };
 
 export type DraftFighterView = {
@@ -79,6 +100,7 @@ export type ArenaFriendView = {
 
 export type DuelSkillView = {
   index: 0 | 1;
+  id?: string;
   name: string;
   mana?: number;
   cooldown?: number;
@@ -104,6 +126,10 @@ export type DuelUnitView = {
   tgh?: number;
   maxTgh?: number;
   staggered?: boolean;
+  kindId?: string;
+  element?: string;
+  shieldHp?: number;
+  statuses?: DuelStatusView[];
 };
 
 export type FighterView = {
@@ -252,6 +278,9 @@ export type RaidUnitView = {
   tgh?: number;
   maxTgh?: number;
   staggered?: boolean;
+  element?: string;
+  shieldHp?: number;
+  statuses?: DuelStatusView[];
 };
 
 export type RaidRewardView = {

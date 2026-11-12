@@ -1,8 +1,10 @@
 import type { Server, Socket } from 'socket.io';
 
 import { advancedAtLevel } from '../combat/advanced.js';
-import { arenaSkills, professionFromAvatar, type ClassSkillCard } from '../combat/classSkills.js';
-import { strike as resolveStrike } from '../combat/rules.js';
+import { arenaHeroKit, professionFromAvatar } from '../combat/classSkills.js';
+import { petLoadoutSkills, resolveRaidAction, statusViewOf, type DuelCombatUnit } from '@game/combat/duelBridge.js';
+import type { Skill } from '@game/combat/model.js';
+import type { AccountStore } from '../domain.js';
 import { GOLDEN_WINDOW_LABEL, goldenHourAt } from '../dungeon/schedule.js';
 import { raidPayout, type RaidPayout } from '../dungeon/rewards.js';
 import type { Arena } from './arena.js';
@@ -19,6 +21,8 @@ import type {
   RaidTameResult,
   RaidUnitView,
 } from './protocol.js';
+
+type HeroSkillLoadout = { professionId: string; basicId: string; skillIds: string[] };
 
 const LOBBY_MS = 30_000;
 const TURN_MS = 30_000;
@@ -42,6 +46,8 @@ type Member = {
   defense: number;
   maxHp: number;
   ready: boolean;
+  /** Saved PvE loadout — same source Arena uses for full Skill objects. */
+  heroSkills?: HeroSkillLoadout | null;
 };
 
 type Lobby = {
@@ -52,34 +58,11 @@ type Lobby = {
   closing: boolean;
 };
 
-type SkillCard = ClassSkillCard;
-
-type Unit = {
-  id: string;
+type Unit = DuelCombatUnit & {
   ownerId: string | null;
-  name: string;
   kind: 'hero' | 'monster' | 'boss';
   slot: number;
-  level: number;
-  hp: number;
-  maxHp: number;
-  mp: number;
-  maxMp: number;
-  attack: number;
-  defense: number;
-  speed: number;
   tint: string;
-  skills: [SkillCard, SkillCard];
-  cooldowns: Record<string, number>;
-  tgh: number;
-  maxTgh: number;
-  armPen: number;
-  res: number;
-  critRate: number;
-  critDamage: number;
-  eva: number;
-  acc: number;
-  staggered?: boolean;
   baseAvatarId?: string;
   hairColor?: string;
   outfitColor?: string;
@@ -140,6 +123,7 @@ export class DungeonRaids {
     private readonly io: Server,
     private readonly world: WorldPresence,
     private readonly arena: Arena,
+    private readonly store: AccountStore,
   ) {}
 
   engaged(userId: string): boolean {
@@ -302,7 +286,7 @@ export class DungeonRaids {
       return;
     }
     const action = payload && typeof payload === 'object' && 'action' in payload ? payload.action : undefined;
-    if (action !== 'attack' && action !== 'skill') {
+    if (action !== 'attack' && action !== 'skill' && action !== 'defend') {
       socket.emit('raid:error', { message: 'Đòn đánh không hợp lệ.' });
       return;
     }
@@ -363,7 +347,7 @@ export class DungeonRaids {
       }
       return;
     }
-    this.openRoom(ready);
+    void this.openRoom(ready);
   }
 
   private allReady(lobby: Lobby): boolean {
@@ -371,7 +355,13 @@ export class DungeonRaids {
     return filled.length >= MIN_PARTY && filled.every((member) => member.ready);
   }
 
-  private openRoom(party: { member: Member; slot: number }[]) {
+  private async openRoom(party: { member: Member; slot: number }[]) {
+    await Promise.all(
+      party.map(async (entry) => {
+        const save = await this.store.findAdventure(entry.member.userId);
+        entry.member.heroSkills = (save?.world?.heroSkills as HeroSkillLoadout | null | undefined) ?? null;
+      }),
+    );
     const members = party.map((entry) => entry.member);
     const level = Math.max(1, Math.round(members.reduce((sum, member) => sum + member.level, 0) / members.length));
     const units = [...party.map((entry) => heroUnit(entry.member, entry.slot)), ...foeUnits(level)];
@@ -410,7 +400,7 @@ export class DungeonRaids {
     this.emitRoom(room);
   }
 
-  private resolve(room: RaidRoom, action: 'attack' | 'skill', skillIndex: 0 | 1, targetId: string | undefined) {
+  private resolve(room: RaidRoom, action: 'attack' | 'skill' | 'defend', skillIndex: 0 | 1, targetId: string | undefined) {
     if (room.status !== 'active' || room.resolving) return;
     room.resolving = true;
     const actor = room.units.find((unit) => unit.id === room.turnId && unit.hp > 0);
@@ -420,54 +410,39 @@ export class DungeonRaids {
     this.emitRoom(room);
   }
 
-  private strike(room: RaidRoom, actor: Unit, action: 'attack' | 'skill', skillIndex: 0 | 1, targetId: string | undefined) {
-    if (actor.staggered) {
-      actor.staggered = false;
-      room.log.push(`${actor.name} gục ngã và bỏ lượt (−50% DEF hết).`);
-      this.advance(room);
-      return;
-    }
+  private strike(room: RaidRoom, actor: Unit, action: 'attack' | 'skill' | 'defend', skillIndex: 0 | 1, targetId: string | undefined) {
     const foes = foesOf(room.units, actor);
-    const target = foes.find((unit) => unit.id === targetId) ?? preferred(foes, actor);
-    if (!target) {
+    if (action !== 'defend' && foes.length === 0) {
       this.finish(room, actor.kind === 'hero');
       return;
     }
-    for (const [id, value] of Object.entries(actor.cooldowns ?? {})) {
-      actor.cooldowns[id] = Math.max(0, value - 1);
-    }
-    let skill = action === 'skill' ? actor.skills[skillIndex] ?? actor.skills[0] : null;
-    if (skill && action === 'skill') {
-      const wait = actor.cooldowns[skill.id] ?? 0;
-      if (wait > 0 || actor.mp < (skill.mana || 0)) {
-        skill = null;
-        action = 'attack';
-      } else {
-        actor.mp = Math.max(0, actor.mp - (skill.mana || 0));
-        if (skill.cooldown > 0) actor.cooldowns[skill.id] = skill.cooldown;
-      }
-    }
-    const result = resolveStrike(
-      strikerOf(actor),
-      strikerOf(target),
-      skill ? 'skill' : 'attack',
-      'attack',
-      Math.random,
-      skill ? { power: skill.power, skillName: skill.name } : undefined,
-    );
-    target.hp = Math.max(0, target.hp - (result.damage || 0));
-    target.tgh = result.tgh;
-    target.maxTgh = result.maxTgh;
-    if (result.staggered) target.staggered = true;
-    room.log.push(result.text);
-    room.lastHit = {
-      attackerId: actor.id,
-      targetId: target.id,
-      damage: result.damage || 0,
-      crit: Boolean(result.crit),
-      miss: Boolean(result.miss || result.dodged),
-      skillName: skill?.name,
-    };
+    const castUnits: DuelCombatUnit[] = room.units.map((unit) => ({
+      ...unit,
+      ownerId: unit.ownerId ?? (unit.kind === 'hero' ? unit.id : `foe:${unit.id}`),
+    }));
+    const resolved = resolveRaidAction(castUnits, actor.id, action, skillIndex, targetId);
+    room.units = resolved.units.map((unit, index) => {
+      const previous = room.units[index] ?? room.units.find((entry) => entry.id === unit.id)!;
+      return { ...previous, ...unit, ownerId: previous.ownerId, slot: previous.slot, tint: previous.tint } as Unit;
+    });
+    // Keep identity stable if order shifted.
+    room.units = room.units.map((unit) => {
+      const live = resolved.units.find((entry) => entry.id === unit.id);
+      return live
+        ? ({
+            ...unit,
+            ...live,
+            ownerId: unit.ownerId,
+            slot: unit.slot,
+            tint: unit.tint,
+            baseAvatarId: unit.baseAvatarId,
+            hairColor: unit.hairColor,
+            outfitColor: unit.outfitColor,
+          } as Unit)
+        : unit;
+    });
+    if (resolved.log) room.log.push(resolved.log);
+    room.lastHit = resolved.lastHit;
     const heroesAlive = room.units.some((unit) => unit.kind === 'hero' && unit.hp > 0);
     const foesAlive = room.units.some((unit) => unit.kind !== 'hero' && unit.hp > 0);
     if (!foesAlive) {
@@ -770,7 +745,8 @@ function slotView(member: Member, index: number): RaidSlotView {
 function heroUnit(member: Member, slot: number): Unit {
   const maxMp = Math.max(10, member.level * 8);
   const advanced = advancedAtLevel(member.level, 'hero');
-  const [skillA, skillB] = arenaSkills(professionFromAvatar(member.baseAvatarId));
+  const profession = member.heroSkills?.professionId || professionFromAvatar(member.baseAvatarId);
+  const kit = arenaHeroKit(profession, member.heroSkills ?? null, member.name);
   return {
     id: member.userId,
     ownerId: member.userId,
@@ -786,7 +762,9 @@ function heroUnit(member: Member, slot: number): Unit {
     defense: member.defense,
     speed: 90 + Math.max(0, member.level - 1),
     tint: '#e4c27a',
-    skills: [skillA, skillB],
+    element: kit.element,
+    basic: kit.basic,
+    skills: kit.skills,
     cooldowns: {},
     tgh: advanced.maxTgh,
     maxTgh: advanced.maxTgh,
@@ -796,6 +774,9 @@ function heroUnit(member: Member, slot: number): Unit {
     critDamage: advanced.critDamage,
     eva: advanced.eva,
     acc: advanced.acc,
+    statuses: [],
+    mods: [],
+    shieldHp: 0,
     baseAvatarId: member.baseAvatarId,
     hairColor: member.hairColor,
     outfitColor: member.outfitColor,
@@ -806,13 +787,15 @@ function foeUnits(level: number): Unit[] {
   const addHp = 55 + level * 16;
   const addAtk = 8 + level * 3;
   const addDef = 4 + level;
-  const add = (slot: number, name: string, tint: string, elite = false): Unit => {
+  const add = (slot: number, name: string, tint: string, kindId: string, elite = false): Unit => {
     const advanced = advancedAtLevel(level, elite ? 'elite' : 'pet');
+    const kit = petLoadoutSkills(kindId, `raid-foe-${slot}-${level}`);
     return {
       id: `foe:${slot + 1}`,
       ownerId: null,
       name,
       kind: 'monster',
+      kindId,
       slot,
       level,
       hp: addHp,
@@ -823,10 +806,9 @@ function foeUnits(level: number): Unit[] {
       defense: addDef,
       speed: 82 + level,
       tint,
-      skills: [
-        { id: `foe-${slot}-a`, name: 'Kỹ năng 1', mana: 4, power: 1.2, cooldown: 1 },
-        { id: `foe-${slot}-b`, name: 'Kỹ năng 2', mana: 6, power: 1.35, cooldown: 2 },
-      ],
+      element: kit.element,
+      basic: kit.basic,
+      skills: kit.skills,
       cooldowns: {},
       tgh: advanced.maxTgh,
       maxTgh: advanced.maxTgh,
@@ -836,15 +818,20 @@ function foeUnits(level: number): Unit[] {
       critDamage: advanced.critDamage,
       eva: advanced.eva,
       acc: advanced.acc,
+      statuses: [],
+      mods: [],
+      shieldHp: 0,
     };
   };
   const bossHp = Math.round(addHp * 2.5);
   const bossAdv = advancedAtLevel(level, 'elite');
+  const bossKit = petLoadoutSkills('volcano-phoenix', `raid-boss-${level}`);
   const boss: Unit = {
     id: 'boss',
     ownerId: null,
     name: 'Boss hầm ngục',
     kind: 'boss',
+    kindId: 'volcano-phoenix',
     slot: 0,
     level,
     hp: bossHp,
@@ -855,10 +842,9 @@ function foeUnits(level: number): Unit[] {
     defense: addDef + 4,
     speed: 98 + level,
     tint: '#c4472f',
-    skills: [
-      { id: 'boss-a', name: 'Kỹ năng 1', mana: 6, power: 1.4, cooldown: 1 },
-      { id: 'boss-b', name: 'Kỹ năng 2', mana: 10, power: 1.7, cooldown: 2 },
-    ],
+    element: bossKit.element,
+    basic: bossKit.basic,
+    skills: bossKit.skills,
     cooldowns: {},
     tgh: bossAdv.maxTgh,
     maxTgh: bossAdv.maxTgh,
@@ -868,26 +854,15 @@ function foeUnits(level: number): Unit[] {
     critDamage: bossAdv.critDamage,
     eva: bossAdv.eva,
     acc: bossAdv.acc,
+    statuses: [],
+    mods: [],
+    shieldHp: 0,
   };
-  return [add(0, 'Quái hầm ngục', '#8a5a42'), add(1, 'Quái hầm ngục', '#6a4a38'), boss];
-}
-
-function strikerOf(unit: Unit) {
-  return {
-    name: unit.name,
-    attack: unit.attack,
-    defense: unit.defense,
-    level: unit.level,
-    armPen: unit.armPen,
-    res: unit.res,
-    critRate: unit.critRate,
-    critDamage: unit.critDamage,
-    eva: unit.eva,
-    acc: unit.acc,
-    tgh: unit.tgh,
-    maxTgh: unit.maxTgh,
-    staggered: unit.staggered,
-  };
+  return [
+    add(0, 'Quái hầm ngục', '#8a5a42', 'plains-boar'),
+    add(1, 'Quái hầm ngục', '#6a4a38', 'mountain-golem'),
+    boss,
+  ];
 }
 
 function isNpc(unit: Unit): boolean {
@@ -946,18 +921,29 @@ function toView(unit: Unit): RaidUnitView {
     tgh: unit.tgh,
     maxTgh: unit.maxTgh,
     staggered: Boolean(unit.staggered),
+    element: unit.element,
+    shieldHp: unit.shieldHp ?? 0,
+    statuses: statusViewOf(unit),
   };
 }
 
 function skillButtons(unit: Unit | undefined): DuelSkillView[] {
-  const skills = unit?.skills ?? [
-    { id: 'fallback-0', name: 'Kỹ năng 1', mana: 0, power: 1, cooldown: 0 },
-    { id: 'fallback-1', name: 'Kỹ năng 2', mana: 0, power: 1, cooldown: 0 },
-  ];
+  const fallback: Skill = {
+    id: 'fallback',
+    name: 'Kỹ năng',
+    mana: 0,
+    power: 1,
+    cooldown: 0,
+    blurb: '',
+    target: 'enemy',
+    effects: [{ type: 'damage', power: 1 }],
+  };
+  const skills: [Skill, Skill] = unit?.skills ?? [fallback, { ...fallback, id: 'fallback-1' }];
   const cds = unit?.cooldowns ?? {};
   return [
     {
       index: 0,
+      id: skills[0].id,
       name: skills[0].name,
       mana: skills[0].mana,
       cooldown: skills[0].cooldown,
@@ -965,6 +951,7 @@ function skillButtons(unit: Unit | undefined): DuelSkillView[] {
     },
     {
       index: 1,
+      id: skills[1].id,
       name: skills[1].name,
       mana: skills[1].mana,
       cooldown: skills[1].cooldown,

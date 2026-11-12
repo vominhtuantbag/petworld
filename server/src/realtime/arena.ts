@@ -20,8 +20,15 @@ import type {
   QueueView,
 } from './protocol.js';
 import { advancedAtLevel } from '../combat/advanced.js';
-import { arenaSkills, professionFromAvatar, type ClassSkillCard } from '../combat/classSkills.js';
-import { strike } from '../combat/rules.js';
+import { arenaHeroKit, professionFromAvatar } from '../combat/classSkills.js';
+import {
+  applyOwnerMastery,
+  petLoadoutSkills,
+  resolveDuelAction,
+  statusViewOf,
+  type DuelCombatUnit,
+} from '@game/combat/duelBridge.js';
+import type { Skill } from '@game/combat/model.js';
 import { statsForRecord } from '../combat/stats.js';
 import type { MatchHistoryEntry } from '../domain.js';
 import { applyStarResult, mmrBand, mmrClose, normalizeRank, rankTitle } from './ranks.js';
@@ -47,35 +54,15 @@ const AI_FALLBACK_MIN_MS = 13_000;
 const AI_FALLBACK_MAX_MS = 25_000;
 const BOT_THINK_MS = 700;
 
-type Fighter = Omit<FighterView, 'hp' | 'ready'> & { attack: number; defense: number };
-
-type SkillCard = ClassSkillCard;
-
-type CombatUnit = {
-  id: string;
-  ownerId: string;
-  name: string;
-  kind: 'hero' | 'pet';
-  level: number;
-  hp: number;
-  maxHp: number;
-  mp: number;
-  maxMp: number;
+type Fighter = Omit<FighterView, 'hp' | 'ready'> & {
   attack: number;
   defense: number;
-  speed: number;
+  heroSkills?: { professionId: string; basicId: string; skillIds: string[] } | null;
+};
+
+type CombatUnit = DuelCombatUnit & {
+  kind: 'hero' | 'pet';
   initiative: boolean;
-  skills: [SkillCard, SkillCard];
-  cooldowns: Record<string, number>;
-  tgh: number;
-  maxTgh: number;
-  armPen: number;
-  res: number;
-  critRate: number;
-  critDamage: number;
-  eva: number;
-  acc: number;
-  staggered?: boolean;
 };
 
 type SeriesState = {
@@ -385,10 +372,38 @@ export class Arena {
       console.warn(`[arena] duel refused, fighter missing left=${Boolean(left)} right=${Boolean(right)}`);
       return false;
     }
-    left.pets = pets.get(leftId) ?? [];
-    right.pets = pets.get(rightId) ?? [];
+    left.pets = await this.enrichDuelPets(leftId, pets.get(leftId) ?? []);
+    right.pets = await this.enrichDuelPets(rightId, pets.get(rightId) ?? []);
     this.openRoom(left, right, { ranked: false });
     return true;
+  }
+
+  /** Merge client squad picks with adventure save so PvP uses the same kindId/skill loadout as PvE. */
+  private async enrichDuelPets(userId: string, pets: DuelPet[]): Promise<DuelPet[]> {
+    if (pets.length === 0) return [];
+    const save = await this.store.findAdventure(realAccountId(userId));
+    const roster = save?.roster ?? [];
+    return pets.map((pet) => {
+      const row =
+        (pet.id ? roster.find((entry) => entry.id === pet.id) : undefined) ??
+        roster.find((entry) => entry.name === pet.name && (!pet.kindId || entry.kindId === pet.kindId));
+      if (!row) return pet;
+      return {
+        id: row.id,
+        name: pet.name || row.name,
+        level: clampStat(pet.level || row.level, 1, 200),
+        hp: clampStat(pet.hp, 0, 99_999),
+        maxHp: clampStat(pet.maxHp || row.maxHp, 1, 99_999),
+        kindId: row.kindId || pet.kindId,
+        basicId: row.basicId ?? pet.basicId,
+        skillIds: row.skillIds ?? pet.skillIds,
+        attack: row.attack ?? pet.attack,
+        defense: row.defense ?? pet.defense,
+        speed: row.speed ?? pet.speed,
+        mp: row.mp ?? pet.mp,
+        maxMp: row.maxMp ?? pet.maxMp,
+      };
+    });
   }
 
   private async joinQueue(socket: Socket) {
@@ -571,6 +586,8 @@ export class Arena {
       if (!user || !character) continue;
       const fighter = toFighter(user, character);
       fighter.userId = `ai:${pick.userId}`;
+      const save = await this.store.findAdventure(pick.userId);
+      fighter.heroSkills = save?.world?.heroSkills ?? null;
       const roster = await this.rosterFor(pick.userId);
       const standIn = {
         fighter,
@@ -766,7 +783,10 @@ export class Arena {
     const character = user ? await this.store.findCharacterByUserId(userId) : null;
     if (user && character) {
       try {
-        return toFighter(user, character);
+        const fighter = toFighter(user, character);
+        const save = await this.store.findAdventure(realAccountId(userId));
+        fighter.heroSkills = save?.world?.heroSkills ?? null;
+        return fighter;
       } catch (error) {
         console.warn(`[arena] character for ${userId} could not be read`, error);
       }
@@ -839,7 +859,7 @@ export class Arena {
       socket.emit('battle:error', { message: 'Không có trận đấu đang mở.' });
       return;
     }
-    if (action !== 'attack' && action !== 'skill') {
+    if (action !== 'attack' && action !== 'skill' && action !== 'defend') {
       socket.emit('battle:error', { message: 'Đòn đánh không hợp lệ.' });
       return;
     }
@@ -883,7 +903,7 @@ export class Arena {
         continue;
       }
       const actor = room.units.find((unit) => unit.id === room.turnId);
-      if (actor && isSynthetic(actor.ownerId) && !room.resolving) {
+      if (actor && actor.ownerId && isSynthetic(actor.ownerId) && !room.resolving) {
         const elapsed = TURN_MS - (room.deadline - now);
         if (elapsed >= BOT_THINK_MS) {
           const foes = room.units.filter((unit) => unit.ownerId !== actor.ownerId && unit.hp > 0);
@@ -900,7 +920,7 @@ export class Arena {
   }
 
   /** Resolves the acting unit now. A confirm and a timeout both come through here. */
-  private async playTurn(room: Room, action: 'attack' | 'skill', skillIndex: 0 | 1, targetId: string | undefined) {
+  private async playTurn(room: Room, action: 'attack' | 'skill' | 'defend', skillIndex: 0 | 1, targetId: string | undefined) {
     if (room.status !== 'active' || room.resolving) return;
     room.resolving = true;
     const actor = room.units.find((unit) => unit.id === room.turnId && unit.hp > 0);
@@ -910,93 +930,16 @@ export class Arena {
       this.emitRoom(room);
       return;
     }
-    if (actor.staggered) {
-      actor.staggered = false;
-      room.log.push(`${actor.name} gục ngã và bỏ lượt (−50% DEF hết).`);
-      this.advance(room);
-      room.resolving = false;
-      this.emitRoom(room);
-      return;
-    }
     const foes = room.units.filter((unit) => unit.ownerId !== actor.ownerId && unit.hp > 0);
-    const target = foes.find((unit) => unit.id === targetId) ?? foes[0];
-    if (!target) {
+    if (action !== 'defend' && foes.length === 0) {
       await this.closeBout(room, actor.ownerId);
       return;
     }
-    // Tick this actor's skill cooldowns at the start of their action.
-    for (const [id, value] of Object.entries(actor.cooldowns ?? {})) {
-      actor.cooldowns[id] = Math.max(0, value - 1);
-    }
-    const skill = action === 'skill' ? actor.skills[skillIndex] ?? actor.skills[0] : null;
-    if (skill && action === 'skill') {
-      const wait = actor.cooldowns[skill.id] ?? 0;
-      if (wait > 0) {
-        room.log.push(`${actor.name} không thể dùng ${skill.name} (CD ${wait}).`);
-        this.advance(room);
-        room.resolving = false;
-        this.emitRoom(room);
-        return;
-      }
-      if (actor.mp < (skill.mana || 0)) {
-        room.log.push(`${actor.name} thiếu mana cho ${skill.name}.`);
-        this.advance(room);
-        room.resolving = false;
-        this.emitRoom(room);
-        return;
-      }
-      actor.mp = Math.max(0, actor.mp - (skill.mana || 0));
-      if (skill.cooldown > 0) actor.cooldowns[skill.id] = skill.cooldown;
-    }
-    const result = strike(
-      {
-        name: actor.name,
-        attack: actor.attack,
-        defense: actor.defense,
-        level: actor.level,
-        armPen: actor.armPen,
-        res: actor.res,
-        critRate: actor.critRate,
-        critDamage: actor.critDamage,
-        eva: actor.eva,
-        acc: actor.acc,
-        tgh: actor.tgh,
-        maxTgh: actor.maxTgh,
-        staggered: actor.staggered,
-      },
-      {
-        name: target.name,
-        attack: target.attack,
-        defense: target.defense,
-        level: target.level,
-        armPen: target.armPen,
-        res: target.res,
-        critRate: target.critRate,
-        critDamage: target.critDamage,
-        eva: target.eva,
-        acc: target.acc,
-        tgh: target.tgh,
-        maxTgh: target.maxTgh,
-        staggered: target.staggered,
-      },
-      action,
-      'attack',
-      Math.random,
-      skill ? { power: skill.power, skillName: skill.name } : undefined,
-    );
-    target.hp = Math.max(0, target.hp - (result.damage || 0));
-    target.tgh = result.tgh;
-    target.maxTgh = result.maxTgh;
-    if (result.staggered) target.staggered = true;
-    room.log.push(result.text);
-    room.lastHit = {
-      attackerId: actor.id,
-      targetId: target.id,
-      damage: result.damage || 0,
-      crit: Boolean(result.crit),
-      miss: Boolean(result.miss || result.dodged),
-      skillName: skill?.name,
-    };
+
+    const resolved = resolveDuelAction(room.units, actor.id, action, skillIndex, targetId);
+    room.units = resolved.units as CombatUnit[];
+    if (resolved.log) room.log.push(resolved.log);
+    room.lastHit = resolved.lastHit;
 
     const owners = [...new Set(room.units.map((unit) => unit.ownerId))];
     const livingOwners = owners.filter((id) => room.units.some((unit) => unit.ownerId === id && unit.hp > 0));
@@ -1420,6 +1363,13 @@ function petsFromSave(save: GameSave | null): DraftPetView[] {
       level: pet.level,
       hp: pet.maxHp,
       maxHp: pet.maxHp,
+      basicId: pet.basicId,
+      skillIds: pet.skillIds,
+      attack: pet.attack,
+      defense: pet.defense,
+      speed: pet.speed,
+      mp: pet.mp,
+      maxMp: pet.maxMp,
     }));
 }
 
@@ -1448,7 +1398,23 @@ function resolveSide(draft: Draft, side: 'left' | 'right'): DuelPet[] {
     .flatMap((id) => {
       const pet = own.find((entry) => entry.id === id);
       if (!pet) return [];
-      return [{ id: pet.id, name: pet.name, level: pet.level, hp: pet.hp, maxHp: pet.maxHp }];
+      return [
+        {
+          id: pet.id,
+          name: pet.name,
+          level: pet.level,
+          hp: pet.hp,
+          maxHp: pet.maxHp,
+          kindId: pet.kindId,
+          basicId: pet.basicId,
+          skillIds: pet.skillIds,
+          attack: pet.attack,
+          defense: pet.defense,
+          speed: pet.speed,
+          mp: pet.mp,
+          maxMp: pet.maxMp,
+        },
+      ];
     });
 }
 
@@ -1514,8 +1480,9 @@ function unitsFor(fighter: Fighter): CombatUnit[] {
   const level = fighter.level;
   const maxMp = Math.max(10, level * 8);
   const heroAdv = advancedAtLevel(level, 'hero');
-  const profession = professionFromAvatar(fighter.baseAvatarId);
-  const [skillA, skillB] = arenaSkills(profession);
+  // Prefer the saved PvE profession/loadout so Arena matches adventure skills.
+  const profession = fighter.heroSkills?.professionId || professionFromAvatar(fighter.baseAvatarId);
+  const kit = arenaHeroKit(profession, fighter.heroSkills, fighter.name);
   const hero: CombatUnit = {
     id: fighter.userId,
     ownerId: fighter.userId,
@@ -1530,7 +1497,9 @@ function unitsFor(fighter: Fighter): CombatUnit[] {
     defense: fighter.defense,
     speed: 90 + Math.max(0, level - 1),
     initiative: true,
-    skills: [skillA, skillB],
+    element: kit.element,
+    basic: kit.basic,
+    skills: kit.skills,
     cooldowns: {},
     tgh: heroAdv.maxTgh,
     maxTgh: heroAdv.maxTgh,
@@ -1540,32 +1509,38 @@ function unitsFor(fighter: Fighter): CombatUnit[] {
     critDamage: heroAdv.critDamage,
     eva: heroAdv.eva,
     acc: heroAdv.acc,
+    statuses: [],
+    mods: [],
+    shieldHp: 0,
   };
   const pets = (fighter.pets ?? []).slice(0, 3).flatMap((pet, index) => {
     const petLevel = clampStat(pet.level, 1, 200);
     const petMax = clampStat(pet.maxHp, 1, 99999);
     const hp = clampStat(Math.min(pet.hp, petMax), 0, petMax);
     if (hp <= 0) return [];
-    const petMp = Math.max(8, petLevel * 4);
+    const kindId = pet.kindId || 'plains-rabbit';
+    const seed = pet.id || `${fighter.userId}:pet:${index}`;
+    const loadout = petLoadoutSkills(kindId, seed, { basicId: pet.basicId, skillIds: pet.skillIds });
+    const petMp = clampStat(pet.maxMp ?? Math.max(8, petLevel * 4), 1, 99999);
     const petAdv = advancedAtLevel(petLevel, 'pet');
     const card: CombatUnit = {
       id: `${fighter.userId}:pet:${index}`,
       ownerId: fighter.userId,
       name: pet.name || `Thú ${index + 1}`,
       kind: 'pet',
+      kindId,
       level: petLevel,
       hp,
       maxHp: petMax,
-      mp: petMp,
+      mp: clampStat(pet.mp ?? petMp, 0, petMp),
       maxMp: petMp,
-      attack: 6 + petLevel * 2,
-      defense: 3 + petLevel,
-      speed: 48 + petLevel,
+      attack: clampStat(pet.attack ?? 6 + petLevel * 2, 1, 99999),
+      defense: clampStat(pet.defense ?? 3 + petLevel, 0, 99999),
+      speed: clampStat(pet.speed ?? 48 + petLevel, 1, 9999),
       initiative: false,
-      skills: [
-        { id: `pet-skill-1-${index}`, name: 'Kỹ năng 1', mana: 4, power: 1.35, cooldown: 1 },
-        { id: `pet-skill-2-${index}`, name: 'Kỹ năng 2', mana: 6, power: 1.6, cooldown: 2 },
-      ],
+      element: loadout.element,
+      basic: loadout.basic,
+      skills: loadout.skills,
       cooldowns: {},
       tgh: petAdv.maxTgh,
       maxTgh: petAdv.maxTgh,
@@ -1575,10 +1550,14 @@ function unitsFor(fighter: Fighter): CombatUnit[] {
       critDamage: petAdv.critDamage,
       eva: petAdv.eva,
       acc: petAdv.acc,
+      statuses: [],
+      mods: [],
+      shieldHp: 0,
     };
     return [card];
   });
-  return [hero, ...pets];
+  const mastery = applyOwnerMastery([hero, ...pets], fighter.userId, profession) as CombatUnit[];
+  return mastery;
 }
 
 /** Round 1 pulls the fastest hero forward. Later rounds follow speed alone. */
@@ -1604,7 +1583,7 @@ function upcoming(order: readonly string[], turnId: string, units: readonly Comb
 function toUnitView(unit: CombatUnit, viewerId: string): DuelUnitView {
   return {
     id: unit.id,
-    ownerId: unit.ownerId,
+    ownerId: unit.ownerId ?? '',
     name: unit.name,
     kind: unit.kind,
     level: unit.level,
@@ -1619,18 +1598,30 @@ function toUnitView(unit: CombatUnit, viewerId: string): DuelUnitView {
     tgh: unit.tgh,
     maxTgh: unit.maxTgh,
     staggered: Boolean(unit.staggered),
+    kindId: unit.kindId,
+    element: unit.element,
+    shieldHp: unit.shieldHp ?? 0,
+    statuses: statusViewOf(unit),
   };
 }
 
 function skillButtons(unit: CombatUnit | undefined): DuelSkillView[] {
-  const skills = unit?.skills ?? [
-    { id: 'fallback-0', name: 'Kỹ năng 1', mana: 0, power: 1, cooldown: 0 },
-    { id: 'fallback-1', name: 'Kỹ năng 2', mana: 0, power: 1, cooldown: 0 },
-  ];
+  const fallback = {
+    id: 'fallback',
+    name: 'Kỹ năng',
+    mana: 0,
+    power: 1,
+    cooldown: 0,
+    blurb: '',
+    target: 'enemy' as const,
+    effects: [{ type: 'damage' as const, power: 1 }],
+  };
+  const skills: [Skill, Skill] = unit?.skills ?? [fallback, { ...fallback, id: 'fallback-1' }];
   const cds = unit?.cooldowns ?? {};
   return [
     {
       index: 0,
+      id: skills[0].id,
       name: skills[0].name,
       mana: skills[0].mana,
       cooldown: skills[0].cooldown,
@@ -1638,6 +1629,7 @@ function skillButtons(unit: CombatUnit | undefined): DuelSkillView[] {
     },
     {
       index: 1,
+      id: skills[1].id,
       name: skills[1].name,
       mana: skills[1].mana,
       cooldown: skills[1].cooldown,

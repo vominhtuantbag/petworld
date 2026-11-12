@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Line, Path, Polygon, Rect } from 'react-native-svg';
 
 import {
@@ -30,21 +31,58 @@ export function StatusIcons({ fighter, size = 16, max = 6 }: Props) {
 function StatusPlate({ entry, size }: { entry: DisplayStatus; size: number }) {
   const { visual } = entry.def;
   const turns = entry.turns >= 90 ? '∞' : String(entry.turns);
+  const scale = useRef(new Animated.Value(0)).current;
+  const flash = useRef(new Animated.Value(1)).current;
+  const blink = useRef(new Animated.Value(1)).current;
+  const expiring = entry.turns === 1;
+
+  useEffect(() => {
+    scale.setValue(0);
+    flash.setValue(1);
+    const pop = Animated.parallel([
+      Animated.sequence([
+        Animated.spring(scale, { toValue: 1.3, friction: 4, tension: 180, useNativeDriver: true }),
+        Animated.spring(scale, { toValue: 1, friction: 6, tension: 160, useNativeDriver: true }),
+      ]),
+      Animated.timing(flash, { toValue: 0, duration: 280, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+    ]);
+    pop.start();
+    return () => pop.stop();
+  }, [flash, scale]);
+
+  useEffect(() => {
+    if (!expiring) {
+      blink.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(blink, { toValue: 0.35, duration: 320, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(blink, { toValue: 1, duration: 320, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [blink, expiring]);
+
   return (
-    <View
+    <Animated.View
       style={[
         styles.plate,
         {
           width: size + 4,
           height: size + 8,
           backgroundColor: visual.tint,
-          borderColor: visual.accent,
+          borderColor: expiring ? '#ffe082' : visual.accent,
+          opacity: blink,
+          transform: [{ scale }],
         },
       ]}
     >
       <StatusIconArt art={visual.art} accent={visual.accent} size={size} />
       <Text style={[styles.turns, { color: visual.accent, fontSize: Math.max(7, Math.round(size * 0.55)) }]}>{turns}</Text>
-    </View>
+      <Animated.View pointerEvents="none" style={[styles.sparkle, { opacity: flash }]} />
+    </Animated.View>
   );
 }
 
@@ -285,6 +323,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 2,
     maxWidth: 96,
+    marginBottom: 2,
   },
   plate: {
     borderRadius: 4,
@@ -298,5 +337,9 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     lineHeight: 9,
     marginTop: -1,
+  },
+  sparkle: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(255,255,255,0.55)',
   },
 });

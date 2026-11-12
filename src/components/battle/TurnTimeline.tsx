@@ -87,9 +87,10 @@ export function TurnTimeline({ ids, activeId, size, renderFace }: Props) {
   const faces = [...ids, ...leaving.filter((id) => !ids.includes(id))];
   const width = Math.max(faces.length, 1) * stride - GAP;
 
+  const pad = Math.round(size * 0.12);
   return (
-    <View style={[styles.track, { height: size }]} testID="turn-timeline">
-      <View style={{ width: Math.max(width, size), height: size }}>
+    <View style={[styles.track, { height: size + pad * 2 }]} testID="turn-timeline">
+      <View style={{ width: Math.max(width, size), height: size + pad * 2 }}>
         {faces.map((id) => {
           const x = positions.current.get(id);
           if (!x) return null;
@@ -101,7 +102,16 @@ export function TurnTimeline({ ids, activeId, size, renderFace }: Props) {
               key={id}
               pointerEvents="none"
               testID={index === 0 ? 'turn-now' : index === 1 ? 'turn-next' : `turn-later-${id}`}
-              style={[styles.slot, { width: size, height: size, zIndex: role === 'now' ? 3 : 1, transform: [{ translateX: x }] }]}
+              style={[
+                styles.slot,
+                {
+                  width: size,
+                  height: size,
+                  top: pad,
+                  zIndex: role === 'now' ? 5 : 1,
+                  transform: [{ translateX: x }],
+                },
+              ]}
             >
               {renderFace(id, role)}
             </Animated.View>
@@ -113,6 +123,12 @@ export function TurnTimeline({ ids, activeId, size, renderFace }: Props) {
 }
 
 const styles = StyleSheet.create({
-  track: { flex: 1, minWidth: 0, overflow: 'hidden', alignItems: 'flex-end', justifyContent: 'center', marginLeft: 12 },
-  slot: { position: 'absolute', left: 0, top: 0 },
+  track: {
+    width: '100%',
+    minWidth: 0,
+    overflow: 'visible',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  slot: { position: 'absolute', left: 0, alignItems: 'center', justifyContent: 'center' },
 });

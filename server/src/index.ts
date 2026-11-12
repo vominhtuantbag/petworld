@@ -41,7 +41,7 @@ export async function startServer(port = config.port) {
   arena.attach();
   const world = new WorldPresence(io);
   world.attach();
-  const raids = new DungeonRaids(io, world, arena);
+  const raids = new DungeonRaids(io, world, arena, store);
   raids.attach();
   arena.blockQueue((userId) => raids.engaged(userId));
   new ProximityDuels(io, world, arena, (userId) => raids.engaged(userId)).attach();

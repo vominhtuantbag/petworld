@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { Animated, Image, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FloatingCombatText } from '../components/battle/FloatingCombatText';
 import { GestureActionButton } from '../components/battle/GestureActionButton';
+import { useCombatJuice } from '../components/battle/JuiceOverlay';
 import { QuickTargetStrip } from '../components/battle/QuickTargetStrip';
 import { TurnTimeline } from '../components/battle/TurnTimeline';
 import { BATTLE_GRID_POSITIONS, feetInView } from '../components/battle/courtSlots';
 import { RankStars } from '../components/arena/RankStars';
 import { CharacterAvatar } from '../components/CharacterAvatar';
+import { BattleInfoPanel } from '../components/battle/BattleInfoPanel';
 import { CourtUnit, RoundButton, TimelineFace, styles as court, timelineFaceSize, type CourtActor } from '../components/battle/courtChrome';
 import { getCharacter } from '../data/characters';
 import { useQuickTarget } from '../hooks/useQuickTarget';
 import { useSocketCombatFx } from '../hooks/useSocketCombatFx';
 import { combatSfx } from '../world/combat/combatSfx';
+import { heroTraits } from '../world/combat/kits';
 import type { DuelUnitView } from '../net/protocol';
 import { useBattle } from '../state/BattleContext';
 import { theme } from '../theme/theme';
@@ -37,6 +40,7 @@ export function ArenaScreen() {
   const snapshot = battle.battle;
   const { s, font } = useLayout();
   const insets = useSafeAreaInsets();
+  const juice = useCombatJuice();
   const [screen, setScreen] = useState({ w: 0, h: 0 });
   const [stageBox, setStageBox] = useState({ x: 0, y: 0 });
   const [now, setNow] = useState(Date.now());
@@ -77,7 +81,7 @@ export function ArenaScreen() {
   const foeHero = units.find((unit) => unit.side === 'opponent' && unit.kind === 'hero') ?? null;
   const yourPets = units.filter((unit) => unit.side === 'you' && unit.kind === 'pet').slice(0, 3);
   const foePets = units.filter((unit) => unit.side === 'opponent' && unit.kind === 'pet').slice(0, 3);
-  const cast = units.map(toCourt);
+  const cast = units.map((unit) => toCourt(unit));
   const foes = units.filter((unit) => unit.side === 'opponent' && unit.hp > 0);
   const focus = foes.find((unit) => unit.id === focusId) ?? foes[0] ?? null;
   const finishedEarly = snapshot?.status === 'finished';
@@ -120,13 +124,31 @@ export function ArenaScreen() {
   const actor = units.find((unit) => unit.id === snapshot.turnId) ?? null;
   const queued = snapshot.queue ?? [];
   const turnQueue = queued.length > 0 ? queued : cast.filter((unit) => unit.hp > 0).map((unit) => unit.id);
-  const faceSize = timelineFaceSize(screen.w, insets.left, insets.right, turnQueue.length, s(30), s(72) + s(78) + 36);
+  const faceSize = timelineFaceSize(screen.w, insets.left, insets.right, turnQueue.length, s(28), s(168) * 2 + 28);
   const foot = footMemo;
   const heroSize = s(118);
   const petSize = Math.round(s(64) * 0.8);
   const foeHeroSize = Math.round(petSize * 1.5);
   const youCharacter = getCharacter(snapshot.you.baseAvatarId);
   const foeCharacter = getCharacter(snapshot.opponent.baseAvatarId);
+  const youElement = heroTraits(youCharacter?.professionId).element;
+  const foeElement = heroTraits(foeCharacter?.professionId).element;
+  const unitElement = (unit: DuelUnitView) =>
+    unit.element ?? (unit.kind === 'hero' ? (unit.side === 'you' ? youElement : foeElement) : null);
+  const panelUnit = (unit: DuelUnitView | null) =>
+    unit
+      ? {
+          id: unit.id,
+          name: unit.name,
+          tint: unit.side === 'you' ? '#e4c27a' : foeTint(unit),
+          hp: unit.hp,
+          maxHp: unit.maxHp,
+          mp: unit.mp,
+          maxMp: unit.maxMp,
+          level: unit.level,
+          element: unitElement(unit),
+        }
+      : null;
   const skillCard1 = snapshot.skills?.[0];
   const skillCard2 = snapshot.skills?.[1];
   const skill1 = skillCard1?.name ?? 'Kỹ năng 1';
@@ -235,48 +257,88 @@ export function ArenaScreen() {
       <SafeAreaView style={court.frame} edges={['top', 'bottom', 'left', 'right']}>
         <View style={court.header}>
           <View style={court.headerLeft}>
-            <RoundButton label={finished ? 'Hết' : `${seconds}s`} hint="Thời gian lượt" onPress={() => undefined} size={s(36)} width={s(72)} font={font(12)} />
-            <RoundButton
-              label={snapshot.ranked ? `HIỆP ${snapshot.bout ?? 1}/3 · ${snapshot.boutScore?.you ?? 0}-${snapshot.boutScore?.opponent ?? 0}` : `Hiệp ${snapshot.round}`}
-              hint={snapshot.ranked ? 'Best of 3' : 'Hiệp đấu'}
-              onPress={() => undefined}
-              size={s(36)}
-              width={s(118)}
-              font={font(10)}
+            <BattleInfoPanel
+              title="Đang lượt"
+              side="left"
+              unit={panelUnit(actor)}
+              avatarSize={s(40)}
+              testID="info-active"
+              portrait={
+                actor?.kind === 'hero' && (actor.side === 'you' ? youCharacter : foeCharacter) ? (
+                  <CharacterAvatar
+                    character={(actor.side === 'you' ? youCharacter : foeCharacter)!}
+                    hairColor={actor.side === 'you' ? snapshot.you.hairColor : snapshot.opponent.hairColor}
+                    outfitColor={actor.side === 'you' ? snapshot.you.outfitColor : snapshot.opponent.outfitColor}
+                    size={s(38)}
+                  />
+                ) : undefined
+              }
             />
           </View>
-          <TurnTimeline
-            ids={turnQueue}
-            activeId={finished ? null : snapshot.turnId}
-            size={faceSize}
-            renderFace={(id, role) => {
-              const fighter = cast.find((entry) => entry.id === id);
-              if (!fighter) return null;
-              const face = portrait(id);
-              return (
-                <TimelineFace
-                  fighter={fighter}
-                  active={role === 'now'}
-                  role={role}
-                  size={faceSize}
-                  character={face.character}
-                  hairColor={face.hairColor}
-                  outfitColor={face.outfitColor}
-                />
-              );
-            }}
-          />
+          <View style={court.headerCenter}>
+            <TurnTimeline
+              ids={turnQueue}
+              activeId={finished ? null : snapshot.turnId}
+              size={faceSize}
+              renderFace={(id, role) => {
+                const fighter = cast.find((entry) => entry.id === id);
+                if (!fighter) return null;
+                const face = portrait(id);
+                return (
+                  <TimelineFace
+                    fighter={fighter}
+                    active={role === 'now'}
+                    role={role}
+                    size={faceSize}
+                    character={face.character}
+                    hairColor={face.hairColor}
+                    outfitColor={face.outfitColor}
+                  />
+                );
+              }}
+            />
+            <View style={court.headerControls}>
+              <RoundButton label={finished ? 'Hết' : `${seconds}s`} hint="Thời gian lượt" onPress={() => undefined} size={s(32)} width={s(64)} font={font(11)} />
+              <RoundButton
+                label={snapshot.ranked ? `HIỆP ${snapshot.bout ?? 1}/3 · ${snapshot.boutScore?.you ?? 0}-${snapshot.boutScore?.opponent ?? 0}` : `Hiệp ${snapshot.round}`}
+                hint={snapshot.ranked ? 'Best of 3' : 'Hiệp đấu'}
+                onPress={() => undefined}
+                size={s(32)}
+                width={s(110)}
+                font={font(10)}
+              />
+            </View>
+          </View>
+          <View style={court.headerRight}>
+            <BattleInfoPanel
+              title="Mục tiêu"
+              side="right"
+              unit={panelUnit(focus)}
+              avatarSize={s(40)}
+              testID="info-target"
+              portrait={
+                focus?.kind === 'hero' && foeCharacter ? (
+                  <CharacterAvatar
+                    character={foeCharacter}
+                    hairColor={snapshot.opponent.hairColor}
+                    outfitColor={snapshot.opponent.outfitColor}
+                    size={s(38)}
+                  />
+                ) : undefined
+              }
+            />
+          </View>
         </View>
 
-        <View
-          style={court.stage}
+        <Animated.View
+          style={[court.stage, juice.stageStyle]}
           onLayout={(event) => {
             const { x, y } = event.nativeEvent.layout;
             setStageBox((current) => (current.x === x && current.y === y ? current : { x, y }));
           }}
         >
           <CourtUnit
-            fighter={toCourt(youHero)}
+            fighter={toCourt(youHero, youElement)}
             slot={foot(BATTLE_GRID_POSITIONS.player)}
             active={snapshot.turnId === youHero.id}
             face="right"
@@ -308,7 +370,7 @@ export function ArenaScreen() {
             />
           ))}
           <CourtUnit
-            fighter={toCourt(foeHero)}
+            fighter={toCourt(foeHero, foeElement)}
             slot={foot('G28')}
             active={snapshot.turnId === foeHero.id}
             targeted={focus?.id === foeHero.id && foeHero.hp > 0}
@@ -356,6 +418,7 @@ export function ArenaScreen() {
                 kind={note.kind}
                 x={anchor.x + (index - (stack.length - 1) / 2) * 16}
                 y={anchor.y}
+                onImpact={juice.trigger}
                 onDone={() => dismissFloat(note.id)}
               />
             );
@@ -363,7 +426,8 @@ export function ArenaScreen() {
           <Text style={[court.log, { fontSize: font(11) }]} numberOfLines={1}>
             {log}
           </Text>
-        </View>
+        </Animated.View>
+        {juice.overlay}
 
         <View style={court.dock}>
           <View style={court.targets}>
@@ -461,7 +525,7 @@ export function ArenaScreen() {
   );
 }
 
-function toCourt(unit: DuelUnitView): CourtActor {
+function toCourt(unit: DuelUnitView, element?: string | null): CourtActor {
   return {
     id: unit.id,
     name: unit.name,
@@ -473,6 +537,15 @@ function toCourt(unit: DuelUnitView): CourtActor {
     maxMp: unit.maxMp,
     attack: unit.attack,
     defense: unit.defense,
+    level: unit.level,
+    element: element ?? unit.element ?? null,
+    kindId: unit.kindId,
+    shieldHp: unit.shieldHp ?? 0,
+    statuses: (unit.statuses ?? []).map((entry) => ({
+      id: entry.id as import('../world/combat/advanced').StatusId,
+      turns: entry.turns,
+      power: entry.power,
+    })),
   };
 }
 

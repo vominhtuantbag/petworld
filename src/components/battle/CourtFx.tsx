@@ -2,6 +2,8 @@ import { Children, cloneElement, isValidElement, useEffect, useRef, useState, ty
 import { Animated, Easing, StyleSheet, View } from 'react-native';
 import Svg, { Path, Polygon } from 'react-native-svg';
 
+import { combatSfx } from '../../world/combat/combatSfx';
+
 export type Step = { key: number; x: number; y: number };
 export type Fate = { key: number; kind: 'tear' | 'heart' };
 
@@ -14,16 +16,20 @@ type Props = {
   /** Bumps when the slash has finished and the body should shudder. */
   shakeKey: number;
   fate: Fate | null;
+  /** Knockback sign away from the attacker (+1 right, -1 left). */
+  hitDir?: number;
 };
 
 /**
  * Short stance, then a 0.5s downward sword, then the impact shake.
  * A killing blow tears the body in half for 0.5s, then it stays gone.
  */
-export function CourtFx({ children, step, slashKey, shakeKey, fate }: Props) {
+export function CourtFx({ children, step, slashKey, shakeKey, fate, hitDir = 1 }: Props) {
   const shiftX = useRef(new Animated.Value(0)).current;
   const shiftY = useRef(new Animated.Value(0)).current;
   const shake = useRef(new Animated.Value(0)).current;
+  const recoil = useRef(new Animated.Value(0)).current;
+  const hitFlash = useRef(new Animated.Value(0)).current;
   const sword = useRef(new Animated.Value(0)).current;
   const tear = useRef(new Animated.Value(0)).current;
   const heart = useRef(new Animated.Value(0)).current;
@@ -31,6 +37,8 @@ export function CourtFx({ children, step, slashKey, shakeKey, fate }: Props) {
   const slashSeen = useRef(0);
   const shakeSeen = useRef(0);
   const fateSeen = useRef(0);
+  const hitDirRef = useRef(hitDir);
+  hitDirRef.current = hitDir;
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [torn, setTorn] = useState(false);
 
@@ -57,11 +65,25 @@ export function CourtFx({ children, step, slashKey, shakeKey, fate }: Props) {
   useEffect(() => {
     if (shakeKey === 0 || shakeKey === shakeSeen.current) return;
     shakeSeen.current = shakeKey;
+    combatSfx('hit');
     shake.setValue(0);
-    const motion = Animated.timing(shake, { toValue: 1, duration: 160, useNativeDriver: true });
+    recoil.setValue(0);
+    hitFlash.setValue(0);
+    const dir = hitDirRef.current >= 0 ? 1 : -1;
+    const motion = Animated.parallel([
+      Animated.timing(shake, { toValue: 1, duration: 160, useNativeDriver: true }),
+      Animated.sequence([
+        Animated.timing(recoil, { toValue: dir * 8, duration: 100, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.spring(recoil, { toValue: 0, friction: 5, tension: 180, useNativeDriver: true }),
+      ]),
+      Animated.sequence([
+        Animated.timing(hitFlash, { toValue: 0.55, duration: 50, useNativeDriver: true }),
+        Animated.timing(hitFlash, { toValue: 0, duration: 100, useNativeDriver: true }),
+      ]),
+    ]);
     motion.start();
     return () => motion.stop();
-  }, [shake, shakeKey]);
+  }, [hitFlash, recoil, shake, shakeKey]);
 
   useEffect(() => {
     if (!fate || fate.key === fateSeen.current) return;
@@ -102,8 +124,9 @@ export function CourtFx({ children, step, slashKey, shakeKey, fate }: Props) {
         setBox((current) => (current.w === nextW && current.h === nextH ? current : { w: nextW, h: nextH }));
       }}
     >
-      <Animated.View pointerEvents="box-none" style={[styles.fill, { transform: [{ translateX: shakeX }] }]}>
+      <Animated.View pointerEvents="box-none" style={[styles.fill, { transform: [{ translateX: Animated.add(shakeX, recoil) }] }]}>
         {body}
+        <Animated.View pointerEvents="none" style={[styles.hitFlash, { opacity: hitFlash }]} />
         {torn ? (
           <Animated.View pointerEvents="none" style={[styles.halves, { opacity: tearOpacity }]}>
             <Animated.View style={[styles.half, styles.leftHalf, { transform: [{ translateX: leftX }, { rotate: leftRot }] }]}>
@@ -161,4 +184,9 @@ const styles = StyleSheet.create({
   edgeLeft: { position: 'absolute', left: -4, top: 0, bottom: 0 },
   sword: { position: 'absolute', top: -6, zIndex: 6 },
   heart: { position: 'absolute', top: -28, zIndex: 5 },
+  hitFlash: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: '#EF4444',
+    zIndex: 8,
+  },
 });
