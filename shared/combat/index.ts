@@ -11,6 +11,7 @@ export * from './elements.js';
 export * from './executeCombatAction.js';
 export * from './faint.js';
 export * from './kits.js';
+export * from './locomotionTypes.js';
 export * from './model.js';
 export * from './petSkills.js';
 export * from './rng.js';

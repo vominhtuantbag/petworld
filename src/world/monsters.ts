@@ -18,10 +18,11 @@
  */
 
 import type { AdvancedInput, MonsterCombatRole } from './combat/advanced';
+import { locomotionTypeOf, type LocomotionType } from './combat/petSkills';
 
 export const MAP1_ROSTER_VERSION = 2;
 
-export type { MonsterCombatRole };
+export type { MonsterCombatRole, LocomotionType };
 
 export type MonsterSpecies = {
   id: string;
@@ -41,9 +42,14 @@ export type MonsterSpecies = {
   advanced?: AdvancedInput;
   /** Expansion elites only. Town species use `name`. */
   deepName?: string;
+  /**
+   * Biological locomotion for field + court animation.
+   * Defaults from the shared kind map when omitted.
+   */
+  locomotionType?: LocomotionType;
 };
 
-type Tune = Partial<Pick<MonsterSpecies, 'hp' | 'attack' | 'defense' | 'agro' | 'speed'>> & {
+type Tune = Partial<Pick<MonsterSpecies, 'hp' | 'attack' | 'defense' | 'agro' | 'speed' | 'locomotionType'>> & {
   advanced?: AdvancedInput;
 };
 
@@ -76,6 +82,7 @@ function mob(
     agro: body.agro + (tune.agro ?? 0),
     speed: body.speed + (tune.speed ?? 0),
     advanced: tune.advanced,
+    locomotionType: tune.locomotionType ?? locomotionTypeOf(id),
   };
 }
 

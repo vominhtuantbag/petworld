@@ -8,7 +8,14 @@ import { FloatingCombatText } from '../components/battle/FloatingCombatText';
 import { useCombatJuice } from '../components/battle/JuiceOverlay';
 import { TamingMiniGameModal } from '../components/battle/TamingMiniGameModal';
 import { TurnTimeline, type TimelineRole } from '../components/battle/TurnTimeline';
-import { BATTLE_GRID_POSITIONS, feetInView } from '../components/battle/courtSlots';
+import {
+  BATTLE_GRID_POSITIONS,
+  ENEMY_UNIT_CELLS,
+  PLAYER_PET_CELLS,
+  allySpawnCell,
+  enemySpawnCell,
+  feetInView,
+} from '../components/battle/courtSlots';
 import { BattleInfoPanel } from '../components/battle/BattleInfoPanel';
 import { CourtUnit, FaceArt, RoundButton, TimelineFace, styles, timelineFaceSize } from '../components/battle/courtChrome';
 import { GestureActionButton } from '../components/battle/GestureActionButton';
@@ -58,9 +65,8 @@ const ARENA = require('../../assets/images/sandau_2.jpg');
 type Beat = 'stance' | 'ready' | 'slash' | 'impact' | 'tear' | 'hold';
 
 /**
- * Isometric arena. The hero stands large on the left border. Squad pets 1–3
- * hold their cells on the left half. Three foes use the right-hand group;
- * a boar encounter fills the six-boar pack. Feet stay on the cell center.
+ * Isometric arena. NV1 (hero) at L3; ally pets on P1–P5; foes on Q1–Q5.
+ * Same default spawn map as PvP / Arena / Raid. Feet stay on the cell center.
  */
 export function BattleScreen() {
   const world = useWorld();
@@ -72,7 +78,7 @@ export function BattleScreen() {
   const [screen, setScreen] = useState({ w: 0, h: 0 });
   const [stageBox, setStageBox] = useState({ x: 0, y: 0 });
   const foot = (cell: string) => feetInView(cell, screen.w, screen.h, insets.left + stageBox.x, insets.top + stageBox.y);
-  const petCells = [BATTLE_GRID_POSITIONS.pet1, BATTLE_GRID_POSITIONS.pet2, BATTLE_GRID_POSITIONS.pet3];
+  const petCells = [...PLAYER_PET_CELLS];
   const encounter = world.encounter;
   const character = getCharacter(setup.player?.baseCharacterId);
   const [pickedFoes, setPickedFoes] = useState<string[] | null>(null);
@@ -479,10 +485,8 @@ export function BattleScreen() {
     ? battle.allies
     : captured.filter((monster) => allyIds.includes(monster.id)).map(makeAlly);
   const shownFoes = battle ? battle.foes : cards.filter((card) => foeIds.includes(card.id)).map(makeWild);
-  const boarPack = shownFoes.length > 3;
-  const foeCells = boarPack
-    ? [BATTLE_GRID_POSITIONS.boar1, BATTLE_GRID_POSITIONS.boar2, BATTLE_GRID_POSITIONS.boar3, BATTLE_GRID_POSITIONS.boar4, BATTLE_GRID_POSITIONS.boar5, BATTLE_GRID_POSITIONS.boar6]
-    : [BATTLE_GRID_POSITIONS.enemy1, BATTLE_GRID_POSITIONS.enemy2, BATTLE_GRID_POSITIONS.enemy3];
+  const densePack = shownFoes.length > 3;
+  const foeCells = [...ENEMY_UNIT_CELLS];
 
   const finish = () => {
     if (!battle?.over) return;
@@ -907,9 +911,9 @@ export function BattleScreen() {
             active={Boolean(battle && battle.turnId === fighter.id)}
             targeted={battle ? focus?.id === fighter.id && fighter.hp > 0 : true}
             face="left"
-            size={Math.round((boarPack ? s(56) : s(64)) * 0.8)}
+            size={Math.round((densePack ? s(56) : s(64)) * 0.8)}
             statFont={font(10)}
-            barWidth={boarPack ? s(72) : s(86)}
+            barWidth={densePack ? s(72) : s(86)}
           front={foeCells[index] === BATTLE_GRID_POSITIONS.enemy3}
           step={steps[fighter.id] ?? null}
           slashKey={slashes[fighter.id] ?? 0}
@@ -929,7 +933,7 @@ export function BattleScreen() {
           />
         ))}
         {floats.map((note) => {
-          const anchor = floatAnchor(note.fighterId, player.id, shownAllies, shownFoes, foot, petCells, foeCells, s, boarPack);
+          const anchor = floatAnchor(note.fighterId, player.id, shownAllies, shownFoes, foot, petCells, foeCells, s, densePack);
           if (!anchor) return null;
           const stack = floats.filter((entry) => entry.fighterId === note.fighterId);
           const index = stack.findIndex((entry) => entry.id === note.id);
@@ -1202,7 +1206,7 @@ function floatAnchor(
   petCells: string[],
   foeCells: string[],
   s: (value: number) => number,
-  boarPack: boolean,
+  densePack: boolean,
 ): { x: number; y: number } | null {
   if (fighterId === playerId) {
     const slot = foot(BATTLE_GRID_POSITIONS.player);
@@ -1217,7 +1221,7 @@ function floatAnchor(
   const foeIndex = foes.findIndex((fighter) => fighter.id === fighterId);
   if (foeIndex >= 0) {
     const slot = foot(foeCells[foeIndex] ?? foeCells[0]);
-    const size = Math.round((boarPack ? s(56) : s(64)) * 0.8);
+    const size = Math.round((densePack ? s(56) : s(64)) * 0.8);
     return { x: slot.x, y: slot.y - size - s(32) };
   }
   return null;
@@ -1299,24 +1303,10 @@ function lostHp(before: BattleState, after: BattleState): { id: string; hp: numb
 function battleCell(id: string, state: BattleState): string | null {
   if (id === state.player.id) return BATTLE_GRID_POSITIONS.player;
   const allyIndex = state.allies.findIndex((entry) => entry.id === id);
-  if (allyIndex >= 0) {
-    const cells = [BATTLE_GRID_POSITIONS.pet1, BATTLE_GRID_POSITIONS.pet2, BATTLE_GRID_POSITIONS.pet3];
-    return cells[allyIndex] ?? cells[0];
-  }
+  if (allyIndex >= 0) return allySpawnCell(allyIndex);
   const foeIndex = state.foes.findIndex((entry) => entry.id === id);
   if (foeIndex < 0) return null;
-  const cells =
-    state.foes.length > 3
-      ? [
-          BATTLE_GRID_POSITIONS.boar1,
-          BATTLE_GRID_POSITIONS.boar2,
-          BATTLE_GRID_POSITIONS.boar3,
-          BATTLE_GRID_POSITIONS.boar4,
-          BATTLE_GRID_POSITIONS.boar5,
-          BATTLE_GRID_POSITIONS.boar6,
-        ]
-      : [BATTLE_GRID_POSITIONS.enemy1, BATTLE_GRID_POSITIONS.enemy2, BATTLE_GRID_POSITIONS.enemy3];
-  return cells[foeIndex] ?? cells[0];
+  return enemySpawnCell(foeIndex);
 }
 
 function countNets(bag: { itemId?: string; qty?: number }[] | null | undefined): number {

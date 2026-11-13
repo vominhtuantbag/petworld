@@ -3,9 +3,24 @@
  * Skill Modal equips 1 of the 2 basics; biome skills stay separate.
  */
 
+import {
+  kitIdForLocomotionType,
+  locomotionTypeOf,
+  locomotionTypeTitle,
+  type LocomotionType,
+} from './locomotionTypes.js';
 import type { Skill, SkillEffect } from './model.js';
 
 export type LocomotionId = 'quadruped' | 'biped' | 'leaping' | 'crawling' | 'swimming' | 'flying';
+
+export type { LocomotionType };
+export {
+  LOCOMOTION_TYPES,
+  LOCOMOTION_TYPE_TITLE,
+  locomotionTypeOf,
+  locomotionTypeTitle,
+  kitIdForLocomotionType,
+} from './locomotionTypes.js';
 
 export type LocomotionKit = { basics: [Skill, Skill] };
 
@@ -184,25 +199,16 @@ export const LOCOMOTION_TITLE: Record<LocomotionId, string> = {
 };
 
 /**
- * Combat locomotion for a species id. Field gait is a separate animation map;
- * this grouping covers every Map-1 body so each pet has a two-basic kit.
+ * Combat kit bucket for a species. Biological animation uses `locomotionTypeOf`;
+ * kits stay on the six coarser groups so existing basics keep working.
  */
-export function locomotionOf(kindId: string): LocomotionId {
-  const id = kindId ?? '';
-  if (/frog|toad/.test(id)) return 'leaping';
-  if (/falcon|eagle|owl|heron|toucan|macaw|seagull|ostrich|secretary|penguin|phoenix/.test(id)) return 'flying';
-  if (/fish|whale|shark|seal|orca|manta|octopus|jelly|seahorse|moray|tang|clown|walrus|oyster|starfish/.test(id)) {
-    return 'swimming';
-  }
-  if (
-    /snake|lizard|alligator|crocodile|turtle|salamander|slug|gila|anaconda|tortoise|snail|crab|scorpion|spider|beetle|mosquito|dragonfly|butterfly|crayfish|tarantula|hermit/.test(
-      id,
-    )
-  ) {
-    return 'crawling';
-  }
-  if (/shade|chaos|warden|shard|void|golem/.test(id)) return 'biped';
-  return 'quadruped';
+export function locomotionOf(kindId: string, locomotionType?: LocomotionType | string | null): LocomotionId {
+  return kitIdForLocomotionType(locomotionTypeOf({ kindId, locomotionType }));
+}
+
+/** Vietnamese label for the biological locomotion type (UI). */
+export function biologicalLocomotionTitle(kindId: string, locomotionType?: LocomotionType | string | null): string {
+  return locomotionTypeTitle(locomotionTypeOf({ kindId, locomotionType }));
 }
 
 export function locomotionKit(kindId: string): LocomotionKit {

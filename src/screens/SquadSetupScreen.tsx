@@ -3,6 +3,7 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AdvancedStatsGrid } from '../components/combat/AdvancedStatsGrid';
+import { monsterInitials } from '../components/world/monsterArt';
 import { monsterPortrait } from '../components/world/MonsterToken';
 import { getCharacter } from '../data/characters';
 import type { DuelPet } from '../net/protocol';
@@ -293,7 +294,7 @@ function PetFace({ kindId, name, tint }: { kindId: string; name: string; tint: s
       {art ? (
         <Image accessibilityLabel={name} source={art.source} resizeMode="contain" style={styles.faceImage} />
       ) : (
-        <Text style={styles.faceLetter}>{name.slice(0, 1)}</Text>
+        <Text style={styles.faceLetter}>{monsterInitials(name)}</Text>
       )}
     </View>
   );

@@ -1,6 +1,7 @@
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { AdvancedStatsGrid } from '../combat/AdvancedStatsGrid';
+import { monsterInitials } from '../world/monsterArt';
 import { monsterPortrait } from '../world/MonsterToken';
 import { useWorld } from '../../state/WorldContext';
 import { theme } from '../../theme/theme';
@@ -64,7 +65,7 @@ function SpeciesCard({ entry, caught, seen, font }: { entry: CollectionSpecies; 
         {art ? (
           <Image accessibilityLabel={entry.name} source={art.source} resizeMode="contain" style={styles.image} />
         ) : (
-          <Text style={[styles.letter, { fontSize: font(16) }]}>{entry.name.slice(0, 1)}</Text>
+          <Text style={[styles.letter, { fontSize: font(16) }]}>{monsterInitials(entry.name)}</Text>
         )}
       </View>
       <View style={styles.body}>
@@ -101,7 +102,7 @@ function Card({ monster, font }: { monster: TamedMonster; font: (size: number) =
         {art ? (
           <Image accessibilityLabel={monster.name} source={art.source} resizeMode="contain" style={styles.image} />
         ) : (
-          <Text style={[styles.letter, { fontSize: font(16) }]}>{monster.name.slice(0, 1)}</Text>
+          <Text style={[styles.letter, { fontSize: font(16) }]}>{monsterInitials(monster.name)}</Text>
         )}
       </View>
       <View style={styles.body}>

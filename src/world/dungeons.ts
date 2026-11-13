@@ -1,3 +1,8 @@
+import {
+  RAID_ADD_SPAWN_CELLS,
+  RAID_BOSS_SPAWN_CELL,
+  RAID_PARTY_SPAWN_CELLS,
+} from '../components/battle/courtSlots';
 import { monsterStats } from './catalog';
 import { speciesById } from './monsters';
 import { expFromMonster } from './progression';
@@ -5,12 +10,13 @@ import type { Encounter, FieldState, ItemId, Sensor } from './types';
 import type { BattleDrop } from './combat';
 
 /**
- * Fixed raid court. Slot 0 is the first player through the gate.
- * The boss is drawn at twice the add size (`RAID_BOSS_SCALE`).
+ * Fixed raid court — same NV/P/Q spawn map as PvE/PvP/Arena.
+ * Slot 0 is the first player through the gate (NV1 / L3).
+ * The boss is drawn at twice the add size (`RAID_BOSS_SCALE`) on Q5.
  */
-export const RAID_PARTY_CELLS = ['L14', 'J11', 'G11', 'I8', 'L10'] as const;
-export const RAID_ADD_CELLS = ['J21', 'G19'] as const;
-export const RAID_BOSS_CELL = 'H23';
+export const RAID_PARTY_CELLS = RAID_PARTY_SPAWN_CELLS;
+export const RAID_ADD_CELLS = RAID_ADD_SPAWN_CELLS;
+export const RAID_BOSS_CELL = RAID_BOSS_SPAWN_CELL;
 export const RAID_BOSS_SCALE = 2;
 
 export const MINE_DAILY_LIMIT = 5;

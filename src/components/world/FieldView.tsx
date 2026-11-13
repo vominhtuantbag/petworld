@@ -105,7 +105,7 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
             y: monster.y + monster.r,
             node: (
               <View pointerEvents="none">
-                <MonsterToken monster={monster} />
+                <MonsterToken monster={monster} zoneId={field.zoneId} />
                 <Text style={[styles.actorLabel, { left: monster.x - 46, top: monster.y - monster.r - 28 }]}>
                   {monster.name} · cấp {monster.level}
                 </Text>
@@ -216,7 +216,7 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
                     style={{ position: 'absolute', left: 0, top: 0, zIndex: Math.round((monster.y + monster.r) * 10) }}
                   >
                     <View pointerEvents="none">
-                      <MonsterToken monster={monster} />
+                      <MonsterToken monster={monster} zoneId={field.zoneId} />
                       <Text style={[styles.actorLabel, { left: monster.x - 46, top: monster.y - monster.r - 28 }]}>
                         {monster.name} · cấp {monster.level}
                       </Text>

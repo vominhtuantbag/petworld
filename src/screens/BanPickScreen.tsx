@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RankStars } from '../components/arena/RankStars';
 import { CharacterAvatar } from '../components/CharacterAvatar';
 import { GlowButton } from '../components/GlowButton';
+import { monsterInitials } from '../components/world/monsterArt';
 import { monsterPortrait } from '../components/world/MonsterToken';
 import { getCharacter } from '../data/characters';
 import type { DraftPetView } from '../net/protocol';
@@ -230,7 +231,13 @@ function PetCard({
         { minHeight: s(44), opacity: disabled && !selected ? 0.45 : 1, borderColor: banned ? '#e7a3a3' : selected ? theme.gold : theme.line },
       ]}
     >
-      {art ? <Image source={art.source} style={{ width: s(28), height: s(28) }} resizeMode="contain" /> : <View style={[styles.petDot, { width: s(10), height: s(10) }]} />}
+      {art ? (
+        <Image source={art.source} style={{ width: s(28), height: s(28) }} resizeMode="contain" />
+      ) : (
+        <View style={[styles.petFallback, { width: s(28), height: s(28), borderRadius: s(14) }]}>
+          <Text style={{ fontSize: font(10), fontWeight: '800', color: '#10211c' }}>{monsterInitials(pet.name)}</Text>
+        </View>
+      )}
       <View style={styles.petMeta}>
         <Text style={[styles.petName, { fontSize: font(12) }]} numberOfLines={1}>
           {banned ? `CẤM · ${pet.name}` : pet.name}
@@ -280,7 +287,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     backgroundColor: 'rgba(18, 30, 26, 0.9)',
   },
-  petDot: { borderRadius: 99, backgroundColor: theme.gold },
+  petFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: theme.gold },
   petMeta: { flex: 1, minWidth: 0 },
   petName: { color: theme.ink, fontWeight: '700' },
   petSub: { color: theme.muted },

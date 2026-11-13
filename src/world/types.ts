@@ -202,14 +202,13 @@ export type MonsterActor = {
    */
   zoneIndex: number;
   /**
-   * Locomotion pose. The sim writes these every step for plains species
-   * and for anyone currently in a water tile. Missing values mean the
-   * monster still uses the plain patrol step.
+   * Locomotion pose. The sim writes these every step from the biological
+   * locomotion planner (BIPEDAL…PULSATING_FLOAT).
    */
-  gait?: 'trot' | 'hop' | 'slither' | 'scuttle' | 'burst' | 'swim';
+  gait?: 'stride' | 'trot' | 'hop' | 'slither' | 'scuttle' | 'burst' | 'swim' | 'fly' | 'pulse';
   /** Pause remaining, or a negative value while a scorpion is bursting. */
   gaitTimer?: number;
-  /** Shared clock for bob, slither, scuttle, and swim. */
+  /** Shared clock for bob, slither, scuttle, swim, fly, and pulse. */
   phase?: number;
   /** Body facing in radians. Crabs look perpendicular to their travel. */
   facing?: number;

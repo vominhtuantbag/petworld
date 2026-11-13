@@ -3,32 +3,66 @@
  * 32 columns (1–32, 3.125% each) and 16 rows (A–P, 6.25% each): 1,024 cells.
  * A cell name such as "I4" is the center of that cell.
  * Edit BATTLE_GRID_POSITIONS to move a unit. SHOW_DEBUG_GRID draws A1–P32 on every screen.
+ *
+ * Default spawns are shared by PvE, PvP, Arena, and Raid.
  */
 export const SHOW_DEBUG_GRID = true;
 
+/**
+ * Canonical spawn map (NV / P / Q).
+ * NV1 = player hero, NV2 = opponent hero, P1–P5 = ally pets, Q1–Q5 = enemy units.
+ */
 export const BATTLE_GRID_POSITIONS = {
-  /** Lãng khách. */
+  /** NV1 — main player hero. */
   player: 'L3',
-  /** Pets on the player team. Squad index 0, 1, 2. */
-  pet1: 'L15',
-  pet2: 'K9',
-  pet3: 'G9',
-  /** Monsters / Quái on the enemy team. Slots 1–3. */
-  enemy1: 'I24',
-  enemy2: 'E24',
-  enemy3: 'D19',
-  /** Six-boar pack on the right half. */
-  boar1: 'E19',
-  boar2: 'D23',
-  boar3: 'E27',
-  boar4: 'I19',
-  boar5: 'H23',
-  boar6: 'I27',
-  /** PvP opponent. The field fight does not use this cell. */
-  enemyPlayer: 'E30',
+  /** NV2 — opponent / enemy hero (PvP, Arena). */
+  enemyPlayer: 'L30',
+  /** P1–P5 — player ally pets / summons (squad index 0–4). */
+  pet1: 'N13',
+  pet2: 'K13',
+  pet3: 'G13',
+  pet4: 'I10',
+  pet5: 'M9',
+  /** Q1–Q5 — enemy monsters / foe pets. */
+  enemy1: 'N20',
+  enemy2: 'K20',
+  enemy3: 'G20',
+  enemy4: 'I24',
+  enemy5: 'M25',
 } as const;
 
 export type BattleSlot = keyof typeof BATTLE_GRID_POSITIONS;
+
+/** Ally pet/summon cells in squad order (P1→P5). */
+export const PLAYER_PET_CELLS = [
+  BATTLE_GRID_POSITIONS.pet1,
+  BATTLE_GRID_POSITIONS.pet2,
+  BATTLE_GRID_POSITIONS.pet3,
+  BATTLE_GRID_POSITIONS.pet4,
+  BATTLE_GRID_POSITIONS.pet5,
+] as const;
+
+/** Enemy monster / foe-pet cells in slot order (Q1→Q5). */
+export const ENEMY_UNIT_CELLS = [
+  BATTLE_GRID_POSITIONS.enemy1,
+  BATTLE_GRID_POSITIONS.enemy2,
+  BATTLE_GRID_POSITIONS.enemy3,
+  BATTLE_GRID_POSITIONS.enemy4,
+  BATTLE_GRID_POSITIONS.enemy5,
+] as const;
+
+/** Raid party: first arriver at NV1, remaining heroes on P1–P4. */
+export const RAID_PARTY_SPAWN_CELLS = [
+  BATTLE_GRID_POSITIONS.player,
+  BATTLE_GRID_POSITIONS.pet1,
+  BATTLE_GRID_POSITIONS.pet2,
+  BATTLE_GRID_POSITIONS.pet3,
+  BATTLE_GRID_POSITIONS.pet4,
+] as const;
+
+/** Raid adds on Q1–Q2; boss anchors on Q5. */
+export const RAID_ADD_SPAWN_CELLS = [BATTLE_GRID_POSITIONS.enemy1, BATTLE_GRID_POSITIONS.enemy2] as const;
+export const RAID_BOSS_SPAWN_CELL = BATTLE_GRID_POSITIONS.enemy5;
 
 export const GRID_ROWS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P'] as const;
 export const GRID_COLS = [
@@ -71,4 +105,16 @@ export function feetInView(cell: string, viewW: number, viewH: number, originX: 
     x: (viewW * left) / 100 - originX,
     y: (viewH * top) / 100 - originY,
   };
+}
+
+/** Resolve a P-team cell by squad index (0-based). */
+export function allySpawnCell(index: number): string {
+  const safe = Math.max(0, Math.min(PLAYER_PET_CELLS.length - 1, index));
+  return PLAYER_PET_CELLS[safe]!;
+}
+
+/** Resolve a Q-team cell by enemy slot index (0-based). */
+export function enemySpawnCell(index: number): string {
+  const safe = Math.max(0, Math.min(ENEMY_UNIT_CELLS.length - 1, index));
+  return ENEMY_UNIT_CELLS[safe]!;
 }

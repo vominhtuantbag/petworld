@@ -14,10 +14,17 @@ export { CLASS_KITS } from './characterSkills.js';
 export {
   LOCOMOTION_IDS,
   LOCOMOTION_TITLE,
+  LOCOMOTION_TYPES,
+  LOCOMOTION_TYPE_TITLE,
+  biologicalLocomotionTitle,
+  kitIdForLocomotionType,
   locomotionBasicSkills,
   locomotionOf,
   locomotionTitle,
+  locomotionTypeOf,
+  locomotionTypeTitle,
   type LocomotionId,
+  type LocomotionType,
 } from './petSkills.js';
 
 export type SpeciesId = 'beast' | 'bug' | 'reptile' | 'avian' | 'aquatic' | 'spirit';

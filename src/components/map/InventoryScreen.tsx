@@ -3,6 +3,7 @@ import { Animated, Image, PanResponder, Pressable, ScrollView, StyleSheet, Text,
 
 import { AdvancedStatsGrid } from '../combat/AdvancedStatsGrid';
 import { CharacterAvatar } from '../CharacterAvatar';
+import { monsterInitials } from '../world/monsterArt';
 import { monsterPortrait } from '../world/MonsterToken';
 import { getCharacter, getProfession } from '../../data/characters';
 import { useAvatarLook } from '../../state/avatarLook';
@@ -430,7 +431,7 @@ function CharacterPane({
               <Image accessibilityLabel={pet.name} source={art.source} resizeMode="contain" style={styles.spriteFill} />
             ) : (
               <View style={[styles.petFallback, { backgroundColor: pet.tint }]}>
-                <Text style={[styles.petLetter, { fontSize: fz(16) }]}>{pet.name.slice(0, 1)}</Text>
+                <Text style={[styles.petLetter, { fontSize: fz(16) }]}>{monsterInitials(pet.name)}</Text>
               </View>
             )
           ) : look.customUri ? (

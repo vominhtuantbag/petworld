@@ -7,7 +7,12 @@ import { GestureActionButton } from '../components/battle/GestureActionButton';
 import { useCombatJuice } from '../components/battle/JuiceOverlay';
 import { QuickTargetStrip } from '../components/battle/QuickTargetStrip';
 import { TurnTimeline } from '../components/battle/TurnTimeline';
-import { BATTLE_GRID_POSITIONS, feetInView } from '../components/battle/courtSlots';
+import {
+  BATTLE_GRID_POSITIONS,
+  ENEMY_UNIT_CELLS,
+  PLAYER_PET_CELLS,
+  feetInView,
+} from '../components/battle/courtSlots';
 import { RankStars } from '../components/arena/RankStars';
 import { CharacterAvatar } from '../components/CharacterAvatar';
 import { BattleInfoPanel } from '../components/battle/BattleInfoPanel';
@@ -25,8 +30,8 @@ import { rankTint, rankTitle } from '../world/ranks';
 
 const ARENA = require('../../assets/images/sandau_2.jpg');
 
-const PET_CELLS = [BATTLE_GRID_POSITIONS.pet1, BATTLE_GRID_POSITIONS.pet2, BATTLE_GRID_POSITIONS.pet3];
-const FOE_PET_CELLS = ['J21', 'H23', 'G19'];
+const PET_CELLS = [...PLAYER_PET_CELLS];
+const FOE_PET_CELLS = [...ENEMY_UNIT_CELLS];
 const PET_TINTS = ['#c4a574', '#7aa2c4', '#8fbf7a'];
 
 type Pick = 'attack' | 0 | 1;
@@ -79,8 +84,8 @@ export function ArenaScreen() {
   const units = snapshot?.units ?? [];
   const youHero = units.find((unit) => unit.side === 'you' && unit.kind === 'hero') ?? null;
   const foeHero = units.find((unit) => unit.side === 'opponent' && unit.kind === 'hero') ?? null;
-  const yourPets = units.filter((unit) => unit.side === 'you' && unit.kind === 'pet').slice(0, 3);
-  const foePets = units.filter((unit) => unit.side === 'opponent' && unit.kind === 'pet').slice(0, 3);
+  const yourPets = units.filter((unit) => unit.side === 'you' && unit.kind === 'pet').slice(0, PLAYER_PET_CELLS.length);
+  const foePets = units.filter((unit) => unit.side === 'opponent' && unit.kind === 'pet').slice(0, ENEMY_UNIT_CELLS.length);
   const cast = units.map((unit) => toCourt(unit));
   const foes = units.filter((unit) => unit.side === 'opponent' && unit.hp > 0);
   const focus = foes.find((unit) => unit.id === focusId) ?? foes[0] ?? null;
@@ -92,11 +97,11 @@ export function ArenaScreen() {
     return (id: string) => {
       if (!youHero || !foeHero) return null;
       if (id === youHero.id) return footMemo(BATTLE_GRID_POSITIONS.player);
-      if (id === foeHero.id) return footMemo('G28');
+      if (id === foeHero.id) return footMemo(BATTLE_GRID_POSITIONS.enemyPlayer);
       const allyIndex = yourPets.findIndex((unit) => unit.id === id);
-      if (allyIndex >= 0) return footMemo(PET_CELLS[allyIndex] ?? PET_CELLS[0]);
+      if (allyIndex >= 0) return footMemo(PET_CELLS[allyIndex] ?? PET_CELLS[0]!);
       const foeIndex = foePets.findIndex((unit) => unit.id === id);
-      if (foeIndex >= 0) return footMemo(FOE_PET_CELLS[foeIndex] ?? FOE_PET_CELLS[0]);
+      if (foeIndex >= 0) return footMemo(FOE_PET_CELLS[foeIndex] ?? FOE_PET_CELLS[0]!);
       return null;
     };
   }, [foeHero, foePets, footMemo, youHero, yourPets]);
@@ -371,7 +376,7 @@ export function ArenaScreen() {
           ))}
           <CourtUnit
             fighter={toCourt(foeHero, foeElement)}
-            slot={foot('G28')}
+            slot={foot(BATTLE_GRID_POSITIONS.enemyPlayer)}
             active={snapshot.turnId === foeHero.id}
             targeted={focus?.id === foeHero.id && foeHero.hp > 0}
             face="left"
@@ -398,7 +403,7 @@ export function ArenaScreen() {
               size={petSize}
               statFont={font(10)}
               barWidth={s(86)}
-              front={FOE_PET_CELLS[index] === 'G19'}
+              front={FOE_PET_CELLS[index] === BATTLE_GRID_POSITIONS.enemy3}
               testID={`court-foe-${index}`}
               onPress={unit.hp > 0 ? () => markFoe(unit.id) : undefined}
               step={steps[unit.id] ?? null}
@@ -572,7 +577,7 @@ function floatAnchor(
     return { x: slot.x, y: slot.y - heroSize - s(36) };
   }
   if (fighterId === foeId) {
-    const slot = foot('G28');
+    const slot = foot(BATTLE_GRID_POSITIONS.enemyPlayer);
     return { x: slot.x, y: slot.y - foeHeroSize - s(32) };
   }
   const allyIndex = allies.findIndex((fighter) => fighter.id === fighterId);

@@ -7,7 +7,7 @@ import { useWorld } from '../../state/WorldContext';
 import { theme } from '../../theme/theme';
 import { useLayout } from '../../theme/useLayout';
 import { combatElement, elementLabel } from '../../world/combat/elements';
-import { classCatalog, describeSkill, locomotionOf, locomotionTitle, monsterCatalog, resolveHeroLoadout, resolvePetLoadout, skillKind } from '../../world/combat/kits';
+import { biologicalLocomotionTitle, classCatalog, describeSkill, monsterCatalog, resolveHeroLoadout, resolvePetLoadout, skillKind } from '../../world/combat/kits';
 import type { Skill } from '../../world/combat/model';
 
 type Props = { onClose: () => void };
@@ -107,7 +107,7 @@ export function SkillModal({ onClose }: Props) {
                 return (
                   <View key={monster.id} style={styles.pet}>
                     <Text style={[styles.section, { fontSize: font(12) }]} numberOfLines={1}>
-                      {monster.name} · {locomotionTitle(locomotionOf(monster.kindId))} · {elementLabel(combatElement(monster.kindId))} · cấp {monster.level}
+                      {monster.name} · {biologicalLocomotionTitle(monster.kindId)} · {elementLabel(combatElement(monster.kindId))} · cấp {monster.level}
                     </Text>
                     {book.basics.map((skill) => (
                       <SkillRow

@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { CharacterAvatar } from '../CharacterAvatar';
 import { portraitScaleX } from '../world/facing';
+import { monsterInitials } from '../world/monsterArt';
 import { monsterPortrait } from '../world/MonsterToken';
 import type { CharacterDefinition } from '../../data/characters';
 import type { StatusEntry } from '../../world/combat/advanced';
-import { locomotionOf } from '../../world/combat/petSkills';
+import { locomotionTypeOf, type LocomotionType } from '../../world/combat/petSkills';
 import type { StatMod } from '../../world/combat/model';
 import { combatSfx } from '../../world/combat/combatSfx';
 import { FAINT_OPACITY } from '../../world/combat/faint';
@@ -15,6 +16,21 @@ import { CourtFx, type Fate, type Step } from './CourtFx';
 import { overheadDrop } from './courtSlots';
 import { StatusIcons } from './StatusIcons';
 import type { TimelineRole } from './TurnTimeline';
+
+/** Idle court motion per biological locomotion. Halted when fainted (HP ≤ 0). */
+const COURT_IDLE: Record<
+  LocomotionType,
+  { duration: number; x: [number, number]; y: [number, number]; scaleX: [number, number]; scaleY: [number, number]; rotate: [string, string] }
+> = {
+  BIPEDAL: { duration: 900, x: [0, 0], y: [0, -1.5], scaleX: [1, 1], scaleY: [1, 1.04], rotate: ['0deg', '0deg'] },
+  QUADRUPEDAL: { duration: 1000, x: [0, 0], y: [0, 0], scaleX: [1, 1], scaleY: [1, 1.03], rotate: ['0deg', '0deg'] },
+  MULTI_LEGGED: { duration: 420, x: [-2, 2], y: [0, 0], scaleX: [1, 1], scaleY: [1, 1], rotate: ['-3deg', '3deg'] },
+  SLITHERING: { duration: 800, x: [-4, 4], y: [0, 0], scaleX: [1, 1], scaleY: [1, 1], rotate: ['-8deg', '8deg'] },
+  LEAPING: { duration: 1100, x: [0, 0], y: [0, -3], scaleX: [1, 1.02], scaleY: [1, 0.96], rotate: ['0deg', '0deg'] },
+  AERIAL: { duration: 1000, x: [0, 0], y: [-4, 4], scaleX: [1, 1], scaleY: [1, 1], rotate: ['-2deg', '2deg'] },
+  SWIMMING: { duration: 950, x: [-2, 2], y: [-2, 2], scaleX: [1, 1], scaleY: [1, 1], rotate: ['-5deg', '5deg'] },
+  PULSATING_FLOAT: { duration: 1200, x: [0, 0], y: [-5, 3], scaleX: [0.92, 1.08], scaleY: [0.92, 1.08], rotate: ['0deg', '0deg'] },
+};
 
 /** Fields the court HUD reads. A full combat fighter satisfies this. */
 export type CourtActor = {
@@ -99,7 +115,8 @@ export function CourtUnit({
   const chrome = iconPad + (hasShield ? 3 : 2) * (barH + 2) + 2;
   const labelWidth = Math.max(barWidth, Math.round(size * 0.9));
   const drop = overheadDrop(slot.y, size, chrome);
-  const flying = Boolean(fighter.kindId && locomotionOf(fighter.kindId) === 'flying');
+  const loco: LocomotionType = fighter.kindId ? locomotionTypeOf(fighter.kindId) : 'QUADRUPEDAL';
+  const idleProfile = COURT_IDLE[loco];
   const idle = useRef(new Animated.Value(0)).current;
   const phase = useMemo(() => {
     let hash = 0;
@@ -111,19 +128,27 @@ export function CourtUnit({
   useEffect(() => {
     idle.setValue(0);
     if (fainted) return;
+    const half = idleProfile.duration;
     const loop = Animated.loop(
       Animated.sequence([
         Animated.delay(phase),
-        Animated.timing(idle, { toValue: 1, duration: 1000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        Animated.timing(idle, { toValue: 0, duration: 1000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(idle, { toValue: 1, duration: half, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(idle, { toValue: 0, duration: half, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       ]),
     );
     loop.start();
-    return () => loop.stop();
-  }, [fainted, idle, phase]);
+    return () => {
+      loop.stop();
+      idle.stopAnimation();
+      idle.setValue(0);
+    };
+  }, [fainted, idle, idleProfile.duration, phase]);
 
-  const breathY = idle.interpolate({ inputRange: [0, 1], outputRange: flying ? [-4, 4] : [0, 0] });
-  const breathScaleY = idle.interpolate({ inputRange: [0, 1], outputRange: flying ? [1, 1] : [1, 1.03] });
+  const breathY = idle.interpolate({ inputRange: [0, 1], outputRange: idleProfile.y });
+  const breathX = idle.interpolate({ inputRange: [0, 1], outputRange: idleProfile.x });
+  const breathScaleX = idle.interpolate({ inputRange: [0, 1], outputRange: idleProfile.scaleX });
+  const breathScaleY = idle.interpolate({ inputRange: [0, 1], outputRange: idleProfile.scaleY });
+  const breathTilt = idle.interpolate({ inputRange: [0, 1], outputRange: idleProfile.rotate });
 
   return (
     <Pressable
@@ -165,7 +190,13 @@ export function CourtUnit({
             {
               width: size,
               height: size,
-              transform: [{ translateY: breathY }, { scaleY: breathScaleY }],
+              transform: [
+                { translateX: breathX },
+                { translateY: breathY },
+                { rotate: breathTilt },
+                { scaleX: breathScaleX },
+                { scaleY: breathScaleY },
+              ],
             },
             fainted && styles.faintedSprite,
           ]}
@@ -181,15 +212,12 @@ export function CourtUnit({
             <View
               style={{
                 transform: [{ scaleX: portraitScaleX(face === 'left' ? -1 : 1, character.professionId, character.gender) }],
-                opacity: fainted ? 0.9 : 1,
               }}
             >
               <CharacterAvatar character={character} hairColor={hairColor} outfitColor={outfitColor} size={Math.round(size * 0.82)} />
             </View>
           ) : (
-            <View style={fainted ? styles.ghostTint : null}>
-              <FaceArt kindId={fighter.kindId} tint={fighter.tint} name={fighter.name} size={size} facing={face} />
-            </View>
+            <FaceArt kindId={fighter.kindId} tint={fighter.tint} name={fighter.name} size={size} facing={face} />
           )}
           {targeted && !fainted ? (
             <View pointerEvents="none" style={[styles.redRing, { width: size * 1.05, height: size * 0.72, borderRadius: size }]} />
@@ -223,15 +251,28 @@ export function FaceArt({
   facing: 'left' | 'right';
 }) {
   const art = kindId ? monsterPortrait(kindId) : null;
-  if (!art) {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => {
+    setBroken(false);
+  }, [kindId, art?.source]);
+
+  if (!art || broken) {
     return (
       <View style={[styles.fallback, { width: size, height: size, borderRadius: size / 2, backgroundColor: tint }]}>
-        <Text style={styles.fallbackText}>{name.slice(0, 1)}</Text>
+        <Text style={styles.fallbackText}>{monsterInitials(name)}</Text>
       </View>
     );
   }
   const flip = facing === 'right' ? (art.facesRight ? 1 : -1) : art.facesRight ? -1 : 1;
-  return <Image accessibilityLabel={name} source={art.source} resizeMode="contain" style={{ width: size, height: size, transform: [{ scaleX: flip }] }} />;
+  return (
+    <Image
+      accessibilityLabel={name}
+      source={art.source}
+      resizeMode="contain"
+      style={{ width: size, height: size, transform: [{ scaleX: flip }] }}
+      onError={() => setBroken(true)}
+    />
+  );
 }
 
 export function TimelineFace({
@@ -552,5 +593,4 @@ export const styles = StyleSheet.create({
   roundLabel: { color: '#fff', fontWeight: '800', textAlign: 'center' },
   fainted: { opacity: FAINT_OPACITY },
   faintedSprite: { opacity: 1 },
-  ghostTint: { opacity: 0.85 },
 });

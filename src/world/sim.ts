@@ -370,14 +370,12 @@ function stepMonster(
   const route = monster.patrol ?? [];
   const waypoint = route.length > 0 ? route[patrolIndex % route.length] : { x: monster.homeX, y: monster.homeY };
   const target = chasing ? { x: player.x, y: player.y } : waypoint;
-  const direction = unit(target.x - monster.x, target.y - monster.y);
   const cruise = (chasing ? monster.speed * 1.35 : monster.speed * 0.55) * mudSlow(field, monster.x, monster.y);
   const wet = water.some((tile) => pointInRect(monster.x, monster.y, tile));
-  const plainsMotion = wet || monster.kindId.startsWith('plains-');
   let x = monster.x;
   let y = monster.y;
   let gaitPatch: Pick<MonsterActor, 'gait' | 'phase' | 'facing' | 'gaitTimer' | 'hopT' | 'hopFromX' | 'hopFromY' | 'hopToX' | 'hopToY' | 'patrol'> | null = null;
-  if (plainsMotion) {
+  {
     const planned = planLocomotion({ monster, target, chasing, dt, speed: cruise, field, wet });
     const settled = settleMonster(monster, field, planned.x, planned.y);
     x = settled.x;
@@ -390,25 +388,9 @@ function stepMonster(
     planned.y = y;
     patrolIndex = planned.patrolIndex;
     gaitPatch = planned;
-  } else {
-    const speed = cruise;
-    x = monster.x + direction.x * speed * dt;
-    y = monster.y + direction.y * speed * dt;
-    const leashed = clampToRect(x, y, monster.r, monster.bounds);
-    x = leashed.x;
-    y = leashed.y;
-    const blocked = collideAll(x, y, monster.r, field.blocks);
-    x = blocked.x;
-    y = blocked.y;
-    if (outsideZone(x, y, monster, field)) {
-      x = monster.x;
-      y = monster.y;
-    }
   }
 
-  if (!plainsMotion && !chasing && route.length > 0 && Math.hypot(waypoint.x - x, waypoint.y - y) < 20) {
-    patrolIndex = (patrolIndex + 1) % route.length;
-  } else if (!plainsMotion && !chasing && route.length === 0 && pause <= 0 && Math.hypot(monster.homeX - x, monster.homeY - y) < 12) {
+  if (!chasing && route.length === 0 && pause <= 0 && Math.hypot(monster.homeX - x, monster.homeY - y) < 12) {
     const angle = Math.random() * Math.PI * 2;
     const reach = 50 + Math.random() * 90;
     const homeX = clamp(monster.bounds.x + monster.r + 8, monster.bounds.x + monster.bounds.w - monster.r - 8, x + Math.cos(angle) * reach);

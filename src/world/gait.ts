@@ -1,16 +1,15 @@
+import { locomotionTypeOf, type LocomotionType } from './combat/petSkills';
 import { zoneIndexAt } from './tiers';
 import type { FieldState, MonsterActor, Vec } from './types';
 
 /**
- * How a plains creature crosses the meadow. Agro still picks the target
- * (the player, or a waypoint inside the same level zone). This file only
- * chooses the step shape. The sim clamps the result to the zone.
+ * Field locomotion planner. Biological type (BIPEDAL…PULSATING_FLOAT) picks
+ * the step shape; agro still chooses the target. The sim clamps to the zone.
  *
- * Swim is ready for puddles, oasis pools, and lily pads. A hopper keeps
- * hopping in the water. Everyone else floats until they leave the tile.
+ * Wet tiles force swim weave unless the species is a hopper (keeps hopping).
  */
 
-export type Gait = 'trot' | 'hop' | 'slither' | 'scuttle' | 'burst' | 'swim';
+export type Gait = 'stride' | 'trot' | 'hop' | 'slither' | 'scuttle' | 'burst' | 'swim' | 'fly' | 'pulse';
 export type SpriteProfile = 'side' | 'front';
 
 export type Locomotion = {
@@ -20,25 +19,58 @@ export type Locomotion = {
   profile: SpriteProfile;
   /** The drawn art looks to the right when this is true. */
   facesRight: boolean;
+  locomotionType: LocomotionType;
 };
 
-const PLAINS: Record<string, Locomotion> = {
-  'plains-rabbit': { gait: 'trot', pace: 1.05, profile: 'side', facesRight: true },
-  'plains-mouse': { gait: 'trot', pace: 1.7, profile: 'side', facesRight: true },
-  'plains-tree-frog': { gait: 'hop', pace: 1, profile: 'front', facesRight: true },
-  'plains-paddy-toad': { gait: 'hop', pace: 0.82, profile: 'front', facesRight: true },
-  'plains-field-crab': { gait: 'scuttle', pace: 0.95, profile: 'front', facesRight: true },
-  'plains-tortoise': { gait: 'trot', pace: 0.2, profile: 'front', facesRight: true },
+const TYPE_GAIT: Record<LocomotionType, Gait> = {
+  BIPEDAL: 'stride',
+  QUADRUPEDAL: 'trot',
+  MULTI_LEGGED: 'scuttle',
+  SLITHERING: 'slither',
+  LEAPING: 'hop',
+  AERIAL: 'fly',
+  SWIMMING: 'swim',
+  PULSATING_FLOAT: 'pulse',
+};
+
+const TYPE_DEFAULTS: Record<LocomotionType, Omit<Locomotion, 'gait' | 'locomotionType'>> = {
+  BIPEDAL: { pace: 1, profile: 'front', facesRight: true },
+  QUADRUPEDAL: { pace: 1, profile: 'side', facesRight: true },
+  MULTI_LEGGED: { pace: 0.95, profile: 'front', facesRight: true },
+  SLITHERING: { pace: 1, profile: 'side', facesRight: true },
+  LEAPING: { pace: 0.9, profile: 'front', facesRight: true },
+  AERIAL: { pace: 1.15, profile: 'side', facesRight: true },
+  SWIMMING: { pace: 1, profile: 'side', facesRight: true },
+  PULSATING_FLOAT: { pace: 0.55, profile: 'front', facesRight: true },
+};
+
+/** Per-species fine-tunes (pace / facing / scuttle→burst for scorpions). */
+const SPECIES_MOTION: Record<string, Partial<Omit<Locomotion, 'locomotionType'>>> = {
+  'plains-rabbit': { pace: 1.05, profile: 'side' },
+  'plains-mouse': { pace: 1.7, profile: 'side' },
+  'plains-tree-frog': { pace: 1, profile: 'front' },
+  'plains-paddy-toad': { pace: 0.82, profile: 'front' },
+  'plains-field-crab': { pace: 0.95, profile: 'front' },
+  'plains-tortoise': { pace: 0.2, profile: 'front' },
   'plains-charcoal-scorpion': { gait: 'burst', pace: 1.25, profile: 'side', facesRight: false },
-  'plains-grass-snake': { gait: 'slither', pace: 1, profile: 'side', facesRight: true },
-  'plains-porcupine': { gait: 'trot', pace: 0.85, profile: 'front', facesRight: true },
-  'plains-boar': { gait: 'trot', pace: 1.6, profile: 'side', facesRight: true },
+  'plains-grass-snake': { pace: 1, profile: 'side' },
+  'plains-porcupine': { pace: 0.85, profile: 'front' },
+  'plains-boar': { pace: 1.6, profile: 'side' },
+  'desert-emperor-scorpion': { gait: 'burst', pace: 1.2, facesRight: false },
+  'volcano-rock-scorpion': { gait: 'burst', pace: 1.15, facesRight: false },
 };
 
-const WALK: Locomotion = { gait: 'trot', pace: 1, profile: 'side', facesRight: true };
-
-export function locomotion(kindId: string): Locomotion {
-  return PLAINS[kindId] ?? WALK;
+export function locomotion(kindId: string, locomotionType?: LocomotionType | null): Locomotion {
+  const type = locomotionTypeOf({ kindId, locomotionType });
+  const defaults = TYPE_DEFAULTS[type];
+  const tuned = SPECIES_MOTION[kindId] ?? {};
+  return {
+    locomotionType: type,
+    gait: tuned.gait ?? TYPE_GAIT[type],
+    pace: tuned.pace ?? defaults.pace,
+    profile: tuned.profile ?? defaults.profile,
+    facesRight: tuned.facesRight ?? defaults.facesRight,
+  };
 }
 
 export function isWaterKind(kind: string | undefined): boolean {
@@ -76,7 +108,10 @@ const HOP_TIME = 0.36;
 
 export function planLocomotion(input: Input): LocomotionStep {
   const motion = locomotion(input.monster.kindId);
-  const gait: Gait = input.wet && motion.gait !== 'hop' ? 'swim' : motion.gait;
+  let gait: Gait = motion.gait;
+  if (input.wet && motion.locomotionType !== 'LEAPING' && motion.locomotionType !== 'AERIAL') {
+    gait = motion.locomotionType === 'PULSATING_FLOAT' ? 'pulse' : 'swim';
+  }
   const step = read(input.monster, gait);
   const speed = input.speed * motion.pace;
   if (gait === 'hop') return hop(input, step, motion.pace);
@@ -84,7 +119,10 @@ export function planLocomotion(input: Input): LocomotionStep {
   if (gait === 'scuttle') return scuttle(input, step, speed);
   if (gait === 'burst') return burst(input, step, speed);
   if (gait === 'swim') return weave(input, step, speed * 0.78, 2.6, 0.42, 1);
-  return trot(input, step, speed);
+  if (gait === 'fly') return fly(input, step, speed);
+  if (gait === 'pulse') return pulse(input, step, speed);
+  if (gait === 'stride') return trot(input, step, speed, 10);
+  return trot(input, step, speed, 8);
 }
 
 function read(monster: MonsterActor, gait: Gait): LocomotionStep {
@@ -105,8 +143,8 @@ function read(monster: MonsterActor, gait: Gait): LocomotionStep {
   };
 }
 
-/** Four-legged walk: a straight step, then a new random point inside the zone. */
-function trot(input: Input, step: LocomotionStep, speed: number): LocomotionStep {
+/** Bipedal / quadrupedal walk: a straight step, then a new random point inside the zone. */
+function trot(input: Input, step: LocomotionStep, speed: number, phaseRate: number): LocomotionStep {
   const dir = unit(input.target.x - step.x, input.target.y - step.y);
   const x = step.x + dir.x * speed * input.dt;
   const y = step.y + dir.y * speed * input.dt;
@@ -116,7 +154,7 @@ function trot(input: Input, step: LocomotionStep, speed: number): LocomotionStep
     ...step,
     x,
     y,
-    phase: step.phase + input.dt * (moving ? 8 + speed * 0.04 : 1.4),
+    phase: step.phase + input.dt * (moving ? phaseRate + speed * 0.04 : 1.4),
     facing: Math.atan2(dir.y, dir.x),
     patrol: turned.patrol,
     patrolIndex: turned.patrolIndex,
@@ -209,6 +247,46 @@ function weave(input: Input, step: LocomotionStep, speed: number, freq: number, 
   const desired = Math.atan2(input.target.y - step.y, input.target.x - step.x);
   const heading = desired + Math.sin(phase) * amp;
   const velocity = speed * pace;
+  const x = step.x + Math.cos(heading) * velocity * input.dt;
+  const y = step.y + Math.sin(heading) * velocity * input.dt;
+  const turned = advancePatrol(input, step, x, y);
+  return {
+    ...step,
+    x,
+    y,
+    phase,
+    facing: heading,
+    patrol: turned.patrol,
+    patrolIndex: turned.patrolIndex,
+  };
+}
+
+/** Aerial glide — smooth banked path with a faster phase for wing bob. */
+function fly(input: Input, step: LocomotionStep, speed: number): LocomotionStep {
+  const phase = step.phase + input.dt * 5.2;
+  const desired = Math.atan2(input.target.y - step.y, input.target.x - step.x);
+  const heading = desired + Math.sin(phase * 0.55) * 0.35;
+  const velocity = speed * (input.chasing ? 1.15 : 0.95);
+  const x = step.x + Math.cos(heading) * velocity * input.dt;
+  const y = step.y + Math.sin(heading) * velocity * input.dt;
+  const turned = advancePatrol(input, step, x, y);
+  return {
+    ...step,
+    x,
+    y,
+    phase,
+    facing: heading,
+    patrol: turned.patrol,
+    patrolIndex: turned.patrolIndex,
+  };
+}
+
+/** Pulsating float — slow drift; phase drives vertical bob / scale in the token. */
+function pulse(input: Input, step: LocomotionStep, speed: number): LocomotionStep {
+  const phase = step.phase + input.dt * 2.4;
+  const desired = Math.atan2(input.target.y - step.y, input.target.x - step.x);
+  const heading = desired + Math.sin(phase * 0.7) * 0.55;
+  const velocity = speed * 0.65;
   const x = step.x + Math.cos(heading) * velocity * input.dt;
   const y = step.y + Math.sin(heading) * velocity * input.dt;
   const turned = advancePatrol(input, step, x, y);
