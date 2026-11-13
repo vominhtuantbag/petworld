@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Game Thư Giãn",
+    "name": "PetWar",
     "slug": "game-thu-gian",
     "version": "1.0.0",
     "orientation": "landscape",
@@ -9,7 +9,19 @@
     "backgroundColor": "#10211c",
     "ios": {
       "supportsTablet": true,
-      "requireFullScreen": true
+      "requireFullScreen": true,
+      "bundleIdentifier": "com.micr17.gamethugian",
+      "infoPlist": {
+        "UIRequiresFullScreen": true,
+        "UISupportedInterfaceOrientations": [
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ],
+        "UISupportedInterfaceOrientations~ipad": [
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +31,8 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.micr17.gamethugian"
+      "package": "com.micr17.gamethugian",
+      "versionCode": 1
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -37,7 +50,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Game Thư Giãn dùng ảnh của bạn làm chân dung.",
+          "photosPermission": "PetWar dùng ảnh của bạn làm chân dung.",
           "cameraPermission": false,
           "microphonePermission": false
         }

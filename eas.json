@@ -1,25 +1,40 @@
 {
   "cli": {
-    "version": ">= 24.12.0",
+    "version": ">= 16.0.0",
     "appVersionSource": "remote"
   },
   "build": {
-    "development": {
-      "developmentClient": true,
-      "distribution": "internal"
-    },
-    "preview": {
-      "distribution": "internal",
+    "base": {
+      "node": "22.14.0",
       "env": {
         "EXPO_PUBLIC_API_URL": "https://petworld-rqyo.onrender.com",
         "EXPO_PUBLIC_SOCKET_URL": "https://petworld-rqyo.onrender.com"
       }
     },
+    "development": {
+      "extends": "base",
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "withoutCredentials": true
+      },
+      "ios": {
+        "simulator": true
+      }
+    },
+    "preview": {
+      "extends": "base",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
+    },
     "production": {
+      "extends": "base",
       "autoIncrement": true,
-      "env": {
-        "EXPO_PUBLIC_API_URL": "https://petworld-rqyo.onrender.com",
-        "EXPO_PUBLIC_SOCKET_URL": "https://petworld-rqyo.onrender.com"
+      "android": {
+        "buildType": "app-bundle"
       }
     }
   },

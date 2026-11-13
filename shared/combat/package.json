@@ -25,7 +25,6 @@
     }
   },
   "dependencies": {
-    "game-thu-gian-server": "file:../../server",
-    "typescript": "^5.9.3"
+    "typescript": "~5.9.3"
   }
 }

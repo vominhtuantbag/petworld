@@ -1,0 +1,11 @@
+# Keep EAS uploads lean. Mobile builds only need the Expo app + shared combat.
+server/node_modules/
+server/dist/
+server/data/
+**/node_modules/
+.expo/
+web-build/
+**/.git/
+**/*.md
+agent-transcripts/
+scripts/
