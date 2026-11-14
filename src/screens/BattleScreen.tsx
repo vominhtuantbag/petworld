@@ -32,6 +32,7 @@ import { GestureActionButton } from '../components/battle/GestureActionButton';
 import { QuickTargetStrip } from '../components/battle/QuickTargetStrip';
 import { CharacterAvatar } from '../components/CharacterAvatar';
 import { getCharacter } from '../data/characters';
+import { useBattleCommandSize } from '../hooks/useBattleCommandSize';
 import { useQuickTarget } from '../hooks/useQuickTarget';
 import { useSocket } from '../state/BattleContext';
 import { useSetup } from '../state/SetupContext';
@@ -83,6 +84,7 @@ export function BattleScreen() {
   const setup = useSetup();
   const socket = useSocket();
   const { s, font } = useLayout();
+  const { cmdSize, cmdFont } = useBattleCommandSize();
   const juice = useCombatJuice();
   /** Design-canvas size (letterboxed world) — not the raw browser viewport. */
   const [screen, setScreen] = useState({ w: BATTLE_DESIGN_W, h: BATTLE_DESIGN_H });
@@ -1099,7 +1101,7 @@ export function BattleScreen() {
             </>
           ) : null}
         </View>
-        <ActionTipBanner text={actionTipText} fontSize={font(11)} testID="action-tip" />
+        <ActionTipBanner text={actionTipText} fontSize={Math.max(font(11), cmdFont)} testID="action-tip" />
         <View style={styles.commands}>
           {!battle ? (
             <>
@@ -1115,8 +1117,8 @@ export function BattleScreen() {
                     setTipOverride(`Đòn đánh thường · ${skill.name}. ${skill.blurb || ''}`.trim());
                     setBasicId(skill.id);
                   }}
-                  size={s(48)}
-                  font={font(10)}
+                  size={cmdSize}
+                  font={cmdFont}
                 />
               ))}
               {consumables.map((stack) => (
@@ -1130,8 +1132,8 @@ export function BattleScreen() {
                     setTipOverride(`${ITEMS[stack.itemId].nameVi} · mang vào trận.`);
                     toggleId(itemIds, stack.itemId, 1, setPickedItems);
                   }}
-                  size={s(44)}
-                  font={font(10)}
+                  size={Math.round(cmdSize * 0.88)}
+                  font={cmdFont}
                 />
               ))}
               <RoundButton
@@ -1142,8 +1144,8 @@ export function BattleScreen() {
                 onHighlight={() => setTipOverride('Bắt đầu trận với đội hình đã chọn.')}
                 onPress={begin}
                 testID="battle-start"
-                size={s(52)}
-                font={font(12)}
+                size={cmdSize}
+                font={Math.max(cmdFont, 12)}
                 tint="#e25b2a"
               />
             </>
@@ -1179,8 +1181,8 @@ export function BattleScreen() {
                       openTame();
                     });
                   }}
-                  size={s(52)}
-                  font={font(10)}
+                  size={cmdSize}
+                  font={cmdFont}
                 />
               )}
               <GestureActionButton
@@ -1191,8 +1193,8 @@ export function BattleScreen() {
                 aimPopup={aimPopup}
                 disabled={!commandTurn}
                 testID="battle-basic"
-                size={s(52)}
-                font={font(10)}
+                size={cmdSize}
+                font={cmdFont}
                 {...bindAction('basic')}
               />
               {((actingAlly ?? battle.player).skills ?? []).slice(0, 2).map((skill, index) => {
@@ -1212,8 +1214,8 @@ export function BattleScreen() {
                     disabled={!commandTurn || locked}
                     dim={locked}
                     testID={`battle-skill-${index + 1}`}
-                    size={s(52)}
-                    font={font(10)}
+                    size={cmdSize}
+                    font={cmdFont}
                     {...bindAction(skill.id)}
                   />
                 );
@@ -1237,8 +1239,8 @@ export function BattleScreen() {
                     commitAction('defend', 'focus');
                   });
                 }}
-                size={s(52)}
-                font={font(10)}
+                size={cmdSize}
+                font={cmdFont}
               />
             </>
           )}

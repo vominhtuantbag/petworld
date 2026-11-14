@@ -23,6 +23,7 @@ import {
   type CourtActor,
 } from '../components/battle/courtChrome';
 import { getCharacter } from '../data/characters';
+import { useBattleCommandSize } from '../hooks/useBattleCommandSize';
 import { useQuickTarget } from '../hooks/useQuickTarget';
 import { useSocketCombatFx } from '../hooks/useSocketCombatFx';
 import { combatSfx } from '../world/combat/combatSfx';
@@ -50,6 +51,7 @@ export function RaidScreen() {
   const world = useWorld();
   const snapshot = battle.raid;
   const { s, font } = useLayout();
+  const { cmdSize, cmdFont } = useBattleCommandSize();
   const juice = useCombatJuice();
   const [screen, setScreen] = useState({ w: BATTLE_DESIGN_W, h: BATTLE_DESIGN_H });
   const [stageBox, setStageBox] = useState({ x: 0, y: 0 });
@@ -443,7 +445,7 @@ export function RaidScreen() {
 
         <View style={court.dock}>
           <View style={court.targets} />
-          <ActionTipBanner text={actionTipText} fontSize={font(11)} testID="raid-action-tip" />
+          <ActionTipBanner text={actionTipText} fontSize={Math.max(font(11), cmdFont)} testID="raid-action-tip" />
           <View style={court.commands}>
             {finished ? null : (
               <>
@@ -455,8 +457,8 @@ export function RaidScreen() {
                   aimPopup={aimPopup}
                   disabled={!yourTurn}
                   testID="raid-attack"
-                  size={s(52)}
-                  font={font(10)}
+                  size={cmdSize}
+                  font={cmdFont}
                   {...bind('attack')}
                 />
                 <GestureActionButton
@@ -469,8 +471,8 @@ export function RaidScreen() {
                   disabled={!yourTurn || skill1Locked}
                   dim={skill1Locked}
                   testID="raid-skill-1"
-                  size={s(52)}
-                  font={font(10)}
+                  size={cmdSize}
+                  font={cmdFont}
                   {...bind(0)}
                 />
                 <GestureActionButton
@@ -483,8 +485,8 @@ export function RaidScreen() {
                   disabled={!yourTurn || skill2Locked}
                   dim={skill2Locked}
                   testID="raid-skill-2"
-                  size={s(52)}
-                  font={font(10)}
+                  size={cmdSize}
+                  font={cmdFont}
                   {...bind(1)}
                 />
                 <RoundButton
@@ -507,8 +509,8 @@ export function RaidScreen() {
                       battle.sendRaidAction('defend');
                     });
                   }}
-                  size={s(52)}
-                  font={font(10)}
+                  size={cmdSize}
+                  font={cmdFont}
                 />
               </>
             )}
