@@ -1,26 +1,17 @@
-import { useWindowDimensions } from 'react-native';
+import { useLayout } from '../theme/useLayout';
 
-import { BATTLE_DESIGN_H } from '../components/battle/BattleWorldFrame';
-import { isMobileWeb } from '../web/mobileWeb';
+/** Base command chip size before the bump. */
+const BASE_CMD = 52;
+const BASE_FONT = 10;
+/** 150% of the previous stable button size. */
+const CMD_SCALE = 1.5;
 
 /**
- * Dock skill / attack button size in *design-canvas* pixels.
- *
- * The battle world stretch-fills the viewport (`scaleY = hostH / 720`), so a
- * fixed `s(52)` chip becomes ~28px on phone landscape. Bump the design size
- * so the *physical* tap target stays comfortable on mobile web / short screens.
+ * Dock attack / skill button size — stable letterbox base × 150%.
  */
 export function useBattleCommandSize() {
-  const { width, height } = useWindowDimensions();
-  const shortSide = Math.min(width, height);
-  const scaleY = height > 0 ? height / BATTLE_DESIGN_H : 1;
-  const mobile = isMobileWeb() || shortSide < 500;
-
-  /** Minimum on-screen edge length for a command chip. */
-  const minPhysical = mobile ? 56 : 44;
-  const baseDesign = mobile ? 68 : 52;
-  const cmdSize = Math.round(Math.max(baseDesign, minPhysical / Math.max(0.42, scaleY)));
-  const cmdFont = Math.max(mobile ? 12 : 10, Math.round(cmdSize * 0.2));
-
-  return { cmdSize, cmdFont, mobileChrome: mobile };
+  const { s, font } = useLayout();
+  const cmdSize = Math.round(s(BASE_CMD) * CMD_SCALE);
+  const cmdFont = Math.max(font(BASE_FONT), Math.round(font(BASE_FONT) * CMD_SCALE));
+  return { cmdSize, cmdFont, unitScale: 1 as const };
 }

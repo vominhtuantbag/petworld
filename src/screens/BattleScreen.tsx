@@ -84,7 +84,7 @@ export function BattleScreen() {
   const setup = useSetup();
   const socket = useSocket();
   const { s, font } = useLayout();
-  const { cmdSize, cmdFont } = useBattleCommandSize();
+  const { cmdSize, cmdFont, unitScale } = useBattleCommandSize();
   const juice = useCombatJuice();
   /** Design-canvas size (letterboxed world) — not the raw browser viewport. */
   const [screen, setScreen] = useState({ w: BATTLE_DESIGN_W, h: BATTLE_DESIGN_H });
@@ -941,9 +941,9 @@ export function BattleScreen() {
           active={Boolean(battle && battle.turnId === player.id)}
           targeted={allyFocusId === player.id}
           face="right"
-          size={s(118)}
+          size={Math.round(s(118) * unitScale)}
           statFont={font(10)}
-          barWidth={s(104)}
+          barWidth={Math.round(s(104) * unitScale)}
           step={steps[player.id] ?? null}
           slashKey={slashes[player.id] ?? 0}
           shakeKey={shakes[player.id] ?? 0}
@@ -969,9 +969,9 @@ export function BattleScreen() {
             active={battle ? battle.turnId === fighter.id : allyIds.includes(rawId(fighter.id))}
             targeted={allyFocusId === fighter.id}
             face="right"
-            size={Math.round(s(64) * 0.8)}
+            size={Math.round(s(64) * 0.8 * unitScale)}
             statFont={font(10)}
-            barWidth={s(86)}
+            barWidth={Math.round(s(86) * unitScale)}
             step={steps[fighter.id] ?? null}
             slashKey={slashes[fighter.id] ?? 0}
             shakeKey={shakes[fighter.id] ?? 0}
@@ -1007,9 +1007,9 @@ export function BattleScreen() {
             active={Boolean(battle && battle.turnId === fighter.id)}
             targeted={battle ? focusId === fighter.id && fighter.hp > 0 : true}
             face="left"
-            size={Math.round((densePack ? s(56) : s(64)) * 0.8)}
+            size={Math.round((densePack ? s(56) : s(64)) * 0.8 * unitScale)}
             statFont={font(10)}
-            barWidth={densePack ? s(72) : s(86)}
+            barWidth={Math.round((densePack ? s(72) : s(86)) * unitScale)}
           front={foeCells[index] === BATTLE_GRID_POSITIONS.enemy3}
           step={steps[fighter.id] ?? null}
           slashKey={slashes[fighter.id] ?? 0}

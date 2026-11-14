@@ -51,7 +51,7 @@ export function RaidScreen() {
   const world = useWorld();
   const snapshot = battle.raid;
   const { s, font } = useLayout();
-  const { cmdSize, cmdFont } = useBattleCommandSize();
+  const { cmdSize, cmdFont, unitScale } = useBattleCommandSize();
   const juice = useCombatJuice();
   const [screen, setScreen] = useState({ w: BATTLE_DESIGN_W, h: BATTLE_DESIGN_H });
   const [stageBox, setStageBox] = useState({ x: 0, y: 0 });
@@ -140,8 +140,8 @@ export function RaidScreen() {
   const turnQueue = queued.length > 0 ? queued : units.filter((unit) => unit.hp > 0).map((unit) => unit.id);
   const faceSize = timelineFaceSize(screen.w, 8, 8, turnQueue.length, s(28), 212 * 2 + 28);
   const foot = footMemo;
-  const heroSize = s(88);
-  const foeSize = Math.round(s(64) * 0.8);
+  const heroSize = Math.round(s(88) * unitScale);
+  const foeSize = Math.round(s(64) * 0.8 * unitScale);
   const bossSize = foeSize * RAID_BOSS_SCALE;
   const panelUnit = (unit: RaidUnitView | null, withSkills = false) => {
     if (!unit) return null;
@@ -405,7 +405,7 @@ export function RaidScreen() {
                 face={unit.side === 'party' ? 'right' : 'left'}
                 size={size}
                 statFont={font(10)}
-                barWidth={unit.kind === 'boss' ? s(120) : s(86)}
+                barWidth={Math.round((unit.kind === 'boss' ? s(120) : s(86)) * unitScale)}
                 front={unit.kind === 'boss'}
                 testID={`raid-unit-${unit.kind}-${unit.slot}`}
                 character={face.character}

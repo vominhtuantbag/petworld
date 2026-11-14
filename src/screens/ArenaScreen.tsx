@@ -55,7 +55,7 @@ export function ArenaScreen() {
   const battle = useBattle();
   const snapshot = battle.battle;
   const { s, font } = useLayout();
-  const { cmdSize, cmdFont } = useBattleCommandSize();
+  const { cmdSize, cmdFont, unitScale } = useBattleCommandSize();
   const juice = useCombatJuice();
   const [screen, setScreen] = useState({ w: BATTLE_DESIGN_W, h: BATTLE_DESIGN_H });
   const [stageBox, setStageBox] = useState({ x: 0, y: 0 });
@@ -146,8 +146,8 @@ export function ArenaScreen() {
   const turnQueue = queued.length > 0 ? queued : cast.filter((unit) => unit.hp > 0).map((unit) => unit.id);
   const faceSize = timelineFaceSize(screen.w, 8, 8, turnQueue.length, s(28), 212 * 2 + 28);
   const foot = footMemo;
-  const heroSize = s(118);
-  const petSize = Math.round(s(64) * 0.8);
+  const heroSize = Math.round(s(118) * unitScale);
+  const petSize = Math.round(s(64) * 0.8 * unitScale);
   const foeHeroSize = Math.round(petSize * 1.5);
   const youCharacter = getCharacter(snapshot.you.baseAvatarId);
   const foeCharacter = getCharacter(snapshot.opponent.baseAvatarId);
@@ -417,7 +417,7 @@ export function ArenaScreen() {
             face="right"
             size={heroSize}
             statFont={font(10)}
-            barWidth={s(104)}
+            barWidth={Math.round(s(104) * unitScale)}
             testID="arena-you"
             character={youCharacter}
             hairColor={snapshot.you.hairColor}
@@ -437,7 +437,7 @@ export function ArenaScreen() {
               face="right"
               size={petSize}
               statFont={font(10)}
-              barWidth={s(86)}
+              barWidth={Math.round(s(86) * unitScale)}
               testID={`court-ally-${index}`}
               onPress={() => inspectAlly(unit)}
               step={steps[unit.id] ?? null}
@@ -453,7 +453,7 @@ export function ArenaScreen() {
             face="left"
             size={foeHeroSize}
             statFont={font(10)}
-            barWidth={s(96)}
+            barWidth={Math.round(s(96) * unitScale)}
             testID="arena-opponent"
             character={foeCharacter}
             hairColor={snapshot.opponent.hairColor}
@@ -473,7 +473,7 @@ export function ArenaScreen() {
               face="left"
               size={petSize}
               statFont={font(10)}
-              barWidth={s(86)}
+              barWidth={Math.round(s(86) * unitScale)}
               front={FOE_PET_CELLS[index] === BATTLE_GRID_POSITIONS.enemy3}
               testID={`court-foe-${index}`}
               onPress={() => markFoe(unit)}

@@ -498,7 +498,7 @@ export const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#1a1612', overflow: 'hidden' },
   arena: { position: 'absolute', left: 0, top: 0, width: '100%', height: '100%' },
   frame: { flex: 1 },
-  /** Inner padding inside the letterboxed 16:9 battle world. */
+  /** Inner padding inside the 16:9 battle world. */
   worldPad: { paddingHorizontal: 8, paddingVertical: 6 },
   header: {
     flexDirection: 'row',
