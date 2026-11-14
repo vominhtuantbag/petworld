@@ -1,5 +1,7 @@
 import { Platform, Vibration } from 'react-native';
 
+import { getAudioSettings } from '../../audio/audioSettings';
+
 type CombatCue = 'arm' | 'tick' | 'cast' | 'cancel' | 'click' | 'hit' | 'crit';
 
 const TONES: Record<CombatCue, { freq: number; ms: number; gain: number; type?: OscillatorType }> = {
@@ -43,6 +45,7 @@ function webBeep(freq: number, ms: number, gain: number, type: OscillatorType = 
 
 /** Short combat cues. Native uses vibration; web plays a tiny beep. */
 export function combatSfx(kind: CombatCue) {
+  if (getAudioSettings().sfxMuted) return;
   if (Platform.OS !== 'web') {
     const ms = kind === 'crit' ? 28 : kind === 'hit' ? 16 : kind === 'cast' ? 18 : kind === 'click' ? 8 : kind === 'tick' ? 6 : 10;
     Vibration.vibrate(ms);

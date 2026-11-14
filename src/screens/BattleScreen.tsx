@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, Pressable, Text, View } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Animated, Pressable, Text, View } from 'react-native';
 
 import { CourtFx, type Fate, type Step } from '../components/battle/CourtFx';
 import { EndGameModal, type ExpMember, type LootSlot } from '../components/battle/EndGameModal';
@@ -16,8 +15,19 @@ import {
   enemySpawnCell,
   feetInView,
 } from '../components/battle/courtSlots';
-import { BattleInfoPanel } from '../components/battle/BattleInfoPanel';
-import { CourtUnit, FaceArt, RoundButton, TimelineFace, styles, timelineFaceSize } from '../components/battle/courtChrome';
+import { BattleWorldFrame, BATTLE_DESIGN_H, BATTLE_DESIGN_W } from '../components/battle/BattleWorldFrame';
+import { BattleInfoPanel, formatUnitInspectTip } from '../components/battle/BattleInfoPanel';
+import {
+  ActionTipBanner,
+  BattleLogLine,
+  CourtUnit,
+  FaceArt,
+  RoundButton,
+  TimelineFace,
+  armThenFire,
+  styles,
+  timelineFaceSize,
+} from '../components/battle/courtChrome';
 import { GestureActionButton } from '../components/battle/GestureActionButton';
 import { QuickTargetStrip } from '../components/battle/QuickTargetStrip';
 import { CharacterAvatar } from '../components/CharacterAvatar';
@@ -73,11 +83,11 @@ export function BattleScreen() {
   const setup = useSetup();
   const socket = useSocket();
   const { s, font } = useLayout();
-  const insets = useSafeAreaInsets();
   const juice = useCombatJuice();
-  const [screen, setScreen] = useState({ w: 0, h: 0 });
+  /** Design-canvas size (letterboxed world) — not the raw browser viewport. */
+  const [screen, setScreen] = useState({ w: BATTLE_DESIGN_W, h: BATTLE_DESIGN_H });
   const [stageBox, setStageBox] = useState({ x: 0, y: 0 });
-  const foot = (cell: string) => feetInView(cell, screen.w, screen.h, insets.left + stageBox.x, insets.top + stageBox.y);
+  const foot = (cell: string) => feetInView(cell, screen.w, screen.h, stageBox.x, stageBox.y);
   const petCells = [...PLAYER_PET_CELLS];
   const encounter = world.encounter;
   const character = getCharacter(setup.player?.baseCharacterId);
@@ -119,9 +129,13 @@ export function BattleScreen() {
   });
   const [battle, setBattle] = useState<BattleState | null>(opening?.battle ?? null);
   const [focusId, setFocusId] = useState<string | null>(opening?.battle.foes[0]?.id ?? null);
+  const [allyFocusId, setAllyFocusId] = useState<string | null>(opening?.battle.player.id ?? 'player');
   const [basicId, setBasicId] = useState<string | null>(world.squad?.basicId ?? null);
   const [actionId, setActionId] = useState('basic');
   const [aimKey, setAimKey] = useState<string | null>(null);
+  const [tipOverride, setTipOverride] = useState<string | null>(null);
+  const [utilityPicked, setUtilityPicked] = useState<string | null>(null);
+  const utilityArm = useRef({ key: '', at: 0 });
   const aimUnits = useMemo(() => {
     if (!battle || battle.over) return [];
     const ally = battle.allies.find((entry) => entry.id === battle.turnId && entry.hp > 0) ?? null;
@@ -300,7 +314,7 @@ export function BattleScreen() {
     const targetId = actor && actor.hp > 0 ? approachTarget(battle, focusId) : null;
     const place = (id: string) => {
       const cell = battleCell(id, battle);
-      return cell ? feetInView(cell, screen.w, screen.h, insets.left + stageBox.x, insets.top + stageBox.y) : null;
+      return cell ? feetInView(cell, screen.w, screen.h, stageBox.x, stageBox.y) : null;
     };
     setSteps((current) => {
       const next = { ...current };
@@ -336,7 +350,7 @@ export function BattleScreen() {
       }
       return changed ? next : current;
     });
-  }, [battle, beat, focusId, insets.left, insets.top, screen.h, screen.w, stageBox.x, stageBox.y]);
+  }, [battle, beat, focusId, screen.h, screen.w, stageBox.x, stageBox.y]);
 
   useEffect(() => {
     return () => {
@@ -537,6 +551,7 @@ export function BattleScreen() {
     advancingRef.current = false;
     rewardsRef.current = null;
     setFocusId(next.foes[0]?.id ?? null);
+    setAllyFocusId(next.player.id);
     strikeGen.current += 1;
     beatRef.current = 'stance';
     setBeat('stance');
@@ -667,16 +682,23 @@ export function BattleScreen() {
 
   const bindAction = (skillKey: string) => ({
     onArm: () => {
+      setUtilityPicked(null);
+      utilityArm.current = { key: '', at: 0 };
+      setTipOverride(null);
       setActionId(skillKey);
       setAimKey(null);
       combatSfx('arm');
     },
     onDoubleTap: () => {
+      setUtilityPicked(null);
+      setTipOverride(null);
       setActionId(skillKey);
       setAimKey(null);
       commitAction(skillKey, 'lowest');
     },
     onHoldStart: () => {
+      setUtilityPicked(null);
+      setTipOverride(null);
       setActionId(skillKey);
       setAimKey(skillKey);
       quick.beginAim();
@@ -688,6 +710,27 @@ export function BattleScreen() {
       if (result === 'cast') commitAction(skillKey, 'focus');
     },
   });
+
+  const actionTipText = (() => {
+    if (tipOverride) return tipOverride;
+    if (!battle) {
+      return `Chọn 3 địch${allyNeed ? ` và ${allyNeed} đồng đội` : ''}${itemNeed ? ' và 1 vật phẩm' : ''}, rồi nhấn Vào.`;
+    }
+    if (battle.over) {
+      return battle.over === 'win' ? 'Chiến thắng. Nhận thưởng và tiếp tục.' : 'Thất bại. Máu còn 1.';
+    }
+    const actor = actingAlly ?? battle.player;
+    if (actionId === 'basic') {
+      const basic = actor.basic;
+      return basic ? `Đánh thường · ${basic.name}. ${basic.blurb || 'Đòn vật lý cơ bản.'}` : 'Đòn đánh thường.';
+    }
+    const skill = (actor.skills ?? []).find((entry) => entry.id === actionId);
+    return skill ? describeSkill(skill) : 'Chọn một lệnh để xem mô tả.';
+  })();
+
+  const battleLogText = battle
+    ? `${battle.over === 'win' ? 'Chiến thắng. ' : battle.over === 'lose' ? 'Thất bại. ' : ''}${battle.log}`
+    : `Chuẩn bị trận · chọn đội hình bên dưới.`;
 
   const begin = () => {
     if (!ready) return;
@@ -706,6 +749,7 @@ export function BattleScreen() {
       world.vitals.maxStamina,
     );
     setFocusId(next.foes[0]?.id ?? null);
+    setAllyFocusId(next.player.id);
     strikeGen.current += 1;
     beatRef.current = 'stance';
     setBeat('stance');
@@ -734,9 +778,7 @@ export function BattleScreen() {
     if (list.includes(id)) set(list.filter((entry) => entry !== id));
     else if (list.length < max) set([...list, id]);
   };
-  const faceSize = timelineFaceSize(screen.w, insets.left, insets.right, turnQueue.length, s(28), s(168) * 2 + 28);
-  const activeFighter = battle && !battle.over ? lineup.find((entry) => entry.id === battle.turnId) ?? null : null;
-  const targetFighter = marked;
+  const faceSize = timelineFaceSize(screen.w, 8, 8, turnQueue.length, s(28), 212 * 2 + 28);
   const panelOf = (fighter: typeof player | null) =>
     fighter
       ? {
@@ -751,31 +793,65 @@ export function BattleScreen() {
           level: fighter.level,
           element: fighter.element,
           kindId: fighter.kindId,
+          statuses: fighter.statuses,
+          mods: fighter.mods,
+          skills: [
+            { id: fighter.basic.id, name: fighter.basic.name, wait: fighter.cooldowns?.[fighter.basic.id] ?? 0 },
+            ...(fighter.skills ?? []).map((skill) => ({
+              id: skill.id,
+              name: skill.name,
+              wait: fighter.cooldowns?.[skill.id] ?? 0,
+              mana: skill.mana,
+            })),
+          ],
         }
       : null;
+  const allyRoster = battle ? [battle.player, ...battle.allies] : [player, ...shownAllies];
+  const enemyRoster = battle ? battle.foes : shownFoes;
+  const leftFighter =
+    allyRoster.find((entry) => entry.id === allyFocusId) ??
+    allyRoster.find((entry) => entry.hp > 0) ??
+    allyRoster[0] ??
+    null;
+  const rightFighter =
+    enemyRoster.find((entry) => entry.id === focusId) ??
+    enemyRoster.find((entry) => entry.hp > 0) ??
+    enemyRoster[0] ??
+    null;
+  const inspectAlly = (fighter: (typeof allyRoster)[number]) => {
+    setAllyFocusId(fighter.id);
+    setUtilityPicked(null);
+    setTipOverride(formatUnitInspectTip(panelOf(fighter)));
+  };
+  const inspectEnemy = (fighter: (typeof enemyRoster)[number]) => {
+    setFocusId(fighter.id);
+    setUtilityPicked(null);
+    setTipOverride(formatUnitInspectTip(panelOf(fighter)));
+  };
 
   return (
-    <View
+    <BattleWorldFrame
       testID="field-battle"
-      style={styles.screen}
-      onLayout={(event) => {
-        const { width, height } = event.nativeEvent.layout;
-        setScreen((current) => (current.w === width && current.h === height ? current : { w: width, h: height }));
+      arenaSource={ARENA}
+      onMetrics={(metrics) => {
+        setScreen((current) =>
+          current.w === metrics.worldW && current.h === metrics.worldH
+            ? current
+            : { w: metrics.worldW, h: metrics.worldH },
+        );
       }}
     >
-      <Image source={ARENA} resizeMode="cover" pointerEvents="none" style={styles.arena} />
-      <SafeAreaView style={styles.frame} edges={['top', 'bottom', 'left', 'right']}>
+      <View style={[styles.frame, styles.worldPad]}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <BattleInfoPanel
-            title="Đang lượt"
             side="left"
-            unit={panelOf(activeFighter)}
-            avatarSize={s(40)}
+            unit={panelOf(leftFighter)}
+            avatarSize={s(48)}
             testID="info-active"
             portrait={
-              activeFighter?.side === 'player' && character ? (
-                <CharacterAvatar character={character} hairColor={setup.player.hairColor} outfitColor={setup.player.outfitColor} size={s(38)} />
+              leftFighter?.side === 'player' && character ? (
+                <CharacterAvatar character={character} hairColor={setup.player.hairColor} outfitColor={setup.player.outfitColor} size={s(46)} />
               ) : undefined
             }
           />
@@ -801,7 +877,7 @@ export function BattleScreen() {
               );
             }}
           />
-          <View style={styles.headerControls}>
+            <View style={styles.headerControls}>
             <RoundButton
               label={
                 battle?.over
@@ -829,17 +905,21 @@ export function BattleScreen() {
               />
             ) : null}
           </View>
+          {paused && battle ? (
+            <Text style={[styles.pauseBanner, { position: 'relative', top: 0, alignSelf: 'center', fontSize: font(12) }]}>Tạm dừng</Text>
+          ) : (
+            <BattleLogLine text={battleLogText} fontSize={font(11)} testID="battle-log" />
+          )}
         </View>
         <View style={styles.headerRight}>
           <BattleInfoPanel
-            title="Mục tiêu"
             side="right"
-            unit={panelOf(targetFighter)}
-            avatarSize={s(40)}
+            unit={panelOf(rightFighter)}
+            avatarSize={s(48)}
             testID="info-target"
             portrait={
-              targetFighter?.side === 'player' && character ? (
-                <CharacterAvatar character={character} hairColor={setup.player.hairColor} outfitColor={setup.player.outfitColor} size={s(38)} />
+              rightFighter?.side === 'player' && character ? (
+                <CharacterAvatar character={character} hairColor={setup.player.hairColor} outfitColor={setup.player.outfitColor} size={s(46)} />
               ) : undefined
             }
           />
@@ -857,6 +937,7 @@ export function BattleScreen() {
           fighter={player}
           slot={foot(BATTLE_GRID_POSITIONS.player)}
           active={Boolean(battle && battle.turnId === player.id)}
+          targeted={allyFocusId === player.id}
           face="right"
           size={s(118)}
           statFont={font(10)}
@@ -869,6 +950,14 @@ export function BattleScreen() {
           character={character}
           hairColor={setup.player.hairColor}
           outfitColor={setup.player.outfitColor}
+          onPress={() => {
+            inspectAlly(player);
+            if (battle && quick.noteUnitTap(player.id) === 'double' && needsAllyTarget(
+              ((actingAlly ?? battle.player).skills.find((entry) => entry.id === actionId) ?? (actingAlly ?? battle.player).basic),
+            )) {
+              commitAction(actionId, player.id);
+            }
+          }}
         />
         {shownAllies.map((fighter, index) => (
           <CourtUnit
@@ -876,6 +965,7 @@ export function BattleScreen() {
             fighter={fighter}
             slot={foot(petCells[index] ?? petCells[0])}
             active={battle ? battle.turnId === fighter.id : allyIds.includes(rawId(fighter.id))}
+            targeted={allyFocusId === fighter.id}
             face="right"
             size={Math.round(s(64) * 0.8)}
             statFont={font(10)}
@@ -893,13 +983,17 @@ export function BattleScreen() {
                     const skill =
                       actionId === 'basic' ? actor.basic : actor.skills.find((entry) => entry.id === actionId) ?? actor.basic;
                     const canPick = fighter.hp > 0 || (needsAllyTarget(skill) && allowsFallenTargets(skill));
-                    if (!canPick) return undefined;
+                    if (!canPick) return () => inspectAlly(fighter);
                     return () => {
+                      inspectAlly(fighter);
                       setFocusId(fighter.id);
                       if (quick.noteUnitTap(fighter.id) === 'double') commitAction(actionId, fighter.id);
                     };
                   })()
-                : () => toggleId(allyIds, rawId(fighter.id), 3, setPickedAllies)
+                : () => {
+                    inspectAlly(fighter);
+                    toggleId(allyIds, rawId(fighter.id), 3, setPickedAllies);
+                  }
             }
           />
         ))}
@@ -909,7 +1003,7 @@ export function BattleScreen() {
             fighter={fighter}
             slot={foot(foeCells[index] ?? foeCells[0])}
             active={Boolean(battle && battle.turnId === fighter.id)}
-            targeted={battle ? focus?.id === fighter.id && fighter.hp > 0 : true}
+            targeted={battle ? focusId === fighter.id && fighter.hp > 0 : true}
             face="left"
             size={Math.round((densePack ? s(56) : s(64)) * 0.8)}
             statFont={font(10)}
@@ -922,13 +1016,14 @@ export function BattleScreen() {
           testID={`court-foe-${index}`}
             onPress={
               battle
-                ? fighter.hp > 0
-                  ? () => {
-                      setFocusId(fighter.id);
-                      if (quick.noteUnitTap(fighter.id) === 'double') commitAction(actionId, fighter.id);
-                    }
-                  : undefined
-                : () => toggleId(foeIds, fighter.id, 3, setPickedFoes)
+                ? () => {
+                    inspectEnemy(fighter);
+                    if (fighter.hp > 0 && quick.noteUnitTap(fighter.id) === 'double') commitAction(actionId, fighter.id);
+                  }
+                : () => {
+                    inspectEnemy(fighter);
+                    toggleId(foeIds, fighter.id, 3, setPickedFoes);
+                  }
             }
           />
         ))}
@@ -949,15 +1044,6 @@ export function BattleScreen() {
             />
           );
         })}
-        {paused && battle ? (
-          <Text style={[styles.pauseBanner, { fontSize: font(14) }]}>Tạm dừng</Text>
-        ) : (
-          <Text style={[styles.log, { fontSize: font(11) }]} numberOfLines={1}>
-            {battle
-              ? `${battle.over === 'win' ? 'Chiến thắng. ' : battle.over === 'lose' ? 'Thất bại. ' : ''}${battle.log}`
-              : `Chọn 3 địch${allyNeed ? ` và ${allyNeed} đồng đội` : ''}${itemNeed ? ' và 1 vật phẩm' : ''}.`}
-          </Text>
-        )}
       </Animated.View>
       {juice.overlay}
 
@@ -992,7 +1078,7 @@ export function BattleScreen() {
           {!battle ? (
             <>
               <Text style={[styles.dockLabel, { fontSize: font(10) }]} numberOfLines={1}>
-                Mục tiêu
+                Địch
               </Text>
               <View style={styles.targetRow}>
                 {cards.slice(0, 6).map((fighter) => {
@@ -1011,12 +1097,9 @@ export function BattleScreen() {
                 })}
               </View>
             </>
-          ) : marked ? (
-            <Text style={[styles.dockLabel, { fontSize: font(10) }]} numberOfLines={1}>
-              {marked.name}
-            </Text>
           ) : null}
         </View>
+        <ActionTipBanner text={actionTipText} fontSize={font(11)} testID="action-tip" />
         <View style={styles.commands}>
           {!battle ? (
             <>
@@ -1027,7 +1110,11 @@ export function BattleScreen() {
                   hint="Đòn đánh thường"
                   square
                   hot={(basicId ?? playerPreview.basic.id) === skill.id}
-                  onPress={() => setBasicId(skill.id)}
+                  onHighlight={() => setTipOverride(`Đòn đánh thường · ${skill.name}. ${skill.blurb || ''}`.trim())}
+                  onPress={() => {
+                    setTipOverride(`Đòn đánh thường · ${skill.name}. ${skill.blurb || ''}`.trim());
+                    setBasicId(skill.id);
+                  }}
                   size={s(48)}
                   font={font(10)}
                 />
@@ -1038,25 +1125,60 @@ export function BattleScreen() {
                   label={shortItem(stack.itemId)}
                   tint={ITEMS[stack.itemId].tint}
                   hot={itemIds.includes(stack.itemId)}
-                  onPress={() => toggleId(itemIds, stack.itemId, 1, setPickedItems)}
+                  onHighlight={() => setTipOverride(`${ITEMS[stack.itemId].nameVi} · mang vào trận.`)}
+                  onPress={() => {
+                    setTipOverride(`${ITEMS[stack.itemId].nameVi} · mang vào trận.`);
+                    toggleId(itemIds, stack.itemId, 1, setPickedItems);
+                  }}
                   size={s(44)}
                   font={font(10)}
                 />
               ))}
-              <RoundButton label="Vào" hint="Vào trận" hot={ready} disabled={!ready} onPress={begin} testID="battle-start" size={s(52)} font={font(12)} tint="#e25b2a" />
+              <RoundButton
+                label="Vào"
+                hint="Vào trận"
+                hot={ready}
+                disabled={!ready}
+                onHighlight={() => setTipOverride('Bắt đầu trận với đội hình đã chọn.')}
+                onPress={begin}
+                testID="battle-start"
+                size={s(52)}
+                font={font(12)}
+                tint="#e25b2a"
+              />
             </>
           ) : battle.over ? null : (
             <>
               {actingAlly ? null : (
                 <RoundButton
                   label={nets > 0 ? `Lưới ×${nets}` : 'Lưới'}
-                  hint={nets > 0 ? `Thu phục, còn ${nets} lưới` : 'Hết lưới bắt quái!'}
+                  hint={nets > 0 ? `Thu phục, còn ${nets} lưới · chạm 2 lần để dùng` : 'Hết lưới bắt quái!'}
                   square
                   tint="#3cba45"
+                  picked={utilityPicked === 'tame'}
                   disabled={!playerTurn}
                   dim={nets <= 0}
                   testID="tame-open"
-                  onPress={openTame}
+                  onHighlight={() =>
+                    setTipOverride(
+                      nets > 0
+                        ? `Lưới · thu phục mục tiêu. Còn ${nets} lưới. Chạm lần nữa để dùng.`
+                        : 'Hết lưới bắt quái!',
+                    )
+                  }
+                  onPress={() => {
+                    const tip =
+                      nets > 0
+                        ? `Lưới · thu phục mục tiêu. Còn ${nets} lưới. Chạm lần nữa để dùng.`
+                        : 'Hết lưới bắt quái!';
+                    setTipOverride(tip);
+                    setUtilityPicked('tame');
+                    if (nets <= 0) return;
+                    armThenFire(utilityArm, 'tame', 450, () => {
+                      setUtilityPicked(null);
+                      openTame();
+                    });
+                  }}
                   size={s(52)}
                   font={font(10)}
                 />
@@ -1080,7 +1202,7 @@ export function BattleScreen() {
                 return (
                   <GestureActionButton
                     key={skill.id}
-                    label={wait > 0 ? `CD ${wait}` : skill.name}
+                    label={skill.name}
                     hint={describeSkill(skill)}
                     tint="#7fd0c4"
                     hot={actionId === skill.id}
@@ -1098,12 +1220,23 @@ export function BattleScreen() {
               })}
               <RoundButton
                 label="Phòng thủ"
-                hint="Giảm 25% sát thương đến lượt sau"
+                hint="Giảm 25% sát thương đến lượt sau · chạm 2 lần để dùng"
                 square
                 tint="#2f6fe0"
+                picked={utilityPicked === 'defend'}
                 disabled={!commandTurn}
                 testID="battle-defend"
-                onPress={() => commitAction('defend', 'focus')}
+                onHighlight={() =>
+                  setTipOverride('Phòng thủ · giảm 25% sát thương đến lượt sau. Chạm lần nữa để dùng.')
+                }
+                onPress={() => {
+                  setTipOverride('Phòng thủ · giảm 25% sát thương đến lượt sau. Chạm lần nữa để dùng.');
+                  setUtilityPicked('defend');
+                  armThenFire(utilityArm, 'defend', 450, () => {
+                    setUtilityPicked(null);
+                    commitAction('defend', 'focus');
+                  });
+                }}
                 size={s(52)}
                 font={font(10)}
               />
@@ -1112,7 +1245,7 @@ export function BattleScreen() {
         </View>
       </View>
 
-      </SafeAreaView>
+      </View>
       {toast ? (
         <View pointerEvents="none" style={styles.toast} testID="battle-toast">
           <Text style={[styles.toastLabel, { fontSize: font(13) }]}>{toast}</Text>
@@ -1141,7 +1274,7 @@ export function BattleScreen() {
           onRetry={world.encounter?.mine ? undefined : retry}
         />
       ) : null}
-    </View>
+    </BattleWorldFrame>
   );
 }
 

@@ -107,14 +107,20 @@ export function CourtUnit({
 }) {
   void statFont;
   const fainted = fighter.hp <= 0;
-  const boxW = Math.max(size + 28, barWidth);
+  /** Compact over-head tracks — ~60% of the caller’s barWidth. */
+  const trackW = Math.max(16, Math.round(barWidth * 0.6));
+  const boxW = Math.max(size + 28, trackW);
   const hasShield = !fainted && (fighter.shieldHp ?? 0) > 0;
-  const barH = 4;
-  const iconSize = Math.max(12, Math.round(size * 0.14));
-  const iconPad = Math.round(iconSize + 10);
-  const chrome = iconPad + (hasShield ? 3 : 2) * (barH + 2) + 2;
-  const labelWidth = Math.max(barWidth, Math.round(size * 0.9));
+  const barH = 3;
+  const iconSize = Math.max(10, Math.round(size * 0.12));
+  const barCount = fainted ? 1 : hasShield ? 3 : 2;
+  const barsH = barCount * (barH + 1);
+  const iconPad = Math.round(iconSize + 4);
+  const chrome = iconPad + barsH + 2;
+  const labelWidth = Math.max(trackW, Math.round(size * 0.55));
   const drop = overheadDrop(slot.y, size, chrome);
+  /** Tiny air gap between the bar stack bottom and the sprite crown. */
+  const headGap = Math.max(2, Math.round(size * 0.02));
   const loco: LocomotionType = fighter.kindId ? locomotionTypeOf(fighter.kindId) : 'QUADRUPEDAL';
   const idleProfile = COURT_IDLE[loco];
   const idle = useRef(new Animated.Value(0)).current;
@@ -176,12 +182,23 @@ export function CourtUnit({
       ]}
     >
       <CourtFx step={step ?? null} slashKey={slashKey ?? 0} shakeKey={shakeKey ?? 0} fate={fate ?? null} hitDir={hitDir}>
-        <View pointerEvents="none" style={[styles.hud, { top: -chrome + drop, width: labelWidth, marginLeft: (boxW - labelWidth) / 2 }]}>
+        <View
+          pointerEvents="none"
+          style={[
+            styles.hud,
+            {
+              // Bottom-anchor so bars sit snug above the head; status icons grow upward.
+              bottom: size + headGap - drop,
+              width: labelWidth,
+              marginLeft: (boxW - labelWidth) / 2,
+            },
+          ]}
+        >
           <StatusIcons fighter={fighter} size={iconSize} max={size >= 90 ? 6 : 4} />
-          <FloatBar value={fighter.hp} max={fighter.maxHp} tint="#e53935" width={barWidth} height={barH} />
-          {!fainted ? <FloatBar value={fighter.mp} max={fighter.maxMp} tint="#2f6fe0" width={barWidth} height={barH} /> : null}
+          <FloatBar value={fighter.hp} max={fighter.maxHp} tint="#e53935" width={trackW} height={barH} />
+          {!fainted ? <FloatBar value={fighter.mp} max={fighter.maxMp} tint="#2f6fe0" width={trackW} height={barH} /> : null}
           {hasShield ? (
-            <FloatBar value={fighter.shieldHp ?? 0} max={Math.max(fighter.shieldHp ?? 1, fighter.maxHp)} tint="#43a047" width={barWidth} height={barH} />
+            <FloatBar value={fighter.shieldHp ?? 0} max={Math.max(fighter.shieldHp ?? 1, fighter.maxHp)} tint="#43a047" width={trackW} height={barH} />
           ) : null}
         </View>
         <Animated.View
@@ -324,6 +341,59 @@ export function TimelineFace({
   );
 }
 
+/** Combat feed under the turn bar — white ink with a hard black outline. */
+export function BattleLogLine({
+  text,
+  fontSize,
+  testID,
+}: {
+  text: string;
+  fontSize: number;
+  testID?: string;
+}) {
+  return (
+    <Text style={[styles.battleLog, { fontSize }]} numberOfLines={2} testID={testID}>
+      {text}
+    </Text>
+  );
+}
+
+/** Bottom-center action tooltip. Transparent so the arena stays visible. */
+export function ActionTipBanner({
+  text,
+  fontSize,
+  testID,
+}: {
+  text: string;
+  fontSize: number;
+  testID?: string;
+}) {
+  return (
+    <View style={styles.actionTip} testID={testID} pointerEvents="none">
+      <Text style={[styles.actionTipText, { fontSize }]} numberOfLines={4}>
+        {text || 'Chọn một lệnh để xem mô tả.'}
+      </Text>
+    </View>
+  );
+}
+
+/** Single click arms + shows tip; second click within window executes. */
+export function armThenFire(
+  store: { current: { key: string; at: number } },
+  key: string,
+  windowMs: number,
+  fire: () => void,
+): 'armed' | 'fired' {
+  const now = Date.now();
+  if (store.current.key === key && now - store.current.at < windowMs) {
+    store.current = { key: '', at: 0 };
+    fire();
+    return 'fired';
+  }
+  store.current = { key, at: now };
+  return 'armed';
+}
+
 export function RoundButton({
   label,
   onPress,
@@ -339,6 +409,7 @@ export function RoundButton({
   square,
   width,
   juicy = true,
+  onHighlight,
 }: {
   label: string;
   onPress: () => void;
@@ -357,6 +428,8 @@ export function RoundButton({
   width?: number;
   /** Press scale + click + release glow. Off for inert labels. */
   juicy?: boolean;
+  /** Fires on press-in so the dock tip can preview this command. */
+  onHighlight?: () => void;
 }) {
   const buttonWidth = width ?? size;
   const press = useRef(new Animated.Value(0)).current;
@@ -367,6 +440,7 @@ export function RoundButton({
   const rippleOpacity = ripple.interpolate({ inputRange: [0, 0.25, 1], outputRange: [0, 0.5, 0] });
 
   const pressIn = () => {
+    onHighlight?.();
     if (!juicy || disabled) return;
     combatSfx('click');
     Animated.timing(press, { toValue: 1, duration: 70, useNativeDriver: true }).start();
@@ -424,6 +498,8 @@ export const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#1a1612', overflow: 'hidden' },
   arena: { position: 'absolute', left: 0, top: 0, width: '100%', height: '100%' },
   frame: { flex: 1 },
+  /** Inner padding inside the letterboxed 16:9 battle world. */
+  worldPad: { paddingHorizontal: 8, paddingVertical: 6 },
   header: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -434,9 +510,9 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingTop: 4,
   },
-  headerLeft: { flexShrink: 0, maxWidth: '28%', zIndex: 8 },
+  headerLeft: { flexGrow: 0, flexShrink: 0, zIndex: 8 },
   headerCenter: { flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'flex-start', gap: 4, zIndex: 2 },
-  headerRight: { flexShrink: 0, maxWidth: '28%', zIndex: 8, alignItems: 'flex-end' },
+  headerRight: { flexGrow: 0, flexShrink: 0, zIndex: 8, alignItems: 'flex-end' },
   headerControls: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center', alignItems: 'center' },
   timeFace: { overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: '#d7d2c8' },
   timeFaceActive: {
@@ -445,7 +521,7 @@ export const styles = StyleSheet.create({
   },
   stage: { flex: 1, minHeight: 0, overflow: 'hidden' },
   unit: { position: 'absolute', alignItems: 'center' },
-  hud: { position: 'absolute', left: 0, alignItems: 'center', gap: 2 },
+  hud: { position: 'absolute', left: 0, alignItems: 'center', gap: 1 },
   spriteWrap: { alignItems: 'center', justifyContent: 'flex-end' },
   pressShade: {
     ...StyleSheet.absoluteFill,
@@ -520,17 +596,29 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
+  /** @deprecated Prefer BattleLogLine under the turn bar. Kept for pause overlays. */
   log: {
     position: 'absolute',
     left: 8,
     right: 8,
     bottom: 0,
-    color: '#f6f1e7',
+    color: '#ffffff',
     textAlign: 'center',
     zIndex: 50,
-    textShadowColor: 'rgba(0,0,0,0.8)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
+    fontWeight: '800',
+    textShadowColor: '#000000',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 4,
+  },
+  battleLog: {
+    color: '#ffffff',
+    textAlign: 'center',
+    fontWeight: '800',
+    maxWidth: '100%',
+    paddingHorizontal: 6,
+    textShadowColor: '#000000',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 4,
   },
   dock: {
     flexDirection: 'row',
@@ -543,7 +631,27 @@ export const styles = StyleSheet.create({
     overflow: 'visible',
     zIndex: 20,
   },
-  targets: { gap: 2, flexShrink: 1 },
+  targets: { gap: 2, flexShrink: 1, maxWidth: '22%' },
+  actionTip: {
+    flex: 1,
+    minWidth: 0,
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    minHeight: 48,
+  },
+  actionTipText: {
+    color: '#ffffff',
+    textAlign: 'center',
+    fontWeight: '800',
+    textShadowColor: '#000000',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 4,
+  },
   dockLabel: {
     color: '#f6f1e7',
     fontWeight: '700',
@@ -557,13 +665,12 @@ export const styles = StyleSheet.create({
   target: { overflow: 'hidden', borderWidth: 2, borderColor: '#9aa89f', backgroundColor: '#d7d2c8' },
   targetOn: { borderColor: '#ff2d2d' },
   commands: {
-    flex: 1,
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'flex-end',
     alignItems: 'flex-end',
     gap: 6,
-    maxWidth: '62%',
+    maxWidth: '42%',
     overflow: 'visible',
     zIndex: 30,
   },

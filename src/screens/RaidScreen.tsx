@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, Linking, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Animated, Linking, StyleSheet, Text, View } from 'react-native';
 
 import { TamingMiniGameModal } from '../components/battle/TamingMiniGameModal';
 import { FloatingCombatText } from '../components/battle/FloatingCombatText';
@@ -9,9 +8,20 @@ import { useCombatJuice } from '../components/battle/JuiceOverlay';
 import { QuickTargetStrip } from '../components/battle/QuickTargetStrip';
 import { TurnTimeline } from '../components/battle/TurnTimeline';
 import { feetInView } from '../components/battle/courtSlots';
+import { BattleWorldFrame, BATTLE_DESIGN_H, BATTLE_DESIGN_W } from '../components/battle/BattleWorldFrame';
 import { CharacterAvatar } from '../components/CharacterAvatar';
-import { BattleInfoPanel } from '../components/battle/BattleInfoPanel';
-import { CourtUnit, RoundButton, TimelineFace, styles as court, timelineFaceSize, type CourtActor } from '../components/battle/courtChrome';
+import { BattleInfoPanel, formatUnitInspectTip } from '../components/battle/BattleInfoPanel';
+import {
+  ActionTipBanner,
+  BattleLogLine,
+  CourtUnit,
+  RoundButton,
+  TimelineFace,
+  armThenFire,
+  styles as court,
+  timelineFaceSize,
+  type CourtActor,
+} from '../components/battle/courtChrome';
 import { getCharacter } from '../data/characters';
 import { useQuickTarget } from '../hooks/useQuickTarget';
 import { useSocketCombatFx } from '../hooks/useSocketCombatFx';
@@ -40,14 +50,17 @@ export function RaidScreen() {
   const world = useWorld();
   const snapshot = battle.raid;
   const { s, font } = useLayout();
-  const insets = useSafeAreaInsets();
   const juice = useCombatJuice();
-  const [screen, setScreen] = useState({ w: 0, h: 0 });
+  const [screen, setScreen] = useState({ w: BATTLE_DESIGN_W, h: BATTLE_DESIGN_H });
   const [stageBox, setStageBox] = useState({ x: 0, y: 0 });
   const [now, setNow] = useState(Date.now());
   const [picked, setPicked] = useState<Pick>('attack');
+  const [tipOverride, setTipOverride] = useState<string | null>(null);
   const [aimKey, setAimKey] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
+  const [allyFocusId, setAllyFocusId] = useState<string | null>(null);
+  const [utilityPicked, setUtilityPicked] = useState<string | null>(null);
+  const utilityArm = useRef({ key: '', at: 0 });
   const aimUnits = useMemo(
     () =>
       (snapshot?.units ?? [])
@@ -93,8 +106,8 @@ export function RaidScreen() {
   const focus = livingFoes.find((unit) => unit.id === focusId) ?? livingFoes[0] ?? null;
   const finishedEarly = snapshot?.status === 'finished' || snapshot?.status === 'taming';
   const footMemo = useMemo(() => {
-    return (cell: string) => feetInView(cell, screen.w, screen.h, insets.left + stageBox.x, insets.top + stageBox.y);
-  }, [insets.left, insets.top, screen.h, screen.w, stageBox.x, stageBox.y]);
+    return (cell: string) => feetInView(cell, screen.w, screen.h, stageBox.x, stageBox.y);
+  }, [screen.h, screen.w, stageBox.x, stageBox.y]);
   const slotOf = useMemo(() => {
     return (id: string) => {
       const unit = units.find((entry) => entry.id === id);
@@ -123,12 +136,12 @@ export function RaidScreen() {
   const actor = units.find((unit) => unit.id === snapshot.turnId) ?? null;
   const queued = snapshot.queue ?? [];
   const turnQueue = queued.length > 0 ? queued : units.filter((unit) => unit.hp > 0).map((unit) => unit.id);
-  const faceSize = timelineFaceSize(screen.w, insets.left, insets.right, turnQueue.length, s(28), s(168) * 2 + 28);
+  const faceSize = timelineFaceSize(screen.w, 8, 8, turnQueue.length, s(28), 212 * 2 + 28);
   const foot = footMemo;
   const heroSize = s(88);
   const foeSize = Math.round(s(64) * 0.8);
   const bossSize = foeSize * RAID_BOSS_SCALE;
-  const panelUnit = (unit: RaidUnitView | null) => {
+  const panelUnit = (unit: RaidUnitView | null, withSkills = false) => {
     if (!unit) return null;
     const face = unit.baseAvatarId ? getCharacter(unit.baseAvatarId) : null;
     return {
@@ -139,7 +152,25 @@ export function RaidScreen() {
       maxHp: unit.maxHp,
       mp: unit.mp,
       maxMp: unit.maxMp,
+      level: undefined,
       element: unit.element ?? (unit.kind === 'hero' ? heroTraits(face?.professionId).element : null),
+      shieldHp: unit.shieldHp,
+      statuses: (unit.statuses ?? []).map((entry) => ({
+        id: entry.id as import('../world/combat/advanced').StatusId,
+        turns: entry.turns,
+        power: entry.power,
+      })),
+      skills: withSkills
+        ? [
+            { id: 'attack', name: 'Đánh thường', wait: 0 },
+            ...(snapshot.skills ?? []).map((skill) => ({
+              id: skill.id ?? `skill-${skill.index}`,
+              name: skill.name,
+              wait: skill.wait ?? 0,
+              mana: skill.mana,
+            })),
+          ]
+        : undefined,
     };
   };
   const skillCard1 = snapshot.skills?.[0];
@@ -183,16 +214,23 @@ export function RaidScreen() {
     const key = String(choice);
     return {
       onArm: () => {
+        setUtilityPicked(null);
+        utilityArm.current = { key: '', at: 0 };
+        setTipOverride(null);
         setPicked(choice);
         setAimKey(null);
         combatSfx('arm');
       },
       onDoubleTap: () => {
+        setUtilityPicked(null);
+        setTipOverride(null);
         setPicked(choice);
         setAimKey(null);
         fire(choice, 'lowest');
       },
       onHoldStart: () => {
+        setUtilityPicked(null);
+        setTipOverride(null);
         setPicked(choice);
         setAimKey(key);
         quick.beginAim();
@@ -205,6 +243,36 @@ export function RaidScreen() {
       },
     };
   };
+
+  const leftUnit =
+    party.find((unit) => unit.id === allyFocusId) ??
+    party.find((unit) => unit.hp > 0) ??
+    party[0] ??
+    null;
+  const rightUnit =
+    foes.find((unit) => unit.id === focusId) ??
+    livingFoes[0] ??
+    foes[0] ??
+    null;
+  const inspectAlly = (unit: RaidUnitView) => {
+    setAllyFocusId(unit.id);
+    setUtilityPicked(null);
+    setTipOverride(formatUnitInspectTip(panelUnit(unit, unit.kind === 'hero' && unit.ownerId != null)));
+  };
+  const inspectEnemy = (unit: RaidUnitView) => {
+    setFocusId(unit.id);
+    setUtilityPicked(null);
+    setTipOverride(formatUnitInspectTip(panelUnit(unit)));
+    if (unit.hp > 0 && quick.noteUnitTap(unit.id) === 'double') fire(picked, unit.id);
+  };
+
+  const actionTipText =
+    tipOverride ??
+    (picked === 'attack'
+      ? 'Đánh thường · đòn vật lý cơ bản. Chạm đúp hoặc giữ-kéo để ra đòn.'
+      : picked === 0
+        ? `${skill1} · tốn ${skillCard1?.mana ?? 0} MP. Chạm đúp hoặc giữ-kéo để thi triển.`
+        : `${skill2} · tốn ${skillCard2?.mana ?? 0} MP. Chạm đúp hoặc giữ-kéo để thi triển.`);
 
   const aimPopup = <QuickTargetStrip units={aimUnits} focusId={focus?.id ?? focusId} aiming size={s(36)} testIDPrefix="raid-target" />;
 
@@ -226,34 +294,35 @@ export function RaidScreen() {
   const sizeOf = (unit: RaidUnitView) => (unit.kind === 'boss' ? bossSize : unit.kind === 'hero' ? heroSize : foeSize);
 
   return (
-    <View
+    <BattleWorldFrame
       testID="raid-screen"
-      style={court.screen}
-      onLayout={(event) => {
-        const { width, height } = event.nativeEvent.layout;
-        setScreen((current) => (current.w === width && current.h === height ? current : { w: width, h: height }));
+      arenaSource={ARENA}
+      onMetrics={(metrics) => {
+        setScreen((current) =>
+          current.w === metrics.worldW && current.h === metrics.worldH
+            ? current
+            : { w: metrics.worldW, h: metrics.worldH },
+        );
       }}
     >
-      <Image source={ARENA} resizeMode="cover" pointerEvents="none" style={court.arena} />
-      <SafeAreaView style={court.frame} edges={['top', 'bottom', 'left', 'right']}>
+      <View style={[court.frame, court.worldPad]}>
         <View style={court.header}>
           <View style={court.headerLeft}>
             <BattleInfoPanel
-              title="Đang lượt"
               side="left"
-              unit={panelUnit(actor)}
-              avatarSize={s(40)}
+              unit={panelUnit(leftUnit, leftUnit?.kind === 'hero')}
+              avatarSize={s(48)}
               testID="info-active"
               portrait={(() => {
-                if (actor?.kind !== 'hero' || !actor.baseAvatarId) return undefined;
-                const character = getCharacter(actor.baseAvatarId);
+                if (leftUnit?.kind !== 'hero' || !leftUnit.baseAvatarId) return undefined;
+                const character = getCharacter(leftUnit.baseAvatarId);
                 if (!character) return undefined;
                 return (
                   <CharacterAvatar
                     character={character}
-                    hairColor={actor.hairColor ?? '#3b2a1c'}
-                    outfitColor={actor.outfitColor ?? '#4a6b5a'}
-                    size={s(38)}
+                    hairColor={leftUnit.hairColor ?? '#3b2a1c'}
+                    outfitColor={leftUnit.outfitColor ?? '#4a6b5a'}
+                    size={s(46)}
                   />
                 );
               })()}
@@ -285,24 +354,24 @@ export function RaidScreen() {
               <RoundButton label={finished ? 'Hết' : `${seconds}s`} hint="Thời gian lượt" onPress={() => undefined} size={s(32)} width={s(64)} font={font(11)} />
               <RoundButton label={`Hiệp ${snapshot.round}`} hint="Hiệp đấu" onPress={() => undefined} size={s(32)} width={s(70)} font={font(10)} />
             </View>
+            <BattleLogLine text={log} fontSize={font(11)} testID="raid-log" />
           </View>
           <View style={court.headerRight}>
             <BattleInfoPanel
-              title="Mục tiêu"
               side="right"
-              unit={panelUnit(focus)}
-              avatarSize={s(40)}
+              unit={panelUnit(rightUnit)}
+              avatarSize={s(48)}
               testID="info-target"
               portrait={(() => {
-                if (focus?.kind !== 'hero' || !focus.baseAvatarId) return undefined;
-                const character = getCharacter(focus.baseAvatarId);
+                if (rightUnit?.kind !== 'hero' || !rightUnit.baseAvatarId) return undefined;
+                const character = getCharacter(rightUnit.baseAvatarId);
                 if (!character) return undefined;
                 return (
                   <CharacterAvatar
                     character={character}
-                    hairColor={focus.hairColor ?? '#3b2a1c'}
-                    outfitColor={focus.outfitColor ?? '#4a6b5a'}
-                    size={s(38)}
+                    hairColor={rightUnit.hairColor ?? '#3b2a1c'}
+                    outfitColor={rightUnit.outfitColor ?? '#4a6b5a'}
+                    size={s(46)}
                   />
                 );
               })()}
@@ -326,7 +395,11 @@ export function RaidScreen() {
                 fighter={toCourt(unit)}
                 slot={foot(cellFor(unit))}
                 active={snapshot.turnId === unit.id}
-                targeted={focus?.id === unit.id && unit.hp > 0}
+                targeted={
+                  unit.side === 'party'
+                    ? allyFocusId === unit.id
+                    : focusId === unit.id && unit.hp > 0
+                }
                 face={unit.side === 'party' ? 'right' : 'left'}
                 size={size}
                 statFont={font(10)}
@@ -337,12 +410,9 @@ export function RaidScreen() {
                 hairColor={face.hairColor}
                 outfitColor={face.outfitColor}
                 onPress={
-                  unit.side === 'foe' && unit.hp > 0
-                    ? () => {
-                        setFocusId(unit.id);
-                        if (quick.noteUnitTap(unit.id) === 'double') fire(picked, unit.id);
-                      }
-                    : undefined
+                  unit.side === 'party'
+                    ? () => inspectAlly(unit)
+                    : () => inspectEnemy(unit)
                 }
                 step={steps[unit.id] ?? null}
                 slashKey={slashes[unit.id] ?? 0}
@@ -368,20 +438,12 @@ export function RaidScreen() {
               />
             );
           })}
-          <Text style={[court.log, { fontSize: font(11) }]} numberOfLines={1}>
-            {log}
-          </Text>
         </Animated.View>
         {juice.overlay}
 
         <View style={court.dock}>
-          <View style={court.targets}>
-            {focus ? (
-              <Text style={[court.dockLabel, { fontSize: font(10) }]} numberOfLines={1}>
-                {focus.name}
-              </Text>
-            ) : null}
-          </View>
+          <View style={court.targets} />
+          <ActionTipBanner text={actionTipText} fontSize={font(11)} testID="raid-action-tip" />
           <View style={court.commands}>
             {finished ? null : (
               <>
@@ -398,7 +460,7 @@ export function RaidScreen() {
                   {...bind('attack')}
                 />
                 <GestureActionButton
-                  label={skill1Wait > 0 ? `CD ${skill1Wait}` : skill1}
+                  label={skill1}
                   hint={`${skill1} · MP ${skillCard1?.mana ?? 0}`}
                   tint="#7fd0c4"
                   picked={picked === 0}
@@ -412,7 +474,7 @@ export function RaidScreen() {
                   {...bind(0)}
                 />
                 <GestureActionButton
-                  label={skill2Wait > 0 ? `CD ${skill2Wait}` : skill2}
+                  label={skill2}
                   hint={`${skill2} · MP ${skillCard2?.mana ?? 0}`}
                   tint="#7fd0c4"
                   picked={picked === 1}
@@ -427,14 +489,23 @@ export function RaidScreen() {
                 />
                 <RoundButton
                   label="Phòng thủ"
-                  hint="Giảm sát thương đến lượt sau"
+                  hint="Giảm sát thương đến lượt sau · chạm 2 lần để dùng"
                   square
                   tint="#2f6fe0"
+                  picked={utilityPicked === 'defend'}
                   disabled={!yourTurn}
                   testID="raid-defend"
+                  onHighlight={() =>
+                    setTipOverride('Phòng thủ · giảm sát thương đến lượt sau. Chạm lần nữa để dùng.')
+                  }
                   onPress={() => {
-                    combatSfx('cast');
-                    battle.sendRaidAction('defend');
+                    setTipOverride('Phòng thủ · giảm sát thương đến lượt sau. Chạm lần nữa để dùng.');
+                    setUtilityPicked('defend');
+                    armThenFire(utilityArm, 'defend', 450, () => {
+                      setUtilityPicked(null);
+                      combatSfx('cast');
+                      battle.sendRaidAction('defend');
+                    });
                   }}
                   size={s(52)}
                   font={font(10)}
@@ -443,7 +514,7 @@ export function RaidScreen() {
             )}
           </View>
         </View>
-      </SafeAreaView>
+      </View>
       {taming && snapshot.yourTame == null ? (
         <TamingMiniGameModal
           monsterName="Boss hầm ngục"
@@ -480,7 +551,7 @@ export function RaidScreen() {
           </View>
         </View>
       ) : null}
-    </View>
+    </BattleWorldFrame>
   );
 }
 

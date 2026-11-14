@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Animated, Image, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, StyleSheet, Text, View } from 'react-native';
 
 import { FloatingCombatText } from '../components/battle/FloatingCombatText';
 import { GestureActionButton } from '../components/battle/GestureActionButton';
@@ -13,10 +12,21 @@ import {
   PLAYER_PET_CELLS,
   feetInView,
 } from '../components/battle/courtSlots';
+import { BattleWorldFrame, BATTLE_DESIGN_H, BATTLE_DESIGN_W } from '../components/battle/BattleWorldFrame';
 import { RankStars } from '../components/arena/RankStars';
 import { CharacterAvatar } from '../components/CharacterAvatar';
-import { BattleInfoPanel } from '../components/battle/BattleInfoPanel';
-import { CourtUnit, RoundButton, TimelineFace, styles as court, timelineFaceSize, type CourtActor } from '../components/battle/courtChrome';
+import { BattleInfoPanel, formatUnitInspectTip } from '../components/battle/BattleInfoPanel';
+import {
+  ActionTipBanner,
+  BattleLogLine,
+  CourtUnit,
+  RoundButton,
+  TimelineFace,
+  armThenFire,
+  styles as court,
+  timelineFaceSize,
+  type CourtActor,
+} from '../components/battle/courtChrome';
 import { getCharacter } from '../data/characters';
 import { useQuickTarget } from '../hooks/useQuickTarget';
 import { useSocketCombatFx } from '../hooks/useSocketCombatFx';
@@ -44,14 +54,17 @@ export function ArenaScreen() {
   const battle = useBattle();
   const snapshot = battle.battle;
   const { s, font } = useLayout();
-  const insets = useSafeAreaInsets();
   const juice = useCombatJuice();
-  const [screen, setScreen] = useState({ w: 0, h: 0 });
+  const [screen, setScreen] = useState({ w: BATTLE_DESIGN_W, h: BATTLE_DESIGN_H });
   const [stageBox, setStageBox] = useState({ x: 0, y: 0 });
   const [now, setNow] = useState(Date.now());
   const [picked, setPicked] = useState<Pick>('attack');
   const [aimKey, setAimKey] = useState<string | null>(null);
+  const [tipOverride, setTipOverride] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
+  const [allyFocusId, setAllyFocusId] = useState<string | null>(null);
+  const [utilityPicked, setUtilityPicked] = useState<string | null>(null);
+  const utilityArm = useRef({ key: '', at: 0 });
   const aimUnits = useMemo(
     () =>
       (snapshot?.units ?? [])
@@ -91,8 +104,8 @@ export function ArenaScreen() {
   const focus = foes.find((unit) => unit.id === focusId) ?? foes[0] ?? null;
   const finishedEarly = snapshot?.status === 'finished';
   const footMemo = useMemo(() => {
-    return (cell: string) => feetInView(cell, screen.w, screen.h, insets.left + stageBox.x, insets.top + stageBox.y);
-  }, [insets.left, insets.top, screen.h, screen.w, stageBox.x, stageBox.y]);
+    return (cell: string) => feetInView(cell, screen.w, screen.h, stageBox.x, stageBox.y);
+  }, [screen.h, screen.w, stageBox.x, stageBox.y]);
   const slotOf = useMemo(() => {
     return (id: string) => {
       if (!youHero || !foeHero) return null;
@@ -129,7 +142,7 @@ export function ArenaScreen() {
   const actor = units.find((unit) => unit.id === snapshot.turnId) ?? null;
   const queued = snapshot.queue ?? [];
   const turnQueue = queued.length > 0 ? queued : cast.filter((unit) => unit.hp > 0).map((unit) => unit.id);
-  const faceSize = timelineFaceSize(screen.w, insets.left, insets.right, turnQueue.length, s(28), s(168) * 2 + 28);
+  const faceSize = timelineFaceSize(screen.w, 8, 8, turnQueue.length, s(28), 212 * 2 + 28);
   const foot = footMemo;
   const heroSize = s(118);
   const petSize = Math.round(s(64) * 0.8);
@@ -140,7 +153,7 @@ export function ArenaScreen() {
   const foeElement = heroTraits(foeCharacter?.professionId).element;
   const unitElement = (unit: DuelUnitView) =>
     unit.element ?? (unit.kind === 'hero' ? (unit.side === 'you' ? youElement : foeElement) : null);
-  const panelUnit = (unit: DuelUnitView | null) =>
+  const panelUnit = (unit: DuelUnitView | null, withSkills = false) =>
     unit
       ? {
           id: unit.id,
@@ -152,6 +165,24 @@ export function ArenaScreen() {
           maxMp: unit.maxMp,
           level: unit.level,
           element: unitElement(unit),
+          kindId: unit.kindId,
+          shieldHp: unit.shieldHp,
+          statuses: (unit.statuses ?? []).map((entry) => ({
+            id: entry.id as import('../world/combat/advanced').StatusId,
+            turns: entry.turns,
+            power: entry.power,
+          })),
+          skills: withSkills
+            ? [
+                { id: 'attack', name: 'Đánh thường', wait: 0 },
+                ...(snapshot.skills ?? []).map((skill) => ({
+                  id: skill.id ?? `skill-${skill.index}`,
+                  name: skill.name,
+                  wait: skill.wait ?? 0,
+                  mana: skill.mana,
+                })),
+              ]
+            : undefined,
         }
       : null;
   const skillCard1 = snapshot.skills?.[0];
@@ -197,16 +228,23 @@ export function ArenaScreen() {
     const key = String(choice);
     return {
       onArm: () => {
+        setUtilityPicked(null);
+        utilityArm.current = { key: '', at: 0 };
+        setTipOverride(null);
         setPicked(choice);
         setAimKey(null);
         combatSfx('arm');
       },
       onDoubleTap: () => {
+        setUtilityPicked(null);
+        setTipOverride(null);
         setPicked(choice);
         setAimKey(null);
         fire(choice, 'lowest');
       },
       onHoldStart: () => {
+        setUtilityPicked(null);
+        setTipOverride(null);
         setPicked(choice);
         setAimKey(key);
         quick.beginAim();
@@ -219,6 +257,14 @@ export function ArenaScreen() {
       },
     };
   };
+
+  const actionTipText =
+    tipOverride ??
+    (picked === 'attack'
+      ? 'Đánh thường · đòn vật lý cơ bản. Chạm đúp hoặc giữ-kéo để ra đòn.'
+      : picked === 0
+        ? `${skill1} · tốn ${skillCard1?.mana ?? 0} MP. Chạm đúp hoặc giữ-kéo để thi triển.`
+        : `${skill2} · tốn ${skillCard2?.mana ?? 0} MP. Chạm đúp hoặc giữ-kéo để thi triển.`);
 
   const aimPopup = (
     <QuickTargetStrip
@@ -244,37 +290,56 @@ export function ArenaScreen() {
     />
   );
 
-  const markFoe = (id: string) => {
-    setFocusId(id);
-    if (quick.noteUnitTap(id) === 'double') fire(picked, id);
+  const allies = [youHero, ...yourPets];
+  const enemies = [foeHero, ...foePets];
+  const leftUnit =
+    allies.find((unit) => unit.id === allyFocusId) ??
+    allies.find((unit) => unit.hp > 0) ??
+    youHero;
+  const rightUnit =
+    enemies.find((unit) => unit.id === focusId) ??
+    enemies.find((unit) => unit.hp > 0) ??
+    focus ??
+    foeHero;
+  const inspectAlly = (unit: DuelUnitView) => {
+    setAllyFocusId(unit.id);
+    setUtilityPicked(null);
+    setTipOverride(formatUnitInspectTip(panelUnit(unit, unit.side === 'you' && unit.kind === 'hero')));
+  };
+  const markFoe = (unit: DuelUnitView) => {
+    setFocusId(unit.id);
+    setUtilityPicked(null);
+    setTipOverride(formatUnitInspectTip(panelUnit(unit)));
+    if (unit.hp > 0 && quick.noteUnitTap(unit.id) === 'double') fire(picked, unit.id);
   };
 
   return (
-    <View
+    <BattleWorldFrame
       testID="arena-screen"
-      style={court.screen}
-      onLayout={(event) => {
-        const { width, height } = event.nativeEvent.layout;
-        setScreen((current) => (current.w === width && current.h === height ? current : { w: width, h: height }));
+      arenaSource={ARENA}
+      onMetrics={(metrics) => {
+        setScreen((current) =>
+          current.w === metrics.worldW && current.h === metrics.worldH
+            ? current
+            : { w: metrics.worldW, h: metrics.worldH },
+        );
       }}
     >
-      <Image source={ARENA} resizeMode="cover" pointerEvents="none" style={court.arena} />
-      <SafeAreaView style={court.frame} edges={['top', 'bottom', 'left', 'right']}>
+      <View style={[court.frame, court.worldPad]}>
         <View style={court.header}>
           <View style={court.headerLeft}>
             <BattleInfoPanel
-              title="Đang lượt"
               side="left"
-              unit={panelUnit(actor)}
-              avatarSize={s(40)}
+              unit={panelUnit(leftUnit, leftUnit.id === youHero.id)}
+              avatarSize={s(48)}
               testID="info-active"
               portrait={
-                actor?.kind === 'hero' && (actor.side === 'you' ? youCharacter : foeCharacter) ? (
+                leftUnit.kind === 'hero' && leftUnit.side === 'you' && youCharacter ? (
                   <CharacterAvatar
-                    character={(actor.side === 'you' ? youCharacter : foeCharacter)!}
-                    hairColor={actor.side === 'you' ? snapshot.you.hairColor : snapshot.opponent.hairColor}
-                    outfitColor={actor.side === 'you' ? snapshot.you.outfitColor : snapshot.opponent.outfitColor}
-                    size={s(38)}
+                    character={youCharacter}
+                    hairColor={snapshot.you.hairColor}
+                    outfitColor={snapshot.you.outfitColor}
+                    size={s(46)}
                   />
                 ) : undefined
               }
@@ -313,21 +378,21 @@ export function ArenaScreen() {
                 font={font(10)}
               />
             </View>
+            <BattleLogLine text={log} fontSize={font(11)} testID="arena-log" />
           </View>
           <View style={court.headerRight}>
             <BattleInfoPanel
-              title="Mục tiêu"
               side="right"
-              unit={panelUnit(focus)}
-              avatarSize={s(40)}
+              unit={panelUnit(rightUnit)}
+              avatarSize={s(48)}
               testID="info-target"
               portrait={
-                focus?.kind === 'hero' && foeCharacter ? (
+                rightUnit.kind === 'hero' && foeCharacter ? (
                   <CharacterAvatar
                     character={foeCharacter}
                     hairColor={snapshot.opponent.hairColor}
                     outfitColor={snapshot.opponent.outfitColor}
-                    size={s(38)}
+                    size={s(46)}
                   />
                 ) : undefined
               }
@@ -346,6 +411,7 @@ export function ArenaScreen() {
             fighter={toCourt(youHero, youElement)}
             slot={foot(BATTLE_GRID_POSITIONS.player)}
             active={snapshot.turnId === youHero.id}
+            targeted={allyFocusId === youHero.id}
             face="right"
             size={heroSize}
             statFont={font(10)}
@@ -354,6 +420,7 @@ export function ArenaScreen() {
             character={youCharacter}
             hairColor={snapshot.you.hairColor}
             outfitColor={snapshot.you.outfitColor}
+            onPress={() => inspectAlly(youHero)}
             step={steps[youHero.id] ?? null}
             slashKey={slashes[youHero.id] ?? 0}
             shakeKey={shakes[youHero.id] ?? 0}
@@ -364,11 +431,13 @@ export function ArenaScreen() {
               fighter={toCourt(unit)}
               slot={foot(PET_CELLS[index] ?? PET_CELLS[0])}
               active={snapshot.turnId === unit.id}
+              targeted={allyFocusId === unit.id}
               face="right"
               size={petSize}
               statFont={font(10)}
               barWidth={s(86)}
               testID={`court-ally-${index}`}
+              onPress={() => inspectAlly(unit)}
               step={steps[unit.id] ?? null}
               slashKey={slashes[unit.id] ?? 0}
               shakeKey={shakes[unit.id] ?? 0}
@@ -378,7 +447,7 @@ export function ArenaScreen() {
             fighter={toCourt(foeHero, foeElement)}
             slot={foot(BATTLE_GRID_POSITIONS.enemyPlayer)}
             active={snapshot.turnId === foeHero.id}
-            targeted={focus?.id === foeHero.id && foeHero.hp > 0}
+            targeted={focusId === foeHero.id && foeHero.hp > 0}
             face="left"
             size={foeHeroSize}
             statFont={font(10)}
@@ -387,7 +456,7 @@ export function ArenaScreen() {
             character={foeCharacter}
             hairColor={snapshot.opponent.hairColor}
             outfitColor={snapshot.opponent.outfitColor}
-            onPress={foeHero.hp > 0 ? () => markFoe(foeHero.id) : undefined}
+            onPress={() => markFoe(foeHero)}
             step={steps[foeHero.id] ?? null}
             slashKey={slashes[foeHero.id] ?? 0}
             shakeKey={shakes[foeHero.id] ?? 0}
@@ -398,14 +467,14 @@ export function ArenaScreen() {
               fighter={toCourt(unit)}
               slot={foot(FOE_PET_CELLS[index] ?? FOE_PET_CELLS[0])}
               active={snapshot.turnId === unit.id}
-              targeted={focus?.id === unit.id && unit.hp > 0}
+              targeted={focusId === unit.id && unit.hp > 0}
               face="left"
               size={petSize}
               statFont={font(10)}
               barWidth={s(86)}
               front={FOE_PET_CELLS[index] === BATTLE_GRID_POSITIONS.enemy3}
               testID={`court-foe-${index}`}
-              onPress={unit.hp > 0 ? () => markFoe(unit.id) : undefined}
+              onPress={() => markFoe(unit)}
               step={steps[unit.id] ?? null}
               slashKey={slashes[unit.id] ?? 0}
               shakeKey={shakes[unit.id] ?? 0}
@@ -428,20 +497,12 @@ export function ArenaScreen() {
               />
             );
           })}
-          <Text style={[court.log, { fontSize: font(11) }]} numberOfLines={1}>
-            {log}
-          </Text>
         </Animated.View>
         {juice.overlay}
 
         <View style={court.dock}>
-          <View style={court.targets}>
-            {focus ? (
-              <Text style={[court.dockLabel, { fontSize: font(10) }]} numberOfLines={1}>
-                {focus.name}
-              </Text>
-            ) : null}
-          </View>
+          <View style={court.targets} />
+          <ActionTipBanner text={actionTipText} fontSize={font(11)} testID="arena-action-tip" />
           <View style={court.commands}>
             {finished ? null : (
               <>
@@ -458,7 +519,7 @@ export function ArenaScreen() {
                   {...bind('attack')}
                 />
                 <GestureActionButton
-                  label={skill1Wait > 0 ? `CD ${skill1Wait}` : skill1}
+                  label={skill1}
                   hint={`${skill1} · MP ${skillCard1?.mana ?? 0}`}
                   tint="#7fd0c4"
                   picked={picked === 0}
@@ -472,7 +533,7 @@ export function ArenaScreen() {
                   {...bind(0)}
                 />
                 <GestureActionButton
-                  label={skill2Wait > 0 ? `CD ${skill2Wait}` : skill2}
+                  label={skill2}
                   hint={`${skill2} · MP ${skillCard2?.mana ?? 0}`}
                   tint="#7fd0c4"
                   picked={picked === 1}
@@ -487,14 +548,23 @@ export function ArenaScreen() {
                 />
                 <RoundButton
                   label="Phòng thủ"
-                  hint="Giảm sát thương đến lượt sau"
+                  hint="Giảm sát thương đến lượt sau · chạm 2 lần để dùng"
                   square
                   tint="#2f6fe0"
+                  picked={utilityPicked === 'defend'}
                   disabled={!yourTurn}
                   testID="arena-defend"
+                  onHighlight={() =>
+                    setTipOverride('Phòng thủ · giảm sát thương đến lượt sau. Chạm lần nữa để dùng.')
+                  }
                   onPress={() => {
-                    combatSfx('cast');
-                    battle.sendAction('defend');
+                    setTipOverride('Phòng thủ · giảm sát thương đến lượt sau. Chạm lần nữa để dùng.');
+                    setUtilityPicked('defend');
+                    armThenFire(utilityArm, 'defend', 450, () => {
+                      setUtilityPicked(null);
+                      combatSfx('cast');
+                      battle.sendAction('defend');
+                    });
                   }}
                   size={s(52)}
                   font={font(10)}
@@ -503,7 +573,7 @@ export function ArenaScreen() {
             )}
           </View>
         </View>
-      </SafeAreaView>
+      </View>
       {finished ? (
         <View style={styles.overlay}>
           <View style={[styles.result, { borderRadius: s(18), padding: s(18), gap: s(8) }]}>
@@ -526,7 +596,7 @@ export function ArenaScreen() {
           </View>
         </View>
       ) : null}
-    </View>
+    </BattleWorldFrame>
   );
 }
 

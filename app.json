@@ -61,7 +61,8 @@
           "hidden": true,
           "style": "light"
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "extra": {
       "eas": {

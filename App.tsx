@@ -27,6 +27,8 @@ import { readLocalSave } from './src/state/save/localSave';
 import { BattleProvider, useBattle } from './src/state/BattleContext';
 import { SetupProvider, useSetup } from './src/state/SetupContext';
 import { WorldProvider, useWorld } from './src/state/WorldContext';
+import { hydrateAudioSettings } from './src/audio/audioSettings';
+import { useOverworldBgm } from './src/audio/useOverworldBgm';
 import { theme } from './src/theme/theme';
 import type { InitializedPlayer } from './src/types/game';
 
@@ -67,6 +69,9 @@ function GameRoot() {
   useSavedCharacter();
   useGoldenAnnounce();
   useEffect(() => {
+    void hydrateAudioSettings();
+  }, []);
+  useEffect(() => {
     if (battle.prep) world.openDuelSquad();
   }, [battle.prep, world]);
   useEffect(() => {
@@ -96,6 +101,8 @@ function GameRoot() {
 function FieldRoot() {
   const world = useWorld();
   const battle = useBattle();
+  // Regional overworld BGM (16 biomes) — survives battle/squad swaps for fade + resume.
+  useOverworldBgm({ scene: world.scene, zoneId: world.zoneId });
 
   let body: ReactNode = <TownScreen />;
   if (battle.raidLobby) body = <RaidLobbyScreen />;

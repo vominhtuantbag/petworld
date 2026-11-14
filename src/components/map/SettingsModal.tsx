@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { setBgmMuted, setBgmVolume, setSfxMuted, useAudioSettings } from '../../audio/audioSettings';
 import { getCharacter, getProfession } from '../../data/characters';
 import { ApiError } from '../../net/api';
 import type { SocialProvider } from '../../net/protocol';
@@ -21,6 +22,7 @@ type Props = { onClose: () => void };
 export function SettingsModal({ onClose }: Props) {
   const setup = useSetup();
   const auth = useAuth();
+  const audio = useAudioSettings();
   const { s, font } = useLayout();
   const character = getCharacter(setup.player?.baseCharacterId);
   const profession = getProfession(character?.professionId);
@@ -52,6 +54,50 @@ export function SettingsModal({ onClose }: Props) {
         <Text style={[styles.copy, { fontSize: font(13) }]}>
           {guest ? 'Tài khoản khách. Liên kết để giữ tiến trình khi đổi máy.' : 'Liên kết thêm một cách đăng nhập. Nhân vật và túi đồ giữ nguyên.'}
         </Text>
+        <Text style={[styles.section, { fontSize: font(13) }]}>Âm thanh</Text>
+        <Pressable
+          accessibilityRole="button"
+          testID="settings-bgm-mute"
+          onPress={() => setBgmMuted(!audio.bgmMuted)}
+          style={styles.action}
+        >
+          <Text style={[styles.actionLabel, { fontSize: font(14) }]}>
+            {audio.bgmMuted ? 'Bật nhạc nền (BGM)' : 'Tắt nhạc nền (BGM)'}
+          </Text>
+        </Pressable>
+        <View style={styles.volumeRow}>
+          <Pressable
+            accessibilityRole="button"
+            testID="settings-bgm-vol-down"
+            disabled={audio.bgmMuted}
+            onPress={() => setBgmVolume(audio.bgmVolume - 0.1)}
+            style={[styles.volumeBtn, audio.bgmMuted && styles.bound]}
+          >
+            <Text style={[styles.actionLabel, { fontSize: font(14) }]}>−</Text>
+          </Pressable>
+          <Text style={[styles.volumeLabel, { fontSize: font(13) }]}>
+            Âm lượng BGM {Math.round(audio.bgmVolume * 100)}%
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            testID="settings-bgm-vol-up"
+            disabled={audio.bgmMuted}
+            onPress={() => setBgmVolume(audio.bgmVolume + 0.1)}
+            style={[styles.volumeBtn, audio.bgmMuted && styles.bound]}
+          >
+            <Text style={[styles.actionLabel, { fontSize: font(14) }]}>+</Text>
+          </Pressable>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          testID="settings-sfx-mute"
+          onPress={() => setSfxMuted(!audio.sfxMuted)}
+          style={styles.action}
+        >
+          <Text style={[styles.actionLabel, { fontSize: font(14) }]}>
+            {audio.sfxMuted ? 'Bật hiệu ứng (SFX)' : 'Tắt hiệu ứng (SFX)'}
+          </Text>
+        </Pressable>
         {linkError ? <Text style={[styles.error, { fontSize: font(12) }]}>{linkError}</Text> : null}
         {SOCIAL.map((provider) => {
           const bound = linked.has(provider.id);
@@ -111,6 +157,18 @@ const styles = StyleSheet.create({
   closeLabel: { color: theme.ink, fontWeight: '800' },
   name: { color: theme.ink, fontWeight: '800' },
   copy: { color: theme.muted },
+  section: { color: theme.gold, fontWeight: '800', marginTop: 4 },
+  volumeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  volumeBtn: {
+    width: 40,
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: theme.cardRaised,
+    borderWidth: 1,
+    borderColor: theme.line,
+  },
+  volumeLabel: { flex: 1, color: theme.ink, fontWeight: '700', textAlign: 'center' },
   action: { alignItems: 'center', paddingVertical: 10, borderRadius: 10, backgroundColor: theme.cardRaised, borderWidth: 1, borderColor: theme.line },
   actionLabel: { color: theme.ink, fontWeight: '800' },
   bound: { opacity: 0.55 },
