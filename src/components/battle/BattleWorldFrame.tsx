@@ -10,9 +10,13 @@ export type BattleWorldMetrics = {
   /** Viewport host size (physical). */
   hostW: number;
   hostH: number;
-  /** Uniform scale applied to the design canvas. */
+  /** X stretch: hostW / designW */
+  scaleX: number;
+  /** Y stretch: hostH / designH */
+  scaleY: number;
+  /** Uniform proxy (min axis) — useful for sprite chrome that must stay round. */
   scale: number;
-  /** Always the design resolution — use for feetInView / grid math. */
+  /** Design resolution — use for feetInView / grid math. */
   worldW: number;
   worldH: number;
 };
@@ -24,64 +28,66 @@ type Props = {
   onMetrics?: (metrics: BattleWorldMetrics) => void;
 };
 
+function metricsFor(hostW: number, hostH: number): BattleWorldMetrics {
+  const scaleX = hostW > 0 ? hostW / BATTLE_DESIGN_W : 1;
+  const scaleY = hostH > 0 ? hostH / BATTLE_DESIGN_H : 1;
+  return {
+    hostW,
+    hostH,
+    scaleX,
+    scaleY,
+    scale: Math.min(scaleX, scaleY),
+    worldW: BATTLE_DESIGN_W,
+    worldH: BATTLE_DESIGN_H,
+  };
+}
+
 /**
- * Letterboxed 16:9 battle world.
- * Arena background + children live inside a fixed design canvas that scales
- * uniformly to fit the viewport, so art, grid, and sprites zoom together.
+ * Full-screen battle world — stretch-to-fill.
+ *
+ * The design canvas (1280×720) is scaled independently on X/Y so it maps
+ * exactly onto the viewport: no black bars, nothing cropped. Arena, grid,
+ * HUD, and sprites all live inside this one transform, so they zoom together.
  */
 export function BattleWorldFrame({ arenaSource, children, testID, onMetrics }: Props) {
   const [host, setHost] = useState({ w: 0, h: 0 });
 
-  const scale = useMemo(() => {
-    if (host.w <= 0 || host.h <= 0) return 1;
-    return Math.min(host.w / BATTLE_DESIGN_W, host.h / BATTLE_DESIGN_H);
-  }, [host.h, host.w]);
+  const metrics = useMemo(() => metricsFor(host.w, host.h), [host.h, host.w]);
 
   const onHostLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     setHost((current) => (current.w === width && current.h === height ? current : { w: width, h: height }));
-    onMetrics?.({
-      hostW: width,
-      hostH: height,
-      scale: width > 0 && height > 0 ? Math.min(width / BATTLE_DESIGN_W, height / BATTLE_DESIGN_H) : 1,
-      worldW: BATTLE_DESIGN_W,
-      worldH: BATTLE_DESIGN_H,
-    });
+    onMetrics?.(metricsFor(width, height));
   };
 
-  const fittedW = BATTLE_DESIGN_W * scale;
-  const fittedH = BATTLE_DESIGN_H * scale;
+  const ready = host.w > 0 && host.h > 0;
 
   return (
     <View style={styles.host} onLayout={onHostLayout} testID={testID}>
-      <View style={[styles.fit, { width: fittedW, height: fittedH }]}>
+      {ready ? (
         <View
           style={[
             styles.world,
             {
               width: BATTLE_DESIGN_W,
               height: BATTLE_DESIGN_H,
-              transform: [{ scale }],
-              // Keep transform origin at top-left so layout math matches hits.
-              left: (fittedW - BATTLE_DESIGN_W) / 2,
-              top: (fittedH - BATTLE_DESIGN_H) / 2,
+              left: (host.w - BATTLE_DESIGN_W) / 2,
+              top: (host.h - BATTLE_DESIGN_H) / 2,
+              transform: [{ scaleX: metrics.scaleX }, { scaleY: metrics.scaleY }],
             },
           ]}
         >
-          <Image source={arenaSource} resizeMode="cover" pointerEvents="none" style={styles.arena} />
+          <Image source={arenaSource} resizeMode="stretch" pointerEvents="none" style={styles.arena} />
           <View style={styles.content} pointerEvents="box-none">
             {children}
           </View>
         </View>
-      </View>
+      ) : null}
     </View>
   );
 }
 
-/**
- * Size helper tied to the battle design canvas (not the phone short-side).
- * Keeps sprites / chrome proportional when the world letterbox scales.
- */
+/** Size helper tied to the battle design canvas. */
 export function battleScale(value: number, worldScale = 1) {
   return Math.round(value * worldScale);
 }
@@ -89,12 +95,9 @@ export function battleScale(value: number, worldScale = 1) {
 const styles = StyleSheet.create({
   host: {
     flex: 1,
-    backgroundColor: '#0a0908',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  fit: {
+    alignSelf: 'stretch',
+    width: '100%',
+    backgroundColor: '#10211c',
     overflow: 'hidden',
   },
   world: {
