@@ -2,7 +2,7 @@
   "expo": {
     "name": "PetWar",
     "slug": "game-thu-gian",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "landscape",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -32,7 +32,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.micr17.gamethugian",
-      "versionCode": 2
+      "versionCode": 3
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -60,6 +60,15 @@
         {
           "hidden": true,
           "style": "light"
+        }
+      ],
+      "expo-asset",
+      [
+        "expo-audio",
+        {
+          "enableBackgroundPlayback": false,
+          "enableBackgroundRecording": false,
+          "recordAudioAndroid": false
         }
       ]
     ],

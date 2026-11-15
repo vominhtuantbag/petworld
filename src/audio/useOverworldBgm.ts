@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { AppState, Platform } from 'react-native';
 
 import { useAudioSettings } from './audioSettings';
 import { bgmKeyForZone, sceneAllowsOverworldBgm } from './bgmRegions';
@@ -35,6 +36,15 @@ export function useOverworldBgm({ scene, zoneId }: Options) {
   useEffect(() => {
     overworldBgm.refreshGain();
   }, [settings.bgmMuted, settings.bgmVolume]);
+
+  // Android: nudge playback after returning to foreground (media focus).
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') overworldBgm.refreshGain();
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(
     () => () => {

@@ -1,3 +1,4 @@
+import { Asset } from 'expo-asset';
 import { Platform } from 'react-native';
 
 import { getAudioSettings } from './audioSettings';
@@ -10,6 +11,7 @@ const FADE_OUT_MS = 500;
 const FADE_IN_MS = 650;
 
 type Slot = 'a' | 'b';
+type AudioSource = number | { uri: string };
 
 /** Minimal player surface used by the fade helper. */
 type AudioPlayer = {
@@ -18,21 +20,20 @@ type AudioPlayer = {
   playing: boolean;
   play: () => void;
   pause: () => void;
-  replace: (source: number) => void;
+  replace: (source: AudioSource) => void;
   remove: () => void;
 };
 
 type ExpoAudioModule = {
-  createAudioPlayer: (source: number) => AudioPlayer;
+  createAudioPlayer: (source: AudioSource) => AudioPlayer;
   setAudioModeAsync: (mode: Record<string, unknown>) => Promise<void>;
 };
 
 /**
  * Dual-deck overworld BGM.
- *
- * Native Android/iOS: no-op for now — expo-audio's media playback service has
- * been crashing PetWar at splash on device APKs. Web keeps full BGM via a
- * dynamic import so the native binary does not need the module linked.
+ * Dynamic-imports `expo-audio` after first paint so splash stays light.
+ * Android release resolves bundled MP3s through expo-asset URIs.
+ * Background media service stays off (see app.json expo-audio plugin).
  */
 class OverworldBgmService {
   private deckA: AudioPlayer | null = null;
@@ -50,7 +51,8 @@ class OverworldBgmService {
   private disposed = false;
   private audio: ExpoAudioModule | null = null;
   private sources: Record<BgmRegionKey, number> | null = null;
-  private nativeDisabled = Platform.OS !== 'web';
+  private resolved = new Map<BgmRegionKey, AudioSource>();
+  private disabled = false;
 
   private targetVolume(): number {
     const settings = getAudioSettings();
@@ -66,7 +68,7 @@ class OverworldBgmService {
   }
 
   private async ensureAudio(): Promise<boolean> {
-    if (this.nativeDisabled) return false;
+    if (this.disabled) return false;
     if (this.audio && this.sources) return true;
     try {
       const [expoAudio, tracks] = await Promise.all([import('expo-audio'), import('./tracks')]);
@@ -75,8 +77,32 @@ class OverworldBgmService {
       return true;
     } catch (error) {
       console.warn('[Game Thư Giãn] Overworld BGM unavailable.', error);
-      this.nativeDisabled = true;
+      this.disabled = true;
       return false;
+    }
+  }
+
+  /** Android release builds often need a file URI instead of a raw module id. */
+  private async resolveSource(key: BgmRegionKey): Promise<AudioSource | null> {
+    if (!this.sources) return null;
+    const cached = this.resolved.get(key);
+    if (cached) return cached;
+    const moduleId = this.sources[key];
+    if (Platform.OS !== 'android' || typeof __DEV__ !== 'undefined' && __DEV__) {
+      this.resolved.set(key, moduleId);
+      return moduleId;
+    }
+    try {
+      const asset = Asset.fromModule(moduleId);
+      if (!asset.localUri) await asset.downloadAsync();
+      const uri = asset.localUri ?? asset.uri;
+      const source: AudioSource = uri ? { uri } : moduleId;
+      this.resolved.set(key, source);
+      return source;
+    } catch (error) {
+      console.warn('[Game Thư Giãn] BGM asset resolve failed.', key, error);
+      this.resolved.set(key, moduleId);
+      return moduleId;
     }
   }
 
@@ -108,10 +134,11 @@ class OverworldBgmService {
     }
   }
 
-  private obtain(slot: Slot, key: BgmRegionKey): AudioPlayer | null {
-    if (!this.audio || !this.sources) return null;
+  private async obtain(slot: Slot, key: BgmRegionKey): Promise<AudioPlayer | null> {
+    if (!this.audio) return null;
+    const source = await this.resolveSource(key);
+    if (!source) return null;
     try {
-      const source = this.sources[key];
       if (slot === 'a') {
         if (!this.deckA) this.deckA = this.audio.createAudioPlayer(source);
         else if (this.keyA !== key) {
@@ -162,7 +189,7 @@ class OverworldBgmService {
   }
 
   sync(key: BgmRegionKey | null, exploration: boolean) {
-    if (this.nativeDisabled) return;
+    if (this.disabled) return;
     this.disposed = false;
     this.desiredKey = key;
     this.exploration = exploration;
@@ -170,7 +197,7 @@ class OverworldBgmService {
   }
 
   refreshGain() {
-    if (this.nativeDisabled) return;
+    if (this.disabled) return;
     void this.apply();
   }
 
@@ -183,7 +210,7 @@ class OverworldBgmService {
 
   private async apply() {
     try {
-      if (this.disposed || this.nativeDisabled) return;
+      if (this.disposed || this.disabled) return;
       if (!(await this.ensureAudio())) return;
       await this.ensureMode();
       if (this.disposed) return;
@@ -201,7 +228,7 @@ class OverworldBgmService {
         this.bumpGain(ticket);
         return;
       }
-      this.crossfadeTo(nextKey, ticket);
+      await this.crossfadeTo(nextKey, ticket);
     } catch (error) {
       console.warn('[Game Thư Giãn] Overworld BGM apply failed.', error);
     }
@@ -211,7 +238,7 @@ class OverworldBgmService {
     if (ticket !== this.seq) return;
     const player = this.activePlayer();
     if (!player) {
-      if (this.desiredKey) this.crossfadeTo(this.desiredKey, ticket);
+      if (this.desiredKey) void this.crossfadeTo(this.desiredKey, ticket);
       return;
     }
     this.cancelFades();
@@ -236,15 +263,15 @@ class OverworldBgmService {
     }
   }
 
-  private crossfadeTo(nextKey: BgmRegionKey, ticket: number) {
+  private async crossfadeTo(nextKey: BgmRegionKey, ticket: number) {
     if (ticket !== this.seq || this.disposed) return;
     this.cancelFades();
     const target = this.targetVolume();
     const hasCurrent = this.currentKey != null && this.activePlayer() != null;
 
     if (!hasCurrent) {
-      const player = this.obtain('a', nextKey);
-      if (!player) return;
+      const player = await this.obtain('a', nextKey);
+      if (ticket !== this.seq || !player) return;
       this.active = 'a';
       this.currentKey = nextKey;
       try {
@@ -260,8 +287,8 @@ class OverworldBgmService {
     const fromSlot = this.active;
     const toSlot: Slot = fromSlot === 'a' ? 'b' : 'a';
     const fromPlayer = fromSlot === 'a' ? this.deckA : this.deckB;
-    const toPlayer = this.obtain(toSlot, nextKey);
-    if (!toPlayer) return;
+    const toPlayer = await this.obtain(toSlot, nextKey);
+    if (ticket !== this.seq || !toPlayer) return;
 
     try {
       toPlayer.volume = 0;
