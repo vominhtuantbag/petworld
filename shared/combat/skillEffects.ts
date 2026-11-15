@@ -195,8 +195,8 @@ export function castSkill(
     if (self) next = putUnit(next, { ...self, stealthTurns: 0 });
   }
 
-  const label = move.name;
-  return { state: next, log: `${label}. ${notes.filter(Boolean).join(' ')}`.trim() };
+  // Notes only — executeCombatAction owns the "X dùng Skill." prefix.
+  return { state: next, log: notes.filter(Boolean).join(' ').trim() };
 }
 
 function applyEffect(

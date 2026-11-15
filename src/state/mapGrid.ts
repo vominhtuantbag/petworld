@@ -7,14 +7,14 @@ const listeners = new Set<(value: boolean) => void>();
 
 function readInitial(): boolean {
   try {
-    if (typeof sessionStorage === 'undefined') return true;
+    if (typeof sessionStorage === 'undefined') return false;
     const raw = sessionStorage.getItem(KEY);
     if (raw === '0') return false;
     if (raw === '1') return true;
   } catch {
-    // A blocked session store still starts with the grid visible.
+    // A blocked session store still starts with the grid hidden.
   }
-  return true;
+  return false;
 }
 
 function remember(value: boolean) {

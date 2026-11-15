@@ -15,7 +15,7 @@ import {
 import { BattleWorldFrame, BATTLE_DESIGN_H, BATTLE_DESIGN_W } from '../components/battle/BattleWorldFrame';
 import { RankStars } from '../components/arena/RankStars';
 import { CharacterAvatar } from '../components/CharacterAvatar';
-import { BattleInfoPanel, formatUnitInspectTip } from '../components/battle/BattleInfoPanel';
+import { BattleInfoPanel, BATTLE_INFO_PANEL_W, formatUnitInspectTip } from '../components/battle/BattleInfoPanel';
 import {
   ActionTipBanner,
   BattleLogLine,
@@ -55,7 +55,7 @@ export function ArenaScreen() {
   const battle = useBattle();
   const snapshot = battle.battle;
   const { s, font } = useLayout();
-  const { cmdSize, cmdFont, unitScale } = useBattleCommandSize();
+  const { cmdSize, cmdFont, panelScale, logScale, unitScale, timeScale } = useBattleCommandSize();
   const juice = useCombatJuice();
   const [screen, setScreen] = useState({ w: BATTLE_DESIGN_W, h: BATTLE_DESIGN_H });
   const [stageBox, setStageBox] = useState({ x: 0, y: 0 });
@@ -144,11 +144,14 @@ export function ArenaScreen() {
   const actor = units.find((unit) => unit.id === snapshot.turnId) ?? null;
   const queued = snapshot.queue ?? [];
   const turnQueue = queued.length > 0 ? queued : cast.filter((unit) => unit.hp > 0).map((unit) => unit.id);
-  const faceSize = timelineFaceSize(screen.w, 8, 8, turnQueue.length, s(28), 212 * 2 + 28);
+  const panelReserve = Math.round(BATTLE_INFO_PANEL_W * panelScale) * 2 + 28;
+  const faceSize = timelineFaceSize(screen.w, 8, 8, turnQueue.length, s(28), panelReserve);
+  const timeBtn = Math.round(s(32) * timeScale);
+  const timeFont = Math.max(font(10), Math.round(font(11) * timeScale));
   const foot = footMemo;
-  const heroSize = Math.round(s(118) * unitScale);
+  const heroSize = s(118);
   const petSize = Math.round(s(64) * 0.8 * unitScale);
-  const foeHeroSize = Math.round(petSize * 1.5);
+  const foeHeroSize = Math.round(s(64) * 0.8 * 1.5);
   const youCharacter = getCharacter(snapshot.you.baseAvatarId);
   const foeCharacter = getCharacter(snapshot.opponent.baseAvatarId);
   const youElement = heroTraits(youCharacter?.professionId).element;
@@ -196,11 +199,13 @@ export function ArenaScreen() {
   const skill1Locked = skill1Wait > 0 || (actor != null && (skillCard1?.mana ?? 0) > (actor.mp ?? 0));
   const skill2Locked = skill2Wait > 0 || (actor != null && (skillCard2?.mana ?? 0) > (actor.mp ?? 0));
   const lastLine = snapshot.log[snapshot.log.length - 1] ?? '';
-  const log = finished
-    ? `${resultTitle}. ${lastLine}`
-    : yourTurn
-      ? `${seconds}s. ${actor?.name ?? 'Bạn'} đang ra đòn. ${lastLine}`
-      : `Đợi ${actor?.name ?? 'đối thủ'}. ${lastLine}`;
+  const logLines = (() => {
+    const history = snapshot.log.map((line) => line.trim()).filter(Boolean).slice(-3);
+    if (!finished) return history.length > 0 ? history : [lastLine || 'Đang chiến đấu…'];
+    const stamped = lastLine.startsWith(resultTitle) ? lastLine : `${resultTitle}. ${lastLine}`.trim();
+    if (history.length === 0) return [stamped];
+    return [...history.slice(0, -1), stamped].slice(-3);
+  })();
 
   const portrait = (id: string) => {
     if (id === youHero.id) return { character: youCharacter, hairColor: snapshot.you.hairColor, outfitColor: snapshot.you.outfitColor };
@@ -333,7 +338,8 @@ export function ArenaScreen() {
             <BattleInfoPanel
               side="left"
               unit={panelUnit(leftUnit, leftUnit.id === youHero.id)}
-              avatarSize={s(48)}
+              scale={panelScale}
+              avatarSize={Math.round(s(48) * panelScale)}
               testID="info-active"
               portrait={
                 leftUnit.kind === 'hero' && leftUnit.side === 'you' && youCharacter ? (
@@ -341,7 +347,7 @@ export function ArenaScreen() {
                     character={youCharacter}
                     hairColor={snapshot.you.hairColor}
                     outfitColor={snapshot.you.outfitColor}
-                    size={s(46)}
+                    size={Math.round(s(46) * panelScale)}
                   />
                 ) : undefined
               }
@@ -370,23 +376,24 @@ export function ArenaScreen() {
               }}
             />
             <View style={court.headerControls}>
-              <RoundButton label={finished ? 'Hết' : `${seconds}s`} hint="Thời gian lượt" onPress={() => undefined} size={s(32)} width={s(64)} font={font(11)} />
+              <RoundButton label={finished ? 'Hết' : `${seconds}s`} hint="Thời gian lượt" onPress={() => undefined} size={timeBtn} width={Math.round(s(64) * timeScale)} font={timeFont} />
               <RoundButton
                 label={snapshot.ranked ? `HIỆP ${snapshot.bout ?? 1}/3 · ${snapshot.boutScore?.you ?? 0}-${snapshot.boutScore?.opponent ?? 0}` : `Hiệp ${snapshot.round}`}
                 hint={snapshot.ranked ? 'Best of 3' : 'Hiệp đấu'}
                 onPress={() => undefined}
-                size={s(32)}
-                width={s(110)}
-                font={font(10)}
+                size={timeBtn}
+                width={Math.round(s(110) * timeScale)}
+                font={Math.max(font(10), Math.round(font(10) * timeScale))}
               />
             </View>
-            <BattleLogLine text={log} fontSize={font(11)} testID="arena-log" />
+            <BattleLogLine lines={logLines} fontSize={Math.max(font(11), Math.round(font(11) * logScale))} testID="arena-log" />
           </View>
           <View style={court.headerRight}>
             <BattleInfoPanel
               side="right"
               unit={panelUnit(rightUnit)}
-              avatarSize={s(48)}
+              scale={panelScale}
+              avatarSize={Math.round(s(48) * panelScale)}
               testID="info-target"
               portrait={
                 rightUnit.kind === 'hero' && foeCharacter ? (
@@ -394,7 +401,7 @@ export function ArenaScreen() {
                     character={foeCharacter}
                     hairColor={snapshot.opponent.hairColor}
                     outfitColor={snapshot.opponent.outfitColor}
-                    size={s(46)}
+                    size={Math.round(s(46) * panelScale)}
                   />
                 ) : undefined
               }
@@ -417,7 +424,7 @@ export function ArenaScreen() {
             face="right"
             size={heroSize}
             statFont={font(10)}
-            barWidth={Math.round(s(104) * unitScale)}
+            barWidth={s(104)}
             testID="arena-you"
             character={youCharacter}
             hairColor={snapshot.you.hairColor}
@@ -453,7 +460,7 @@ export function ArenaScreen() {
             face="left"
             size={foeHeroSize}
             statFont={font(10)}
-            barWidth={Math.round(s(96) * unitScale)}
+            barWidth={s(96)}
             testID="arena-opponent"
             character={foeCharacter}
             hairColor={snapshot.opponent.hairColor}

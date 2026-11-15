@@ -16,7 +16,7 @@ import {
   feetInView,
 } from '../components/battle/courtSlots';
 import { BattleWorldFrame, BATTLE_DESIGN_H, BATTLE_DESIGN_W } from '../components/battle/BattleWorldFrame';
-import { BattleInfoPanel, formatUnitInspectTip } from '../components/battle/BattleInfoPanel';
+import { BattleInfoPanel, BATTLE_INFO_PANEL_W, formatUnitInspectTip } from '../components/battle/BattleInfoPanel';
 import {
   ActionTipBanner,
   BattleLogLine,
@@ -76,7 +76,7 @@ const ARENA = require('../../assets/images/sandau_2.jpg');
 type Beat = 'stance' | 'ready' | 'slash' | 'impact' | 'tear' | 'hold';
 
 /**
- * Isometric arena. NV1 (hero) at L3; ally pets on P1–P5; foes on Q1–Q5.
+ * Isometric arena. NV1 (hero) at J3; ally pets on P1–P5; foes on Q1–Q5.
  * Same default spawn map as PvP / Arena / Raid. Feet stay on the cell center.
  */
 export function BattleScreen() {
@@ -84,7 +84,7 @@ export function BattleScreen() {
   const setup = useSetup();
   const socket = useSocket();
   const { s, font } = useLayout();
-  const { cmdSize, cmdFont, unitScale } = useBattleCommandSize();
+  const { cmdSize, cmdFont, panelScale, logScale, unitScale, timeScale } = useBattleCommandSize();
   const juice = useCombatJuice();
   /** Design-canvas size (letterboxed world) — not the raw browser viewport. */
   const [screen, setScreen] = useState({ w: BATTLE_DESIGN_W, h: BATTLE_DESIGN_H });
@@ -130,6 +130,7 @@ export function BattleScreen() {
     };
   });
   const [battle, setBattle] = useState<BattleState | null>(opening?.battle ?? null);
+  const [logHistory, setLogHistory] = useState<string[]>(() => (opening?.battle.log ? [opening.battle.log] : []));
   const [focusId, setFocusId] = useState<string | null>(opening?.battle.foes[0]?.id ?? null);
   const [allyFocusId, setAllyFocusId] = useState<string | null>(opening?.battle.player.id ?? 'player');
   const [basicId, setBasicId] = useState<string | null>(world.squad?.basicId ?? null);
@@ -216,6 +217,14 @@ export function BattleScreen() {
     setActionId('basic');
     setAimKey(null);
   }, [battle?.turnId]);
+  useEffect(() => {
+    const line = battle?.log?.trim();
+    if (!line) return;
+    setLogHistory((prev) => {
+      if (prev[prev.length - 1] === line) return prev;
+      return [...prev, line].slice(-3);
+    });
+  }, [battle?.log]);
   // Step C: 30s human turn clock (adventure / mines). Resets each new turn.
   useEffect(() => {
     if (!turnToken || !handsOff || auto || tameId || paused) {
@@ -730,9 +739,17 @@ export function BattleScreen() {
     return skill ? describeSkill(skill) : 'Chọn một lệnh để xem mô tả.';
   })();
 
-  const battleLogText = battle
-    ? `${battle.over === 'win' ? 'Chiến thắng. ' : battle.over === 'lose' ? 'Thất bại. ' : ''}${battle.log}`
-    : `Chuẩn bị trận · chọn đội hình bên dưới.`;
+  const battleLogLines = (() => {
+    if (!battle) return ['Chuẩn bị trận · chọn đội hình bên dưới.'];
+    const lines = logHistory.length > 0 ? [...logHistory] : battle.log ? [battle.log] : [];
+    if (battle.over === 'win' || battle.over === 'lose') {
+      const title = battle.over === 'win' ? 'Chiến thắng' : 'Thất bại';
+      const last = lines[lines.length - 1] ?? battle.log;
+      const stamped = last.startsWith(title) ? last : `${title}. ${last}`.trim();
+      return [...lines.slice(0, -1), stamped].slice(-3);
+    }
+    return lines.slice(-3);
+  })();
 
   const begin = () => {
     if (!ready) return;
@@ -760,6 +777,7 @@ export function BattleScreen() {
     setShakes({});
     setFates({});
     prevBattle.current = null;
+    setLogHistory(next.log ? [next.log] : []);
     setBattle(next);
   };
 
@@ -780,7 +798,10 @@ export function BattleScreen() {
     if (list.includes(id)) set(list.filter((entry) => entry !== id));
     else if (list.length < max) set([...list, id]);
   };
-  const faceSize = timelineFaceSize(screen.w, 8, 8, turnQueue.length, s(28), 212 * 2 + 28);
+  const panelReserve = Math.round(BATTLE_INFO_PANEL_W * panelScale) * 2 + 28;
+  const faceSize = timelineFaceSize(screen.w, 8, 8, turnQueue.length, s(28), panelReserve);
+  const timeBtn = Math.round(s(32) * timeScale);
+  const timeFont = Math.max(font(10), Math.round(font(11) * timeScale));
   const panelOf = (fighter: typeof player | null) =>
     fighter
       ? {
@@ -849,11 +870,12 @@ export function BattleScreen() {
           <BattleInfoPanel
             side="left"
             unit={panelOf(leftFighter)}
-            avatarSize={s(48)}
+            scale={panelScale}
+            avatarSize={Math.round(s(48) * panelScale)}
             testID="info-active"
             portrait={
               leftFighter?.side === 'player' && character ? (
-                <CharacterAvatar character={character} hairColor={setup.player.hairColor} outfitColor={setup.player.outfitColor} size={s(46)} />
+                <CharacterAvatar character={character} hairColor={setup.player.hairColor} outfitColor={setup.player.outfitColor} size={Math.round(s(46) * panelScale)} />
               ) : undefined
             }
           />
@@ -890,38 +912,39 @@ export function BattleScreen() {
               }
               hint="Thời gian lượt (30s)"
               onPress={() => undefined}
-              size={s(32)}
-              width={s(52)}
-              font={font(11)}
+              size={timeBtn}
+              width={Math.round(s(52) * timeScale)}
+              font={timeFont}
             />
-            <RoundButton label={paused ? '▶' : 'Dừng'} hint="Tạm dừng" disabled={!battle || Boolean(battle.over)} hot={paused} onPress={() => setPaused((value) => !value)} testID="battle-pause" size={s(32)} width={s(56)} font={font(11)} />
-            <RoundButton label={auto ? 'Tự: Bật' : 'Tự: Tắt'} hint={auto ? 'Tắt tự động đánh' : 'Bật tự động đánh'} disabled={!battle || Boolean(battle.over)} hot={auto} onPress={() => setAuto((value) => !value)} testID="battle-auto" size={s(32)} width={s(70)} font={font(10)} />
+            <RoundButton label={paused ? '▶' : 'Dừng'} hint="Tạm dừng" disabled={!battle || Boolean(battle.over)} hot={paused} onPress={() => setPaused((value) => !value)} testID="battle-pause" size={timeBtn} width={Math.round(s(56) * timeScale)} font={timeFont} />
+            <RoundButton label={auto ? 'Tự: Bật' : 'Tự: Tắt'} hint={auto ? 'Tắt tự động đánh' : 'Bật tự động đánh'} disabled={!battle || Boolean(battle.over)} hot={auto} onPress={() => setAuto((value) => !value)} testID="battle-auto" size={timeBtn} width={Math.round(s(70) * timeScale)} font={Math.max(font(10), Math.round(font(10) * timeScale))} />
             {world.encounter?.mine ? (
               <RoundButton
                 label={mineLabel(world.encounter.mineFloor ?? world.mineFloor ?? 1, mineWaveRef.current)}
                 hint="Sóng hầm mỏ"
                 onPress={() => undefined}
-                size={s(32)}
-                width={s(64)}
-                font={font(11)}
+                size={timeBtn}
+                width={Math.round(s(64) * timeScale)}
+                font={timeFont}
               />
             ) : null}
           </View>
           {paused && battle ? (
             <Text style={[styles.pauseBanner, { position: 'relative', top: 0, alignSelf: 'center', fontSize: font(12) }]}>Tạm dừng</Text>
           ) : (
-            <BattleLogLine text={battleLogText} fontSize={font(11)} testID="battle-log" />
+            <BattleLogLine lines={battleLogLines} fontSize={Math.max(font(11), Math.round(font(11) * logScale))} testID="battle-log" />
           )}
         </View>
         <View style={styles.headerRight}>
           <BattleInfoPanel
             side="right"
             unit={panelOf(rightFighter)}
-            avatarSize={s(48)}
+            scale={panelScale}
+            avatarSize={Math.round(s(48) * panelScale)}
             testID="info-target"
             portrait={
               rightFighter?.side === 'player' && character ? (
-                <CharacterAvatar character={character} hairColor={setup.player.hairColor} outfitColor={setup.player.outfitColor} size={s(46)} />
+                <CharacterAvatar character={character} hairColor={setup.player.hairColor} outfitColor={setup.player.outfitColor} size={Math.round(s(46) * panelScale)} />
               ) : undefined
             }
           />
@@ -941,9 +964,9 @@ export function BattleScreen() {
           active={Boolean(battle && battle.turnId === player.id)}
           targeted={allyFocusId === player.id}
           face="right"
-          size={Math.round(s(118) * unitScale)}
+          size={s(118)}
           statFont={font(10)}
-          barWidth={Math.round(s(104) * unitScale)}
+          barWidth={s(104)}
           step={steps[player.id] ?? null}
           slashKey={slashes[player.id] ?? 0}
           shakeKey={shakes[player.id] ?? 0}

@@ -172,6 +172,34 @@ export function executeCombatAction(input: ExecuteCombatInput): ExecuteCombatRes
 
   const cast = castSkill(state, ready.id, skill, focusId, rng);
   const skillName = skill ? skill.name : ready.basic.name;
-  const log = `${ready.name} dùng ${skillName}. ${cast.log}`.trim();
+  const castBody = stripLeadingSkillName(cast.log, skillName);
+  const log = castBody
+    ? `${ready.name} dùng ${skillName}. ${castBody}`.trim()
+    : `${ready.name} dùng ${skillName}.`.trim();
   return { state: cast.state, log, focusId, skillName };
+}
+
+/** Drop a stale leading skill title if an older castSkill build still prefixes it. */
+function stripLeadingSkillName(log: string, skillName: string): string {
+  let rest = log.trim();
+  if (!rest || !skillName) return rest;
+  const heads = [`"${skillName}"`, `'${skillName}'`, skillName];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const head of heads) {
+      if (rest === head || rest === `${head}.`) return '';
+      if (rest.startsWith(`${head}. `)) {
+        rest = rest.slice(head.length + 2).trim();
+        changed = true;
+        break;
+      }
+      if (rest.startsWith(`${head} `)) {
+        rest = rest.slice(head.length + 1).trim();
+        changed = true;
+        break;
+      }
+    }
+  }
+  return rest;
 }

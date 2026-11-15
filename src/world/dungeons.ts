@@ -11,7 +11,7 @@ import type { BattleDrop } from './combat';
 
 /**
  * Fixed raid court — same NV/P/Q spawn map as PvE/PvP/Arena.
- * Slot 0 is the first player through the gate (NV1 / L3).
+ * Slot 0 is the first player through the gate (NV1 / J3).
  * The boss is drawn at twice the add size (`RAID_BOSS_SCALE`) on Q5.
  */
 export const RAID_PARTY_CELLS = RAID_PARTY_SPAWN_CELLS;

@@ -10,7 +10,7 @@ import { TurnTimeline } from '../components/battle/TurnTimeline';
 import { feetInView } from '../components/battle/courtSlots';
 import { BattleWorldFrame, BATTLE_DESIGN_H, BATTLE_DESIGN_W } from '../components/battle/BattleWorldFrame';
 import { CharacterAvatar } from '../components/CharacterAvatar';
-import { BattleInfoPanel, formatUnitInspectTip } from '../components/battle/BattleInfoPanel';
+import { BattleInfoPanel, BATTLE_INFO_PANEL_W, formatUnitInspectTip } from '../components/battle/BattleInfoPanel';
 import {
   ActionTipBanner,
   BattleLogLine,
@@ -51,7 +51,7 @@ export function RaidScreen() {
   const world = useWorld();
   const snapshot = battle.raid;
   const { s, font } = useLayout();
-  const { cmdSize, cmdFont, unitScale } = useBattleCommandSize();
+  const { cmdSize, cmdFont, panelScale, logScale, unitScale, timeScale } = useBattleCommandSize();
   const juice = useCombatJuice();
   const [screen, setScreen] = useState({ w: BATTLE_DESIGN_W, h: BATTLE_DESIGN_H });
   const [stageBox, setStageBox] = useState({ x: 0, y: 0 });
@@ -138,9 +138,12 @@ export function RaidScreen() {
   const actor = units.find((unit) => unit.id === snapshot.turnId) ?? null;
   const queued = snapshot.queue ?? [];
   const turnQueue = queued.length > 0 ? queued : units.filter((unit) => unit.hp > 0).map((unit) => unit.id);
-  const faceSize = timelineFaceSize(screen.w, 8, 8, turnQueue.length, s(28), 212 * 2 + 28);
+  const panelReserve = Math.round(BATTLE_INFO_PANEL_W * panelScale) * 2 + 28;
+  const faceSize = timelineFaceSize(screen.w, 8, 8, turnQueue.length, s(28), panelReserve);
+  const timeBtn = Math.round(s(32) * timeScale);
+  const timeFont = Math.max(font(10), Math.round(font(11) * timeScale));
   const foot = footMemo;
-  const heroSize = Math.round(s(88) * unitScale);
+  const heroSize = s(88);
   const foeSize = Math.round(s(64) * 0.8 * unitScale);
   const bossSize = foeSize * RAID_BOSS_SCALE;
   const panelUnit = (unit: RaidUnitView | null, withSkills = false) => {
@@ -186,13 +189,20 @@ export function RaidScreen() {
   const lastLine = snapshot.log[snapshot.log.length - 1] ?? '';
   const resultTitle = snapshot.victory ? 'Chiến thắng' : 'Thất bại';
   const rewardLine = rewardText(snapshot.rewards);
-  const log = finished
-    ? `${resultTitle}. ${snapshot.victory ? rewardLine : lastLine}`
-    : taming
-      ? `Thu phục boss. ${seconds}s. Tối đa ${Math.round(RAID_TAME_CAP * 100)}%.`
-      : yourTurn
-        ? `${seconds}s. ${actor?.name ?? 'Bạn'} đang ra đòn. ${lastLine}`
-        : `Đợi ${actor?.name ?? 'đối thủ'}. ${lastLine}`;
+  const logLines = (() => {
+    if (taming) {
+      return [`Thu phục boss. ${seconds}s. Tối đa ${Math.round(RAID_TAME_CAP * 100)}%.`];
+    }
+    const history = snapshot.log.map((line) => line.trim()).filter(Boolean).slice(-3);
+    if (!finished) return history.length > 0 ? history : [lastLine || 'Đang chiến đấu…'];
+    const stamped = snapshot.victory
+      ? `${resultTitle}. ${rewardLine || lastLine}`.trim()
+      : lastLine.startsWith(resultTitle)
+        ? lastLine
+        : `${resultTitle}. ${lastLine}`.trim();
+    if (history.length === 0) return [stamped];
+    return [...history.slice(0, -1), stamped].slice(-3);
+  })();
 
   const fire = (choice: Pick, targetMode: 'focus' | 'lowest' | string) => {
     if (!yourTurn) return;
@@ -313,7 +323,8 @@ export function RaidScreen() {
             <BattleInfoPanel
               side="left"
               unit={panelUnit(leftUnit, leftUnit?.kind === 'hero')}
-              avatarSize={s(48)}
+              scale={panelScale}
+              avatarSize={Math.round(s(48) * panelScale)}
               testID="info-active"
               portrait={(() => {
                 if (leftUnit?.kind !== 'hero' || !leftUnit.baseAvatarId) return undefined;
@@ -324,7 +335,7 @@ export function RaidScreen() {
                     character={character}
                     hairColor={leftUnit.hairColor ?? '#3b2a1c'}
                     outfitColor={leftUnit.outfitColor ?? '#4a6b5a'}
-                    size={s(46)}
+                    size={Math.round(s(46) * panelScale)}
                   />
                 );
               })()}
@@ -353,16 +364,17 @@ export function RaidScreen() {
               }}
             />
             <View style={court.headerControls}>
-              <RoundButton label={finished ? 'Hết' : `${seconds}s`} hint="Thời gian lượt" onPress={() => undefined} size={s(32)} width={s(64)} font={font(11)} />
-              <RoundButton label={`Hiệp ${snapshot.round}`} hint="Hiệp đấu" onPress={() => undefined} size={s(32)} width={s(70)} font={font(10)} />
+              <RoundButton label={finished ? 'Hết' : `${seconds}s`} hint="Thời gian lượt" onPress={() => undefined} size={timeBtn} width={Math.round(s(64) * timeScale)} font={timeFont} />
+              <RoundButton label={`Hiệp ${snapshot.round}`} hint="Hiệp đấu" onPress={() => undefined} size={timeBtn} width={Math.round(s(70) * timeScale)} font={Math.max(font(10), Math.round(font(10) * timeScale))} />
             </View>
-            <BattleLogLine text={log} fontSize={font(11)} testID="raid-log" />
+            <BattleLogLine lines={logLines} fontSize={Math.max(font(11), Math.round(font(11) * logScale))} testID="raid-log" />
           </View>
           <View style={court.headerRight}>
             <BattleInfoPanel
               side="right"
               unit={panelUnit(rightUnit)}
-              avatarSize={s(48)}
+              scale={panelScale}
+              avatarSize={Math.round(s(48) * panelScale)}
               testID="info-target"
               portrait={(() => {
                 if (rightUnit?.kind !== 'hero' || !rightUnit.baseAvatarId) return undefined;
@@ -373,7 +385,7 @@ export function RaidScreen() {
                     character={character}
                     hairColor={rightUnit.hairColor ?? '#3b2a1c'}
                     outfitColor={rightUnit.outfitColor ?? '#4a6b5a'}
-                    size={s(46)}
+                    size={Math.round(s(46) * panelScale)}
                   />
                 );
               })()}
@@ -405,7 +417,11 @@ export function RaidScreen() {
                 face={unit.side === 'party' ? 'right' : 'left'}
                 size={size}
                 statFont={font(10)}
-                barWidth={Math.round((unit.kind === 'boss' ? s(120) : s(86)) * unitScale)}
+                barWidth={
+                  unit.kind === 'hero'
+                    ? s(86)
+                    : Math.round((unit.kind === 'boss' ? s(120) : s(86)) * unitScale)
+                }
                 front={unit.kind === 'boss'}
                 testID={`raid-unit-${unit.kind}-${unit.slot}`}
                 character={face.character}

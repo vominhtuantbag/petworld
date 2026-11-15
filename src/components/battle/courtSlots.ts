@@ -6,7 +6,7 @@
  *
  * Default spawns are shared by PvE, PvP, Arena, and Raid.
  */
-export const SHOW_DEBUG_GRID = true;
+export const SHOW_DEBUG_GRID = false;
 
 /**
  * Canonical spawn map (NV / P / Q).
@@ -14,19 +14,19 @@ export const SHOW_DEBUG_GRID = true;
  */
 export const BATTLE_GRID_POSITIONS = {
   /** NV1 — main player hero. */
-  player: 'L3',
+  player: 'J3',
   /** NV2 — opponent / enemy hero (PvP, Arena). */
-  enemyPlayer: 'L30',
+  enemyPlayer: 'J30',
   /** P1–P5 — player ally pets / summons (squad index 0–4). */
   pet1: 'N13',
   pet2: 'K13',
-  pet3: 'G13',
+  pet3: 'H13',
   pet4: 'I10',
   pet5: 'M9',
   /** Q1–Q5 — enemy monsters / foe pets. */
   enemy1: 'N20',
   enemy2: 'K20',
-  enemy3: 'G20',
+  enemy3: 'H20',
   enemy4: 'I24',
   enemy5: 'M25',
 } as const;

@@ -38,6 +38,8 @@ type Props = {
   unit: InfoPanelUnit | null;
   side: 'left' | 'right';
   avatarSize?: number;
+  /** Uniform panel scale (mobile web status bars use 1.5). */
+  scale?: number;
   portrait?: ReactNode;
   footer?: ReactNode;
   testID?: string;
@@ -47,8 +49,10 @@ type Props = {
   inspect?: boolean;
 };
 
-const PANEL_W = 212;
-const PANEL_H = 118;
+export const BATTLE_INFO_PANEL_W = 212;
+export const BATTLE_INFO_PANEL_H = 118;
+const PANEL_W = BATTLE_INFO_PANEL_W;
+const PANEL_H = BATTLE_INFO_PANEL_H;
 
 const ELEMENT_TINT: Record<string, string> = {
   plains: '#8bc34a',
@@ -86,17 +90,25 @@ function StatBar({
   max,
   fill,
   track,
+  scale,
 }: {
   value: number;
   max: number;
   fill: string;
   track: string;
+  scale: number;
 }) {
   const ratio = max <= 0 ? 0 : Math.max(0, Math.min(1, value / max));
+  const barH = Math.round(14 * scale);
   return (
-    <View style={[styles.barTrack, { backgroundColor: track }]}>
+    <View
+      style={[
+        styles.barTrack,
+        { backgroundColor: track, height: barH, borderRadius: Math.round(barH / 2) },
+      ]}
+    >
       <View style={[styles.barFill, { width: `${ratio * 100}%`, backgroundColor: fill }]} />
-      <Text style={styles.barText} numberOfLines={1}>
+      <Text style={[styles.barText, { fontSize: Math.max(8, Math.round(9 * scale)) }]} numberOfLines={1}>
         {Math.round(value)} / {Math.round(max)}
       </Text>
     </View>
@@ -110,7 +122,8 @@ function StatBar({
 export function BattleInfoPanel({
   unit,
   side,
-  avatarSize = 48,
+  avatarSize,
+  scale = 1,
   portrait,
   footer,
   testID,
@@ -119,40 +132,53 @@ export function BattleInfoPanel({
   const elements = elementList(unit);
   const skills = (unit?.skills ?? []).slice(0, 4);
   const facing = side === 'right' ? 'left' : 'right';
+  const z = scale;
+  const face = avatarSize ?? Math.round(48 * z);
+  const idW = Math.round(58 * z);
+  const skillBox = Math.round(34 * z);
 
   return (
     <View
-      style={styles.panel}
+      style={[
+        styles.panel,
+        {
+          width: Math.round(PANEL_W * z),
+          height: Math.round(PANEL_H * z),
+          paddingHorizontal: Math.round(8 * z),
+          paddingVertical: Math.round(6 * z),
+          borderRadius: Math.round(8 * z),
+        },
+      ]}
       testID={testID}
       accessibilityLabel={unit ? unit.name : title ?? 'Status'}
     >
       {unit ? (
         <View style={styles.body}>
-          <View style={styles.topRow}>
-            <View style={styles.identity}>
-              <Text style={styles.name} numberOfLines={1}>
+          <View style={[styles.topRow, { gap: Math.round(8 * z) }]}>
+            <View style={[styles.identity, { width: idW, gap: Math.round(2 * z) }]}>
+              <Text style={[styles.name, { fontSize: Math.max(10, Math.round(11 * z)), maxWidth: idW }]} numberOfLines={1}>
                 {unit.name}
               </Text>
-              <View style={[styles.avatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]}>
+              <View style={[styles.avatar, { width: face, height: face, borderRadius: face / 2 }]}>
                 {portrait ?? (
                   <FaceArt
                     kindId={unit.kindId}
                     tint={unit.tint}
                     name={unit.name}
-                    size={avatarSize - 2}
+                    size={face - 2}
                     facing={facing}
                   />
                 )}
               </View>
-              <Text style={styles.lvText}>Lv.{unit.level ?? '—'}</Text>
+              <Text style={[styles.lvText, { fontSize: Math.max(10, Math.round(12 * z)) }]}>Lv.{unit.level ?? '—'}</Text>
             </View>
 
-            <View style={styles.stats}>
-              <View style={styles.elementRow}>
+            <View style={[styles.stats, { gap: Math.round(3 * z) }]}>
+              <View style={[styles.elementRow, { gap: Math.round(3 * z) }]}>
                 {(elements.length ? elements : ['']).map((element, index) => {
                   if (!element) {
                     return (
-                      <Text key="empty" style={styles.muted}>
+                      <Text key="empty" style={[styles.muted, { fontSize: Math.max(9, Math.round(10 * z)) }]}>
                         —
                       </Text>
                     );
@@ -161,19 +187,39 @@ export function BattleInfoPanel({
                   return (
                     <View
                       key={`${element}-${index}`}
-                      style={[styles.elementChip, { borderColor: tint, backgroundColor: 'rgba(12, 28, 48, 0.92)' }]}
+                      style={[
+                        styles.elementChip,
+                        {
+                          borderColor: tint,
+                          backgroundColor: 'rgba(12, 28, 48, 0.92)',
+                          gap: Math.round(3 * z),
+                          borderRadius: Math.round(4 * z),
+                          paddingHorizontal: Math.round(5 * z),
+                          paddingVertical: Math.max(1, Math.round(1 * z)),
+                        },
+                      ]}
                     >
-                      <View style={[styles.elementDot, { backgroundColor: tint }]} />
-                      <Text style={[styles.elementText, { color: tint }]} numberOfLines={1}>
+                      <View
+                        style={[
+                          styles.elementDot,
+                          {
+                            backgroundColor: tint,
+                            width: Math.round(6 * z),
+                            height: Math.round(6 * z),
+                            borderRadius: Math.round(3 * z),
+                          },
+                        ]}
+                      />
+                      <Text style={[styles.elementText, { color: tint, fontSize: Math.max(8, Math.round(9 * z)) }]} numberOfLines={1}>
                         {shortElement(element)}
                       </Text>
                     </View>
                   );
                 })}
               </View>
-              <StatBar value={unit.hp} max={unit.maxHp} fill="#e53935" track="#4a1818" />
-              <StatBar value={unit.mp} max={unit.maxMp} fill="#b39ddb" track="#241848" />
-              <View style={styles.skillRow}>
+              <StatBar value={unit.hp} max={unit.maxHp} fill="#e53935" track="#4a1818" scale={z} />
+              <StatBar value={unit.mp} max={unit.maxMp} fill="#b39ddb" track="#241848" scale={z} />
+              <View style={[styles.skillRow, { gap: Math.round(4 * z), marginTop: Math.round(1 * z) }]}>
                 {(skills.length
                   ? skills
                   : [
@@ -182,8 +228,29 @@ export function BattleInfoPanel({
                       { id: 's2', name: '—' },
                     ]
                 ).map((skill, index) => (
-                  <View key={skill.id} style={[styles.skillSlot, index === 0 && styles.skillSlotBasic]}>
-                    <Text style={styles.skillName} numberOfLines={2}>
+                  <View
+                    key={skill.id}
+                    style={[
+                      styles.skillSlot,
+                      index === 0 && styles.skillSlotBasic,
+                      {
+                        width: skillBox,
+                        height: skillBox,
+                        borderRadius: Math.round(4 * z),
+                        paddingHorizontal: Math.round(2 * z),
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.skillName,
+                        {
+                          fontSize: Math.max(6, Math.round(7 * z)),
+                          lineHeight: Math.max(7, Math.round(8 * z)),
+                        },
+                      ]}
+                      numberOfLines={2}
+                    >
                       {skill.name}
                     </Text>
                   </View>
@@ -193,7 +260,7 @@ export function BattleInfoPanel({
           </View>
         </View>
       ) : (
-        <Text style={styles.empty}>—</Text>
+        <Text style={[styles.empty, { fontSize: Math.max(10, Math.round(12 * z)) }]}>—</Text>
       )}
       {footer}
     </View>
@@ -222,13 +289,8 @@ export function formatUnitInspectTip(unit: InfoPanelUnit | null): string {
 
 const styles = StyleSheet.create({
   panel: {
-    width: PANEL_W,
-    height: PANEL_H,
     flexGrow: 0,
     flexShrink: 0,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 8,
     backgroundColor: '#2a2a2a',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
@@ -237,18 +299,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   body: { width: '100%', height: '100%' },
-  topRow: { flex: 1, flexDirection: 'row', alignItems: 'stretch', gap: 8 },
+  topRow: { flex: 1, flexDirection: 'row', alignItems: 'stretch' },
   identity: {
-    width: 58,
     alignItems: 'center',
     justifyContent: 'flex-start',
-    gap: 2,
   },
   name: {
     color: '#ffffff',
-    fontSize: 11,
     fontWeight: '800',
-    maxWidth: 58,
     textAlign: 'center',
   },
   avatar: {
@@ -259,33 +317,25 @@ const styles = StyleSheet.create({
   },
   lvText: {
     color: '#f0d78c',
-    fontSize: 12,
     fontWeight: '900',
     marginTop: 1,
   },
-  stats: { flex: 1, minWidth: 0, justifyContent: 'space-between', gap: 3 },
-  elementRow: { flexDirection: 'row', flexWrap: 'nowrap', gap: 3, overflow: 'hidden' },
+  stats: { flex: 1, minWidth: 0, justifyContent: 'space-between' },
+  elementRow: { flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden' },
   elementChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
     borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
   },
-  elementDot: { width: 6, height: 6, borderRadius: 3 },
-  elementText: { fontSize: 9, fontWeight: '900' },
+  elementDot: {},
+  elementText: { fontWeight: '900' },
   barTrack: {
-    height: 14,
-    borderRadius: 7,
     overflow: 'hidden',
     justifyContent: 'center',
   },
   barFill: { position: 'absolute', left: 0, top: 0, bottom: 0 },
   barText: {
     color: '#ffffff',
-    fontSize: 9,
     fontWeight: '800',
     textAlign: 'center',
     zIndex: 1,
@@ -293,17 +343,13 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 3,
   },
-  skillRow: { flexDirection: 'row', gap: 4, marginTop: 1 },
+  skillRow: { flexDirection: 'row' },
   skillSlot: {
-    width: 34,
-    height: 34,
-    borderRadius: 4,
     backgroundColor: '#5ec4c0',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.85)',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 2,
   },
   skillSlotBasic: {
     backgroundColor: '#141414',
@@ -311,11 +357,9 @@ const styles = StyleSheet.create({
   },
   skillName: {
     color: '#ffffff',
-    fontSize: 7,
     fontWeight: '800',
     textAlign: 'center',
-    lineHeight: 8,
   },
-  muted: { color: 'rgba(255,255,255,0.45)', fontSize: 10, fontWeight: '700' },
-  empty: { color: 'rgba(255,255,255,0.55)', fontWeight: '800', fontSize: 12, textAlign: 'center' },
+  muted: { color: 'rgba(255,255,255,0.45)', fontWeight: '700' },
+  empty: { color: 'rgba(255,255,255,0.55)', fontWeight: '800', textAlign: 'center' },
 });

@@ -344,17 +344,31 @@ export function TimelineFace({
 /** Combat feed under the turn bar — white ink with a hard black outline. */
 export function BattleLogLine({
   text,
+  lines,
   fontSize,
+  maxLines = 3,
   testID,
 }: {
-  text: string;
+  text?: string;
+  /** Recent turn history — each entry renders on its own row. */
+  lines?: string[];
   fontSize: number;
+  maxLines?: number;
   testID?: string;
 }) {
+  const entries = (lines && lines.length > 0 ? lines : text ? [text] : [])
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-maxLines);
+
   return (
-    <Text style={[styles.battleLog, { fontSize }]} numberOfLines={2} testID={testID}>
-      {text}
-    </Text>
+    <View style={styles.battleLogWrap} testID={testID}>
+      {entries.map((line, index) => (
+        <Text key={`${index}-${line.slice(0, 32)}`} style={[styles.battleLog, { fontSize }]} numberOfLines={1}>
+          {line}
+        </Text>
+      ))}
+    </View>
   );
 }
 
@@ -610,12 +624,17 @@ export const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 4,
   },
+  battleLogWrap: {
+    maxWidth: '100%',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 6,
+  },
   battleLog: {
     color: '#ffffff',
     textAlign: 'center',
     fontWeight: '800',
     maxWidth: '100%',
-    paddingHorizontal: 6,
     textShadowColor: '#000000',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 4,
