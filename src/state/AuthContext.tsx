@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Platform } from 'react-native';
 
 import { SessionReplacedModal } from '../components/SessionReplacedModal';
 import type { InitializedPlayer } from '../types/game';
@@ -71,7 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }), [forceLogout]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const onStorage = (event: StorageEvent) => {
       if (event.key !== TOKEN_KEY) return;
       const next = event.newValue;
@@ -94,7 +95,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const params = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
+      const params =
+        Platform.OS !== 'web' || typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
       const authCode = params?.get('auth_code');
       const notice = params?.get('auth_error') ?? params?.get('link_error');
       if (notice && typeof sessionStorage !== 'undefined') sessionStorage.setItem('game-thu-gian.auth-error', notice);

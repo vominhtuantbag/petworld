@@ -1,11 +1,9 @@
-import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import { Platform } from 'react-native';
 
 import { getAudioSettings } from './audioSettings';
 import type { BgmRegionKey } from './bgmRegions';
 import { OVERWORLD_BGM_DEFAULT_VOLUME } from './defaults';
 import { cancelFade, fadeVolume, type FadeHandle } from './fade';
-import { OVERWORLD_BGM_SOURCES } from './tracks';
 
 const CROSSFADE_MS = 900;
 const FADE_OUT_MS = 500;
@@ -13,10 +11,28 @@ const FADE_IN_MS = 650;
 
 type Slot = 'a' | 'b';
 
+/** Minimal player surface used by the fade helper. */
+type AudioPlayer = {
+  volume: number;
+  loop: boolean;
+  playing: boolean;
+  play: () => void;
+  pause: () => void;
+  replace: (source: number) => void;
+  remove: () => void;
+};
+
+type ExpoAudioModule = {
+  createAudioPlayer: (source: number) => AudioPlayer;
+  setAudioModeAsync: (mode: Record<string, unknown>) => Promise<void>;
+};
+
 /**
- * Dual-deck overworld BGM controller.
- * Decks are always created with a real asset (never `null`) — required for
- * reliable playback on Expo Web.
+ * Dual-deck overworld BGM.
+ *
+ * Native Android/iOS: no-op for now — expo-audio's media playback service has
+ * been crashing PetWar at splash on device APKs. Web keeps full BGM via a
+ * dynamic import so the native binary does not need the module linked.
  */
 class OverworldBgmService {
   private deckA: AudioPlayer | null = null;
@@ -32,6 +48,9 @@ class OverworldBgmService {
   private fadeB: FadeHandle | null = null;
   private seq = 0;
   private disposed = false;
+  private audio: ExpoAudioModule | null = null;
+  private sources: Record<BgmRegionKey, number> | null = null;
+  private nativeDisabled = Platform.OS !== 'web';
 
   private targetVolume(): number {
     const settings = getAudioSettings();
@@ -46,10 +65,25 @@ class OverworldBgmService {
     this.fadeB = null;
   }
 
-  private async ensureMode() {
-    if (this.primed) return;
+  private async ensureAudio(): Promise<boolean> {
+    if (this.nativeDisabled) return false;
+    if (this.audio && this.sources) return true;
     try {
-      await setAudioModeAsync({
+      const [expoAudio, tracks] = await Promise.all([import('expo-audio'), import('./tracks')]);
+      this.audio = expoAudio as unknown as ExpoAudioModule;
+      this.sources = tracks.OVERWORLD_BGM_SOURCES as Record<BgmRegionKey, number>;
+      return true;
+    } catch (error) {
+      console.warn('[Game Thư Giãn] Overworld BGM unavailable.', error);
+      this.nativeDisabled = true;
+      return false;
+    }
+  }
+
+  private async ensureMode() {
+    if (this.primed || !this.audio) return;
+    try {
+      await this.audio.setAudioModeAsync({
         playsInSilentMode: true,
         interruptionMode: 'duckOthers',
         shouldPlayInBackground: false,
@@ -74,15 +108,15 @@ class OverworldBgmService {
     }
   }
 
-  /** Create or reuse a deck bound to a concrete asset. Null if native audio fails. */
   private obtain(slot: Slot, key: BgmRegionKey): AudioPlayer | null {
+    if (!this.audio || !this.sources) return null;
     try {
+      const source = this.sources[key];
       if (slot === 'a') {
-        if (!this.deckA) {
-          this.deckA = createAudioPlayer(OVERWORLD_BGM_SOURCES[key]);
-        } else if (this.keyA !== key) {
+        if (!this.deckA) this.deckA = this.audio.createAudioPlayer(source);
+        else if (this.keyA !== key) {
           try {
-            this.deckA.replace(OVERWORLD_BGM_SOURCES[key]);
+            this.deckA.replace(source);
           } catch {
             /* ignore */
           }
@@ -91,12 +125,10 @@ class OverworldBgmService {
         this.deckA.loop = true;
         return this.deckA;
       }
-
-      if (!this.deckB) {
-        this.deckB = createAudioPlayer(OVERWORLD_BGM_SOURCES[key]);
-      } else if (this.keyB !== key) {
+      if (!this.deckB) this.deckB = this.audio.createAudioPlayer(source);
+      else if (this.keyB !== key) {
         try {
-          this.deckB.replace(OVERWORLD_BGM_SOURCES[key]);
+          this.deckB.replace(source);
         } catch {
           /* ignore */
         }
@@ -130,6 +162,7 @@ class OverworldBgmService {
   }
 
   sync(key: BgmRegionKey | null, exploration: boolean) {
+    if (this.nativeDisabled) return;
     this.disposed = false;
     this.desiredKey = key;
     this.exploration = exploration;
@@ -137,10 +170,10 @@ class OverworldBgmService {
   }
 
   refreshGain() {
+    if (this.nativeDisabled) return;
     void this.apply();
   }
 
-  /** Soft stop for React effect cleanups — keeps decks warm for Strict Mode remounts. */
   softStop() {
     this.exploration = false;
     this.cancelFades();
@@ -150,7 +183,8 @@ class OverworldBgmService {
 
   private async apply() {
     try {
-      if (this.disposed) return;
+      if (this.disposed || this.nativeDisabled) return;
+      if (!(await this.ensureAudio())) return;
       await this.ensureMode();
       if (this.disposed) return;
 
@@ -162,14 +196,11 @@ class OverworldBgmService {
         this.fadeAllOut();
         return;
       }
-
       if (ticket !== this.seq) return;
-
       if (this.currentKey === nextKey && this.activePlayer()) {
         this.bumpGain(ticket);
         return;
       }
-
       this.crossfadeTo(nextKey, ticket);
     } catch (error) {
       console.warn('[Game Thư Giãn] Overworld BGM apply failed.', error);
@@ -208,7 +239,6 @@ class OverworldBgmService {
   private crossfadeTo(nextKey: BgmRegionKey, ticket: number) {
     if (ticket !== this.seq || this.disposed) return;
     this.cancelFades();
-
     const target = this.targetVolume();
     const hasCurrent = this.currentKey != null && this.activePlayer() != null;
 
@@ -280,7 +310,6 @@ export const overworldBgm = new OverworldBgmService();
 
 /** Web browsers block audio until a click/key — resume beds after first gesture. */
 export function unlockAudioOnGesture() {
-  // RN Android/iOS often define `window` — only attach DOM listeners on web.
   if (Platform.OS !== 'web' || typeof window === 'undefined') return () => undefined;
   const kick = () => {
     overworldBgm.refreshGain();

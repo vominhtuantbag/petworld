@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { PanResponder } from 'react-native';
+import { PanResponder, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
 const REVEAL_MS = 2600;
@@ -8,7 +8,8 @@ const EDGE = 20;
 /**
  * Hides the mobile status bar for the whole session. A downward swipe that
  * starts at the top edge shows it, then it hides again on its own.
- * Web has no system status bar; the calls there are ignored.
+ * Avoid imperative StatusBar.setHidden on cold start — that path has crashed
+ * some Android APKs right after splash. Declarative `hidden` is enough.
  */
 export function useImmersiveChrome() {
   const [hidden, setHidden] = useState(true);
@@ -17,20 +18,11 @@ export function useImmersiveChrome() {
 
   const hide = useCallback(() => {
     setHidden(true);
-    try {
-      StatusBar.setHidden(true, 'slide');
-    } catch (error) {
-      console.warn('[Game Thư Giãn] Status bar could not hide.', error);
-    }
   }, []);
 
   const reveal = useCallback(() => {
+    if (Platform.OS === 'web') return;
     setHidden(false);
-    try {
-      StatusBar.setHidden(false, 'slide');
-    } catch (error) {
-      console.warn('[Game Thư Giãn] Status bar could not show.', error);
-    }
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(hide, REVEAL_MS);
   }, [hide]);
@@ -38,16 +30,16 @@ export function useImmersiveChrome() {
   revealRef.current = reveal;
 
   useEffect(() => {
-    hide();
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [hide]);
+  }, []);
 
   const pan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponderCapture: (event, gesture) => {
+        if (Platform.OS === 'web') return false;
         const originY = event.nativeEvent.pageY - gesture.dy;
         return originY <= EDGE && gesture.dy >= 14 && gesture.dy > Math.abs(gesture.dx) * 1.2;
       },

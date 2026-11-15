@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 /**
  * Phone and web builds call the Render service.
  * `npx expo export -p web` inlines EXPO_PUBLIC_* from .env.production.
@@ -14,6 +16,8 @@ function isLoopback(url: string): boolean {
 }
 
 function pageIsLocal(): boolean {
+  // Native APK/IPA has no browser host — never treat it as a local web page.
+  if (Platform.OS !== 'web') return false;
   const host = typeof window === 'undefined' ? '' : window.location?.hostname ?? '';
   if (!host) return true;
   return host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
