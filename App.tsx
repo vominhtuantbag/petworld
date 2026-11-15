@@ -1,25 +1,14 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { Suspense, lazy, useEffect, useRef, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { PartyInvitePrompt, PvpChallengePrompt } from './src/components/world/PvpChallenge';
 import { RotateToLandscape } from './src/components/RotateToLandscape';
 import { useImmersiveChrome } from './src/components/ImmersiveChrome';
 import { useLandscapeLock } from './src/hooks/useLandscapeLock';
 import { SetupFlow } from './src/game/SetupFlow';
 import { getRegion } from './src/data/regions';
 import type { ServerCharacter } from './src/net/protocol';
-import { ArenaScreen } from './src/screens/ArenaScreen';
-import { BanPickScreen } from './src/screens/BanPickScreen';
-import { RaidLobbyScreen } from './src/screens/RaidLobbyScreen';
-import { RaidScreen } from './src/screens/RaidScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
-import { BattleScreen } from './src/screens/BattleScreen';
-import { SquadSetupScreen } from './src/screens/SquadSetupScreen';
-import { LobbyScreen } from './src/screens/LobbyScreen';
-import { OpenWorldMapScreen } from './src/screens/OpenWorldMapScreen';
-import { TournamentScreen } from './src/screens/TournamentScreen';
-import { TownScreen } from './src/screens/TownScreen';
 import { AuthProvider, useAuth } from './src/state/AuthContext';
 import { playerFromSave } from './src/state/save/gameSave';
 import { readLocalSave } from './src/state/save/localSave';
@@ -27,9 +16,22 @@ import { BattleProvider, useBattle } from './src/state/BattleContext';
 import { SetupProvider, useSetup } from './src/state/SetupContext';
 import { WorldProvider, useWorld } from './src/state/WorldContext';
 import { hydrateAudioSettings } from './src/audio/audioSettings';
-import { useOverworldBgm } from './src/audio/useOverworldBgm';
 import { theme } from './src/theme/theme';
 import type { InitializedPlayer } from './src/types/game';
+
+/** Heavy gameplay / combat screens — deferred until after splash + auth. */
+const FieldRoot = lazy(() =>
+  import('./src/game/FieldRoot').then((module) => ({ default: module.FieldRoot })),
+);
+const ArenaScreen = lazy(() =>
+  import('./src/screens/ArenaScreen').then((module) => ({ default: module.ArenaScreen })),
+);
+const BanPickScreen = lazy(() =>
+  import('./src/screens/BanPickScreen').then((module) => ({ default: module.BanPickScreen })),
+);
+const RaidScreen = lazy(() =>
+  import('./src/screens/RaidScreen').then((module) => ({ default: module.RaidScreen })),
+);
 
 /**
  * Game Thư Giãn
@@ -89,44 +91,9 @@ function GameRoot() {
 
   return (
     <View style={styles.root} {...chrome.panHandlers}>
-      {screen}
+      <Suspense fallback={<View style={styles.fill} />}>{screen}</Suspense>
       {chrome.bar}
       <RotateToLandscape />
-    </View>
-  );
-}
-
-function FieldRoot() {
-  const world = useWorld();
-  const battle = useBattle();
-  // Regional overworld BGM (16 biomes) — survives battle/squad swaps for fade + resume.
-  useOverworldBgm({ scene: world.scene, zoneId: world.zoneId });
-
-  let body: ReactNode = <TownScreen />;
-  if (battle.raidLobby) body = <RaidLobbyScreen />;
-  else if (world.scene === 'wilds') body = <OpenWorldMapScreen />;
-  else if (world.scene === 'squad') body = <SquadSetupScreen />;
-  else if (world.scene === 'encounter') body = <BattleScreen />;
-  else if (world.scene === 'cup') body = <TournamentScreen />;
-  else if (world.scene === 'pvp') {
-    body = (
-      <LobbyScreen
-        onLeave={() => {
-          battle.cancelMatch();
-          world.returnToTown();
-        }}
-      />
-    );
-  }
-  return (
-    <View style={styles.fill}>
-      {body}
-      {battle.raidLobby ? null : (
-        <>
-          <PvpChallengePrompt />
-          <PartyInvitePrompt />
-        </>
-      )}
     </View>
   );
 }

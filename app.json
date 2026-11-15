@@ -62,7 +62,14 @@
           "style": "light"
         }
       ],
-      "expo-audio"
+      [
+        "expo-audio",
+        {
+          "enableBackgroundPlayback": false,
+          "enableBackgroundRecording": false,
+          "recordAudioAndroid": false
+        }
+      ]
     ],
     "extra": {
       "eas": {
