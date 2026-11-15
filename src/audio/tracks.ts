@@ -7,9 +7,9 @@
  * Audio keys map onto game `RegionId`s in `bgmRegions.ts`.
  */
 import type { BgmRegionKey } from './bgmRegions';
+import { OVERWORLD_BGM_DEFAULT_VOLUME } from './defaults';
 
-/** Default overworld bed level (0–1). Keep low so SFX can sit on top. */
-export const OVERWORLD_BGM_DEFAULT_VOLUME = 0.45;
+export { OVERWORLD_BGM_DEFAULT_VOLUME } from './defaults';
 
 /** @deprecated Prefer OVERWORLD_BGM_DEFAULT_VOLUME. */
 export const PLAINS_OVERWORLD_BGM_DEFAULT_VOLUME = OVERWORLD_BGM_DEFAULT_VOLUME;

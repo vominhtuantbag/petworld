@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
-import { OVERWORLD_BGM_DEFAULT_VOLUME } from './tracks';
+import { OVERWORLD_BGM_DEFAULT_VOLUME } from './defaults';
 
 const STORAGE_KEY = 'game-thu-gian.audio-settings.v1';
 

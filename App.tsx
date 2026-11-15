@@ -2,7 +2,6 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { DebugGrid } from './src/components/battle/DebugGrid';
 import { PartyInvitePrompt, PvpChallengePrompt } from './src/components/world/PvpChallenge';
 import { RotateToLandscape } from './src/components/RotateToLandscape';
 import { useImmersiveChrome } from './src/components/ImmersiveChrome';
@@ -91,7 +90,6 @@ function GameRoot() {
   return (
     <View style={styles.root} {...chrome.panHandlers}>
       {screen}
-      {battle.battle || battle.draft || battle.raid || world.scene === 'encounter' ? null : <DebugGrid />}
       {chrome.bar}
       <RotateToLandscape />
     </View>

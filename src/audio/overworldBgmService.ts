@@ -1,9 +1,11 @@
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
+import { Platform } from 'react-native';
 
 import { getAudioSettings } from './audioSettings';
 import type { BgmRegionKey } from './bgmRegions';
+import { OVERWORLD_BGM_DEFAULT_VOLUME } from './defaults';
 import { cancelFade, fadeVolume, type FadeHandle } from './fade';
-import { OVERWORLD_BGM_DEFAULT_VOLUME, OVERWORLD_BGM_SOURCES } from './tracks';
+import { OVERWORLD_BGM_SOURCES } from './tracks';
 
 const CROSSFADE_MS = 900;
 const FADE_OUT_MS = 500;
@@ -72,35 +74,47 @@ class OverworldBgmService {
     }
   }
 
-  /** Create or reuse a deck bound to a concrete asset (never null). */
-  private obtain(slot: Slot, key: BgmRegionKey): AudioPlayer {
-    if (slot === 'a') {
-      if (!this.deckA) {
-        this.deckA = createAudioPlayer(OVERWORLD_BGM_SOURCES[key]);
-      } else if (this.keyA !== key) {
+  /** Create or reuse a deck bound to a concrete asset. Null if native audio fails. */
+  private obtain(slot: Slot, key: BgmRegionKey): AudioPlayer | null {
+    try {
+      if (slot === 'a') {
+        if (!this.deckA) {
+          this.deckA = createAudioPlayer(OVERWORLD_BGM_SOURCES[key]);
+        } else if (this.keyA !== key) {
+          try {
+            this.deckA.replace(OVERWORLD_BGM_SOURCES[key]);
+          } catch {
+            /* ignore */
+          }
+        }
+        this.keyA = key;
+        this.deckA.loop = true;
+        return this.deckA;
+      }
+
+      if (!this.deckB) {
+        this.deckB = createAudioPlayer(OVERWORLD_BGM_SOURCES[key]);
+      } else if (this.keyB !== key) {
         try {
-          this.deckA.replace(OVERWORLD_BGM_SOURCES[key]);
+          this.deckB.replace(OVERWORLD_BGM_SOURCES[key]);
         } catch {
           /* ignore */
         }
       }
-      this.keyA = key;
-      this.deckA.loop = true;
-      return this.deckA;
-    }
-
-    if (!this.deckB) {
-      this.deckB = createAudioPlayer(OVERWORLD_BGM_SOURCES[key]);
-    } else if (this.keyB !== key) {
-      try {
-        this.deckB.replace(OVERWORLD_BGM_SOURCES[key]);
-      } catch {
-        /* ignore */
+      this.keyB = key;
+      this.deckB.loop = true;
+      return this.deckB;
+    } catch (error) {
+      console.warn('[Game Thư Giãn] Overworld BGM deck failed.', error);
+      if (slot === 'a') {
+        this.deckA = null;
+        this.keyA = null;
+      } else {
+        this.deckB = null;
+        this.keyB = null;
       }
+      return null;
     }
-    this.keyB = key;
-    this.deckB.loop = true;
-    return this.deckB;
   }
 
   private play(player: AudioPlayer) {
@@ -135,27 +149,31 @@ class OverworldBgmService {
   }
 
   private async apply() {
-    if (this.disposed) return;
-    await this.ensureMode();
-    if (this.disposed) return;
+    try {
+      if (this.disposed) return;
+      await this.ensureMode();
+      if (this.disposed) return;
 
-    const ticket = ++this.seq;
-    const wantPlay = this.exploration && this.desiredKey != null && this.targetVolume() > 0.001;
-    const nextKey = wantPlay ? this.desiredKey : null;
+      const ticket = ++this.seq;
+      const wantPlay = this.exploration && this.desiredKey != null && this.targetVolume() > 0.001;
+      const nextKey = wantPlay ? this.desiredKey : null;
 
-    if (!wantPlay || !nextKey) {
-      this.fadeAllOut();
-      return;
+      if (!wantPlay || !nextKey) {
+        this.fadeAllOut();
+        return;
+      }
+
+      if (ticket !== this.seq) return;
+
+      if (this.currentKey === nextKey && this.activePlayer()) {
+        this.bumpGain(ticket);
+        return;
+      }
+
+      this.crossfadeTo(nextKey, ticket);
+    } catch (error) {
+      console.warn('[Game Thư Giãn] Overworld BGM apply failed.', error);
     }
-
-    if (ticket !== this.seq) return;
-
-    if (this.currentKey === nextKey && this.activePlayer()) {
-      this.bumpGain(ticket);
-      return;
-    }
-
-    this.crossfadeTo(nextKey, ticket);
   }
 
   private bumpGain(ticket: number) {
@@ -196,9 +214,14 @@ class OverworldBgmService {
 
     if (!hasCurrent) {
       const player = this.obtain('a', nextKey);
+      if (!player) return;
       this.active = 'a';
       this.currentKey = nextKey;
-      player.volume = 0;
+      try {
+        player.volume = 0;
+      } catch {
+        /* ignore */
+      }
       this.play(player);
       this.fadeA = fadeVolume(player, 0, target, FADE_IN_MS);
       return;
@@ -208,8 +231,13 @@ class OverworldBgmService {
     const toSlot: Slot = fromSlot === 'a' ? 'b' : 'a';
     const fromPlayer = fromSlot === 'a' ? this.deckA : this.deckB;
     const toPlayer = this.obtain(toSlot, nextKey);
+    if (!toPlayer) return;
 
-    toPlayer.volume = 0;
+    try {
+      toPlayer.volume = 0;
+    } catch {
+      /* ignore */
+    }
     this.play(toPlayer);
 
     const fromVol = fromPlayer && typeof fromPlayer.volume === 'number' ? fromPlayer.volume : target;
@@ -252,7 +280,8 @@ export const overworldBgm = new OverworldBgmService();
 
 /** Web browsers block audio until a click/key — resume beds after first gesture. */
 export function unlockAudioOnGesture() {
-  if (typeof window === 'undefined') return () => undefined;
+  // RN Android/iOS often define `window` — only attach DOM listeners on web.
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return () => undefined;
   const kick = () => {
     overworldBgm.refreshGain();
   };
