@@ -1,5 +1,6 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { ItemIcon } from '../ItemIcon';
 import { useWorld } from '../../state/WorldContext';
 import { theme } from '../../theme/theme';
 import { useLayout } from '../../theme/useLayout';
@@ -24,7 +25,7 @@ import {
   upgradeCost,
 } from '../../world/items';
 import { evoCost, evoStageOf, evoTitle, MAX_EVO_STAGE, redundantPets, shardForKind, shardLabel } from '../../world/evolution';
-import type { ServiceId } from '../../world/types';
+import type { ItemId, ServiceId } from '../../world/types';
 
 type PanelId = ServiceId | 'bag';
 
@@ -93,6 +94,7 @@ function StoreRows() {
         return (
           <Row
             key={itemId}
+            itemId={itemId}
             title={`${ITEMS[itemId].nameVi} · ${price} vàng${sale && price !== full ? ` (gốc ${full})` : ''}`}
             detail={ITEMS[itemId].blurb}
             action="Mua"
@@ -118,6 +120,7 @@ function SmithRows() {
       {SMITH_STOCK.map((itemId) => (
         <Row
           key={itemId}
+          itemId={itemId}
           title={`${ITEMS[itemId].nameVi} · ${ITEMS[itemId].price} vàng`}
           detail={ITEMS[itemId].blurb}
           action="Mua"
@@ -127,6 +130,7 @@ function SmithRows() {
       {bagGear.map((stack) => (
         <Row
           key={`wear-${stack.itemId}`}
+          itemId={stack.itemId}
           title={`${ITEMS[stack.itemId].nameVi} trong túi`}
           detail={`${RARITY_LABEL[gearRarity(stack.itemId)]}. ${ITEMS[stack.itemId].blurb}`}
           action="Đeo"
@@ -141,6 +145,7 @@ function SmithRows() {
         return (
           <Row
             key={`up-${slot}`}
+            itemId={piece.itemId}
             title={`${label}: ${ITEMS[piece.itemId].nameVi} +${piece.plus}`}
             detail={
               cap
@@ -156,6 +161,7 @@ function SmithRows() {
         world[slot] ? (
           <Row
             key={`off-${slot}`}
+            itemId={world[slot]!.itemId}
             title={`Tháo ${label}`}
             detail={ITEMS[world[slot]!.itemId].nameVi}
             action="Tháo"
@@ -177,6 +183,7 @@ function StorageRows() {
         {world.bag.map((stack) => (
           <Row
             key={`bag-${stack.itemId}`}
+            itemId={stack.itemId}
             title={`${ITEMS[stack.itemId].nameVi} ×${stack.qty}`}
             detail="Cất vào kho"
             action="Cất"
@@ -190,6 +197,7 @@ function StorageRows() {
         {world.storage.map((stack) => (
           <Row
             key={`bin-${stack.itemId}`}
+            itemId={stack.itemId}
             title={`${ITEMS[stack.itemId].nameVi} ×${stack.qty}`}
             detail="Lấy ra túi"
             action="Lấy"
@@ -307,6 +315,7 @@ function BagRows() {
       {usable.map((stack) => (
         <Row
           key={`use-${stack.itemId}`}
+          itemId={stack.itemId}
           title={`${ITEMS[stack.itemId].nameVi} ×${stack.qty}`}
           detail={ITEMS[stack.itemId].blurb}
           action="Dùng"
@@ -329,9 +338,22 @@ function gearStatLine(stats: { attack: number; defense: number; hp: number; mana
   return parts.join(' · ') || 'Không có chỉ số.';
 }
 
-function Row({ title, detail, action, onPress }: { title: string; detail: string; action: string; onPress: () => void }) {
+function Row({
+  title,
+  detail,
+  action,
+  onPress,
+  itemId,
+}: {
+  title: string;
+  detail: string;
+  action: string;
+  onPress: () => void;
+  itemId?: ItemId;
+}) {
   return (
     <View style={styles.row}>
+      {itemId ? <ItemIcon itemId={itemId} size={36} /> : null}
       <View style={styles.rowText}>
         <Text style={styles.rowTitle}>{title}</Text>
         <Text style={styles.copy}>{detail}</Text>

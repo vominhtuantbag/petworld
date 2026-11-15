@@ -1,9 +1,11 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
+import { ItemIcon } from '../ItemIcon';
 import { theme } from '../../theme/theme';
 import { useLayout } from '../../theme/useLayout';
 import { ADVENTURE_LEVEL_CAP, expForNextLevel } from '../../world/progression';
+import type { ItemId } from '../../world/types';
 
 export type ExpMember = {
   id: string;
@@ -18,6 +20,7 @@ export type LootSlot = {
   label: string;
   detail: string;
   tint: string;
+  itemId?: ItemId | string;
 };
 
 type Props = {
@@ -67,7 +70,7 @@ export function EndGameModal({ victory, members, slots, notes, shareLabel, onSha
               <View style={styles.slots}>
                 {slots.map((slot) => (
                   <View key={slot.id} style={[styles.slot, { minWidth: s(92), padding: s(8), borderRadius: s(12) }]}>
-                    <View style={[styles.swatch, { backgroundColor: slot.tint, width: s(28), height: s(28), borderRadius: s(8) }]} />
+                    <ItemIcon itemId={slot.itemId} tint={slot.tint} size={s(28)} radius={s(8)} />
                     <Text style={[styles.slotLabel, { fontSize: font(12) }]} numberOfLines={1}>
                       {slot.label}
                     </Text>
@@ -199,7 +202,6 @@ const styles = StyleSheet.create({
   levelUp: { color: '#9dffb8', fontWeight: '800' },
   slots: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   slot: { flexGrow: 1, alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(228,194,122,0.28)' },
-  swatch: {},
   slotLabel: { color: theme.ink, fontWeight: '800' },
   slotDetail: { color: theme.gold, fontWeight: '800' },
   note: { color: theme.muted, textAlign: 'center' },

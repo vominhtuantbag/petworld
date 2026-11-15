@@ -67,8 +67,9 @@ import { allowsFallenTargets, selectableCombatants } from '../world/combat/faint
 import { describeSkill } from '../world/combat/kits';
 import { floatKindFromLog, IMPACT_MS, SLASH_MS, STANCE_MS, STANCE_PX, TEAR_MS, TURN_MS } from '../world/combat/loop';
 import { upcomingQueue } from '../world/combat/order';
-import { ITEMS } from '../world/items';
 import { MINE_WAVE_COUNT, mineClearDrops, mineEncounter, mineLabel } from '../world/dungeons';
+import { itemArt } from '../world/itemArt';
+import { ITEMS } from '../world/items';
 import type { Encounter, ItemId } from '../world/types';
 
 const ARENA = require('../../assets/images/sandau_2.jpg');
@@ -1149,6 +1150,7 @@ export function BattleScreen() {
                   key={stack.itemId}
                   label={shortItem(stack.itemId)}
                   tint={ITEMS[stack.itemId].tint}
+                  icon={itemArt(stack.itemId)}
                   hot={itemIds.includes(stack.itemId)}
                   onHighlight={() => setTipOverride(`${ITEMS[stack.itemId].nameVi} · mang vào trận.`)}
                   onPress={() => {
@@ -1343,6 +1345,7 @@ function lootSlots(rewards: BattleRewards): LootSlot[] {
       label: lootLabel(drop.itemId),
       detail: drop.itemId === 'banana' || drop.itemId === 'grape' || drop.itemId === 'apple' ? ITEMS[drop.itemId].nameVi : `×${drop.qty}`,
       tint: ITEMS[drop.itemId].tint,
+      itemId: drop.itemId,
     });
   }
   return slots;

@@ -1,9 +1,10 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { FieldState, Rect, Sensor } from '../../world/types';
+import type { FieldState, LootActor, Rect, Sensor } from '../../world/types';
 import { portalLayout } from '../../world/portals';
 import { portalFade } from '../../world/sim';
+import { ItemIcon } from '../ItemIcon';
 import { DesertProp, desertFootY, isDesertKind } from './DesertProp';
 import { stepHorizontalFacing } from './facing';
 import { PortalGate } from './PortalGate';
@@ -12,6 +13,8 @@ import { MonsterToken } from './MonsterToken';
 import { PlainsProp } from './PlainsProp';
 import { isSwampKind, SwampMist, SwampProp } from './SwampProp';
 import { TownHouse } from './TownHouse';
+
+const LOOT_SIZE = 40;
 
 const TOWN_MAP = require('../../../assets/maps/town-valley.jpg');
 
@@ -113,16 +116,11 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
             ),
           })),
         ...field.loot
-          .filter((drop) => shown({ x: drop.x - 8, y: drop.y - 8, w: 16, h: 16 }))
+          .filter((drop) => shown({ x: drop.x - LOOT_SIZE / 2, y: drop.y - LOOT_SIZE / 2, w: LOOT_SIZE, h: LOOT_SIZE }))
           .map((drop) => ({
             key: drop.id,
             y: drop.y,
-            node: (
-              <View
-                pointerEvents="none"
-                style={[styles.loot, { left: drop.x - 8, top: drop.y - 8, backgroundColor: drop.tint }]}
-              />
-            ),
+            node: <FieldLootMark drop={drop} />,
           })),
         ...gateNodes(field, frame, onSensor),
         {
@@ -223,13 +221,19 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
                     </View>
                   </View>
                 ))}
-                {field.loot.filter((drop) => shown({ x: drop.x - 8, y: drop.y - 8, w: 16, h: 16 })).map((drop) => (
-                  <View
-                    key={drop.id}
-                    pointerEvents="none"
-                    style={[styles.loot, { left: drop.x - 8, top: drop.y - 8, backgroundColor: drop.tint, zIndex: Math.round(drop.y * 10) }]}
-                  />
-                ))}
+                {field.loot
+                  .filter((drop) =>
+                    shown({ x: drop.x - LOOT_SIZE / 2, y: drop.y - LOOT_SIZE / 2, w: LOOT_SIZE, h: LOOT_SIZE }),
+                  )
+                  .map((drop) => (
+                    <View
+                      key={drop.id}
+                      pointerEvents="none"
+                      style={{ position: 'absolute', left: 0, top: 0, zIndex: Math.round(drop.y * 10) }}
+                    >
+                      <FieldLootMark drop={drop} />
+                    </View>
+                  ))}
                 {gateNodes(field, frame, onSensor).map((item) => (
                   <View
                     key={item.key}
@@ -531,6 +535,15 @@ function overlapsFrame(rect: Rect, frame: { x: number; y: number; w: number; h: 
   return rect.x < frame.x + frame.w && rect.x + rect.w > frame.x && rect.y < frame.y + frame.h && rect.y + rect.h > frame.y;
 }
 
+function FieldLootMark({ drop }: { drop: LootActor }) {
+  const half = LOOT_SIZE / 2;
+  return (
+    <View pointerEvents="none" style={[styles.loot, { left: drop.x - half, top: drop.y - half }]}>
+      <ItemIcon itemId={drop.itemId} tint={drop.tint} size={LOOT_SIZE} bare />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   clip: { flex: 1, overflow: 'hidden' },
   pane: { position: 'absolute', left: 0, right: 0, bottom: 0, overflow: 'hidden' },
@@ -555,7 +568,14 @@ const styles = StyleSheet.create({
     textShadowRadius: 3,
     textShadowOffset: { width: 0, height: 1 },
   },
-  loot: { position: 'absolute', width: 16, height: 16, borderRadius: 4, borderWidth: 1, borderColor: 'rgba(0,0,0,0.25)' },
+  loot: {
+    position: 'absolute',
+    width: LOOT_SIZE,
+    height: LOOT_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
   sensor: {
     position: 'absolute',
     alignItems: 'center',

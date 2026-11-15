@@ -3,6 +3,7 @@ import { Animated, Image, PanResponder, Pressable, ScrollView, StyleSheet, Text,
 
 import { AdvancedStatsGrid } from '../combat/AdvancedStatsGrid';
 import { CharacterAvatar } from '../CharacterAvatar';
+import { ItemIcon } from '../ItemIcon';
 import { monsterInitials } from '../world/monsterArt';
 import { monsterPortrait } from '../world/MonsterToken';
 import { getCharacter, getProfession } from '../../data/characters';
@@ -21,6 +22,7 @@ import {
 } from '../../world/combat/kits';
 import type { Skill } from '../../world/combat/model';
 import { heroAdvancedView, petAdvancedView } from '../../world/combat/statView';
+import { itemArt } from '../../world/itemArt';
 import {
   BAG_COLUMNS,
   BAG_ROWS,
@@ -678,6 +680,7 @@ function BagCell({
   selected: boolean;
   dimmed: boolean;
 }) {
+  const art = stack ? itemArt(stack.itemId) : null;
   return (
     <View
       testID={`inventory-slot-${index}`}
@@ -687,7 +690,7 @@ function BagCell({
         {
           width: size,
           height: size,
-          backgroundColor: stack ? ITEMS[stack.itemId].tint : 'rgba(0,0,0,0.18)',
+          backgroundColor: stack ? (art ? 'rgba(8,14,12,0.55)' : ITEMS[stack.itemId].tint) : 'rgba(0,0,0,0.18)',
           borderColor: selected ? theme.gold : stack ? itemBorder(stack.itemId) : 'rgba(246,241,231,0.28)',
           opacity: dimmed ? 0.45 : 1,
         },
@@ -699,12 +702,18 @@ function BagCell({
 }
 
 function FilledCell({ stack, size, font }: { stack: Stack; size: number; font: (size: number) => number }) {
+  const art = itemArt(stack.itemId);
+  const qtySize = Math.max(8, Math.min(font(10), size * 0.26));
   return (
     <View style={[styles.fillCell, { width: size, height: size }]}>
-      <Text style={[styles.cellName, { fontSize: Math.max(8, Math.min(font(10), size * 0.28)) }]} numberOfLines={1}>
-        {shortItemName(stack.itemId)}
-      </Text>
-      <Text style={[styles.qty, { fontSize: Math.max(8, Math.min(font(10), size * 0.26)) }]}>
+      {art ? (
+        <ItemIcon itemId={stack.itemId} size={Math.round(size * 0.88)} radius={Math.max(3, Math.round(size * 0.12))} />
+      ) : (
+        <Text style={[styles.cellName, { fontSize: Math.max(8, Math.min(font(10), size * 0.28)) }]} numberOfLines={1}>
+          {shortItemName(stack.itemId)}
+        </Text>
+      )}
+      <Text style={[styles.qty, art ? styles.qtyOnArt : null, { fontSize: qtySize }]}>
         {isGearItem(stack.itemId) ? `+${stack.plus ?? 0}` : stack.qty}
       </Text>
     </View>
@@ -870,6 +879,15 @@ const styles = StyleSheet.create({
   fillCell: { alignItems: 'center', justifyContent: 'center' },
   cellName: { color: '#1b140c', fontWeight: '800', textAlign: 'center' },
   qty: { color: '#1b140c', fontWeight: '700' },
+  qtyOnArt: {
+    position: 'absolute',
+    right: 2,
+    bottom: 1,
+    color: '#fff8ee',
+    textShadowColor: 'rgba(0,0,0,0.85)',
+    textShadowRadius: 2,
+    textShadowOffset: { width: 0, height: 1 },
+  },
   sort: {
     position: 'absolute',
     right: 8,

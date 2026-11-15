@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Image, Pressable, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
 
 import { CharacterAvatar } from '../CharacterAvatar';
 import { portraitScaleX } from '../world/facing';
@@ -420,6 +420,7 @@ export function RoundButton({
   size,
   font,
   tint,
+  icon,
   square,
   width,
   juicy = true,
@@ -438,6 +439,7 @@ export function RoundButton({
   size: number;
   font: number;
   tint?: string;
+  icon?: ImageSourcePropType | null;
   square?: boolean;
   width?: number;
   /** Press scale + click + release glow. Off for inert labels. */
@@ -478,15 +480,25 @@ export function RoundButton({
         onPressOut={pressOut}
         style={[
           square ? styles.square : styles.round,
-          { width: buttonWidth, height: size, borderRadius: square ? 8 : size / 2, backgroundColor: tint ?? '#24352f', overflow: 'visible' },
+          {
+            width: buttonWidth,
+            height: size,
+            borderRadius: square ? 8 : size / 2,
+            backgroundColor: icon ? 'rgba(8,14,12,0.72)' : tint ?? '#24352f',
+            overflow: 'visible',
+          },
           hot && !picked && styles.roundHot,
           picked && styles.picked,
           (disabled || dim) && styles.fainted,
         ]}
       >
-        <Text style={[styles.roundLabel, { fontSize: font }]} numberOfLines={2}>
-          {label}
-        </Text>
+        {icon ? (
+          <Image source={icon} style={{ width: size * 0.78, height: size * 0.78 }} resizeMode="contain" />
+        ) : (
+          <Text style={[styles.roundLabel, { fontSize: font }]} numberOfLines={2}>
+            {label}
+          </Text>
+        )}
         {juicy ? <Animated.View pointerEvents="none" style={[styles.pressShade, { opacity: shade }]} /> : null}
         {juicy ? (
           <Animated.View

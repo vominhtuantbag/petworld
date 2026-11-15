@@ -10,6 +10,7 @@ import { TurnTimeline } from '../components/battle/TurnTimeline';
 import { feetInView } from '../components/battle/courtSlots';
 import { BattleWorldFrame, BATTLE_DESIGN_H, BATTLE_DESIGN_W } from '../components/battle/BattleWorldFrame';
 import { CharacterAvatar } from '../components/CharacterAvatar';
+import { ItemIcon } from '../components/ItemIcon';
 import { BattleInfoPanel, BATTLE_INFO_PANEL_W, formatUnitInspectTip } from '../components/battle/BattleInfoPanel';
 import {
   ActionTipBanner,
@@ -555,6 +556,16 @@ export function RaidScreen() {
           <View style={[styles.result, { borderRadius: s(18), padding: s(18), gap: s(8) }]}>
             <Text style={[styles.resultTitle, { fontSize: font(28) }]}>{resultTitle}</Text>
             <Text style={[styles.resultCopy, { fontSize: font(14) }]}>{snapshot.victory ? rewardLine : 'Không nhận thưởng.'}</Text>
+            {snapshot.victory && snapshot.rewards?.drops?.length ? (
+              <View style={styles.rewardIcons}>
+                {snapshot.rewards.drops.map((drop, index) => (
+                  <View key={`${drop.itemId}-${index}`} style={styles.rewardChip}>
+                    <ItemIcon itemId={drop.itemId} size={s(36)} />
+                    <Text style={[styles.resultCopy, { fontSize: font(12) }]}>×{drop.qty}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
             {snapshot.victory && snapshot.tameResults
               ? snapshot.tameResults.map((entry) => (
                   <Text key={entry.userId} style={[styles.resultCopy, { fontSize: font(13) }]}>
@@ -638,4 +649,6 @@ const styles = StyleSheet.create({
   },
   resultTitle: { color: theme.gold, fontWeight: '800', textAlign: 'center' },
   resultCopy: { color: theme.muted, textAlign: 'center' },
+  rewardIcons: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center', marginVertical: 4 },
+  rewardChip: { alignItems: 'center', gap: 2, minWidth: 44 },
 });

@@ -3,6 +3,7 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AdvancedStatsGrid } from '../components/combat/AdvancedStatsGrid';
+import { ItemIcon } from '../components/ItemIcon';
 import { monsterInitials } from '../components/world/monsterArt';
 import { monsterPortrait } from '../components/world/MonsterToken';
 import { getCharacter } from '../data/characters';
@@ -230,7 +231,7 @@ export function SquadSetupScreen() {
                     onPress={() => toggleItem(stack.itemId)}
                     style={[styles.card, on && styles.cardOn]}
                   >
-                    <View style={[styles.swatch, { backgroundColor: item.tint }]} />
+                    <ItemIcon itemId={stack.itemId} size={42} style={styles.swatch} />
                     <View style={styles.cardBody}>
                       <Text style={[styles.cardName, { fontSize: font(13) }]} numberOfLines={1}>
                         {item.nameVi} ×{stack.qty} · {on ? 'Mang theo' : 'Chưa chọn'}
@@ -389,5 +390,5 @@ const styles = StyleSheet.create({
   face: { width: 42, height: 42, borderRadius: 8, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   faceImage: { width: 38, height: 38 },
   faceLetter: { color: '#1b140c', fontWeight: '800' },
-  swatch: { width: 42, height: 42, borderRadius: 8 },
+  swatch: { width: 42, height: 42, borderRadius: 8, backgroundColor: 'rgba(8,14,12,0.35)' },
 });
