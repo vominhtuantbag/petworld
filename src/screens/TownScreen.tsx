@@ -23,9 +23,9 @@ import { useFieldSession } from '../world/useFieldSession';
 import type { FieldEvent, ServiceId } from '../world/types';
 
 /**
- * Walkable town for the current region. Doors open services. The east gate
- * leaves for that town's first hunting map. Add a building by extending the town
- * layout in `src/world/catalog.ts` and a panel branch in `ServicePanel`.
+ * Walkable hub for one of the 16 regional towns. NPC services and the open-world
+ * exit come from `townManager.ts`; biome palettes from `regionConfig.ts`.
+ * Add a building in `TOWN_SERVICES` and a panel branch in `ServicePanel`.
  */
 export function TownScreen() {
   const world = useWorld();

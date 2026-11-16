@@ -6,6 +6,7 @@ import { useGameLoop } from '../../hooks/useGameLoop';
 import { useLayout } from '../../theme/useLayout';
 import { stepField, armPortal, resetPortal, resetTerrainHazards, type FieldAxes } from '../../world/sim';
 import type { FieldEvent, FieldState, LootActor } from '../../world/types';
+import { DebugGrid } from '../battle/DebugGrid';
 import { FieldView, type FieldRemote } from './FieldView';
 import { MovePad } from './MovePad';
 
@@ -115,6 +116,7 @@ export function FieldStage({ field, onField, onEvent, canTake, paused, playerLev
           if (sensor.toZone) armPortal(sensor);
         }}
       />
+      <DebugGrid />
       <View pointerEvents="box-none" style={styles.hud}>
         <View
           pointerEvents="box-none"

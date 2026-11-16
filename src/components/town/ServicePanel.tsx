@@ -4,8 +4,8 @@ import { ItemIcon } from '../ItemIcon';
 import { useWorld } from '../../state/WorldContext';
 import { theme } from '../../theme/theme';
 import { useLayout } from '../../theme/useLayout';
-import { getRegion, listStarterRegions } from '../../data/regions';
-import { isRingTown, LOCKED_LAND, SPECIAL_REGION_IDS, specialRegionOpen, tierWindow } from '../../world/atlas';
+import { getRegion } from '../../data/regions';
+import { isRingTown, LOCKED_LAND, specialRegionOpen, tierWindow } from '../../world/atlas';
 import { TIER_MAP_H, TIER_MAP_W } from '../../world/grid';
 import { entrancePad, MAP_TIERS, tierRange, tierZoneId } from '../../world/tiers';
 import {
@@ -25,6 +25,8 @@ import {
   upgradeCost,
 } from '../../world/items';
 import { evoCost, evoStageOf, evoTitle, MAX_EVO_STAGE, redundantPets, shardForKind, shardLabel } from '../../world/evolution';
+import { listExpansionTowns, listRingTowns } from '../../world/regionConfig';
+import { TELEPORT_FEE } from '../../world/townManager';
 import type { ItemId, ServiceId } from '../../world/types';
 
 type PanelId = ServiceId | 'bag';
@@ -176,36 +178,59 @@ function SmithRows() {
 function StorageRows() {
   const world = useWorld();
   return (
-    <View style={styles.split}>
-      <View style={styles.column}>
-        <Text style={styles.copy}>Túi</Text>
-        {world.bag.length === 0 ? <Text style={styles.copy}>Trống</Text> : null}
-        {world.bag.map((stack) => (
-          <Row
-            key={`bag-${stack.itemId}`}
-            itemId={stack.itemId}
-            title={`${ITEMS[stack.itemId].nameVi} ×${stack.qty}`}
-            detail="Cất vào kho"
-            action="Cất"
-            onPress={() => world.stash(stack.itemId)}
-          />
-        ))}
+    <>
+      <View style={styles.split}>
+        <View style={styles.column}>
+          <Text style={styles.copy}>Túi đồ</Text>
+          {world.bag.length === 0 ? <Text style={styles.copy}>Trống</Text> : null}
+          {world.bag.map((stack) => (
+            <Row
+              key={`bag-${stack.itemId}`}
+              itemId={stack.itemId}
+              title={`${ITEMS[stack.itemId].nameVi} ×${stack.qty}`}
+              detail="Cất vào kho"
+              action="Cất"
+              onPress={() => world.stash(stack.itemId)}
+            />
+          ))}
+        </View>
+        <View style={styles.column}>
+          <Text style={styles.copy}>Kho đồ</Text>
+          {world.storage.length === 0 ? <Text style={styles.copy}>Trống</Text> : null}
+          {world.storage.map((stack) => (
+            <Row
+              key={`bin-${stack.itemId}`}
+              itemId={stack.itemId}
+              title={`${ITEMS[stack.itemId].nameVi} ×${stack.qty}`}
+              detail="Lấy ra túi"
+              action="Lấy"
+              onPress={() => world.withdraw(stack.itemId)}
+            />
+          ))}
+        </View>
       </View>
-      <View style={styles.column}>
-        <Text style={styles.copy}>Kho</Text>
-        {world.storage.length === 0 ? <Text style={styles.copy}>Trống</Text> : null}
-        {world.storage.map((stack) => (
-          <Row
-            key={`bin-${stack.itemId}`}
-            itemId={stack.itemId}
-            title={`${ITEMS[stack.itemId].nameVi} ×${stack.qty}`}
-            detail="Lấy ra túi"
-            action="Lấy"
-            onPress={() => world.withdraw(stack.itemId)}
-          />
-        ))}
-      </View>
-    </View>
+      <Text style={styles.copy}>Kho thú — cất thú an toàn ngoài đội hình</Text>
+      {world.tamed.length === 0 ? <Text style={styles.copy}>Không có thú để cất.</Text> : null}
+      {world.tamed.map((monster) => (
+        <Row
+          key={`pet-out-${monster.id}`}
+          title={evoTitle(monster)}
+          detail={`Cấp ${monster.level}. Cất vào kho thú.`}
+          action="Cất"
+          onPress={() => world.stashPet(monster.id)}
+        />
+      ))}
+      {world.petVault.length === 0 ? <Text style={styles.copy}>Kho thú trống.</Text> : null}
+      {world.petVault.map((monster) => (
+        <Row
+          key={`pet-in-${monster.id}`}
+          title={evoTitle(monster)}
+          detail={`Cấp ${monster.level}. Lấy ra danh sách thú.`}
+          action="Lấy"
+          onPress={() => world.withdrawPet(monster.id)}
+        />
+      ))}
+    </>
   );
 }
 
@@ -216,16 +241,22 @@ function TravelRows() {
   const here = world.regionId;
   return (
     <>
-      <Text style={styles.copy}>Cấp {world.adventureLevel} vào được {allowed}. Thị trấn và bản đồ thấp hơn luôn mở. Cổng cao hơn vẫn kiểm tra cấp.</Text>
-      {listStarterRegions().map((region) => (
-        <Row
-          key={region.id}
-          title={`${region.nameVi} · ${region.name}`}
-          detail={region.id === here ? 'Thị trấn hiện tại' : 'Đi tới thị trấn'}
-          action="Đi"
-          onPress={() => world.fastTravel(region.id)}
-        />
-      ))}
+      <Text style={styles.copy}>
+        Cấp {world.adventureLevel} vào được {allowed}. Dịch chuyển thị trấn tốn {TELEPORT_FEE} vàng. Bản đồ thấp hơn luôn mở.
+      </Text>
+      <Text style={styles.copy}>16 thị trấn vùng — vòng khởi đầu</Text>
+      {listRingTowns().map((town) => {
+        const region = getRegion(town.id);
+        return (
+          <Row
+            key={town.id}
+            title={`${town.nameVi} · ${region?.name ?? town.biomeLabel}`}
+            detail={town.id === here ? 'Thị trấn hiện tại' : `${town.atmosphere} · ${TELEPORT_FEE} vàng`}
+            action="Đi"
+            onPress={() => world.fastTravel(town.id)}
+          />
+        );
+      })}
       {isRingTown(here) ? (
         <>
           <Text style={styles.copy}>Bản đồ săn của {getRegion(here)?.nameVi ?? here}</Text>
@@ -244,17 +275,16 @@ function TravelRows() {
           })}
         </>
       ) : null}
-      <Text style={styles.copy}>Vùng đặc biệt</Text>
-      {SPECIAL_REGION_IDS.map((id) => {
-        const region = getRegion(id);
-        const open = specialRegionOpen(id, world.adventureLevel);
+      <Text style={styles.copy}>Thị trấn mở rộng</Text>
+      {listExpansionTowns().map((town) => {
+        const open = specialRegionOpen(town.id, world.adventureLevel);
         return (
           <Row
-            key={id}
-            title={region?.nameVi ?? id}
-            detail={open ? 'Đã mở' : LOCKED_LAND}
+            key={town.id}
+            title={town.nameVi}
+            detail={open ? `${town.atmosphere} · ${TELEPORT_FEE} vàng` : LOCKED_LAND}
             action="Đến"
-            onPress={() => world.fastTravel(id)}
+            onPress={() => world.fastTravel(town.id)}
           />
         );
       })}

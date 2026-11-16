@@ -1,9 +1,10 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { FieldState, LootActor, Rect, Sensor } from '../../world/types';
 import { portalLayout } from '../../world/portals';
 import { portalFade } from '../../world/sim';
+import { townMapSource } from '../../world/townAssets';
+import type { FieldState, LootActor, Rect, Sensor } from '../../world/types';
 import { ItemIcon } from '../ItemIcon';
 import { DesertProp, desertFootY, isDesertKind } from './DesertProp';
 import { stepHorizontalFacing } from './facing';
@@ -15,8 +16,6 @@ import { isSwampKind, SwampMist, SwampProp } from './SwampProp';
 import { TownHouse } from './TownHouse';
 
 const LOOT_SIZE = 40;
-
-const TOWN_MAP = require('../../../assets/maps/town-valley.jpg');
 
 type Props = {
   field: FieldState;
@@ -84,6 +83,8 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
   );
   const structures = field.blocks.filter((rect) => {
     if (!shown(rect) || COVER.has(rect.kind ?? '')) return false;
+    // Collision-only rects (Bãi Biển path mask) stay invisible.
+    if (!rect.kind && !rect.roof && !rect.fill) return false;
     if (scenic && (rect.kind === 'puddle' || PLAINS_STANDING.has(rect.kind ?? ''))) return false;
     if (desert && DESERT_STANDING.has(rect.kind ?? '')) return false;
     return true;
@@ -174,7 +175,7 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
         >
           {field.zoneId.startsWith('town:') ? (
             <Image
-              source={TOWN_MAP}
+              source={townMapSource(field.regionId)}
               resizeMode="stretch"
               style={{ position: 'absolute', left: 0, top: 0, width: field.width, height: field.height }}
             />

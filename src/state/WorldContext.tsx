@@ -36,6 +36,7 @@ import {
   takeStack,
   upgradeCost,
 } from '../world/items';
+import { TELEPORT_FEE } from '../world/townManager';
 import {
   consumeEvolutionShards,
   evoCost,
@@ -97,6 +98,8 @@ export type WorldState = {
   gold: number;
   bag: Stack[];
   storage: Stack[];
+  /** Pets held in the town Storage NPC vault (not in the active roster). */
+  petVault: TamedMonster[];
   weapon: Gear | null;
   armor: Gear | null;
   helm: Gear | null;
@@ -148,6 +151,8 @@ type WorldContextValue = WorldState & {
   touchQuests: () => void;
   stash: (itemId: ItemId) => void;
   withdraw: (itemId: ItemId) => void;
+  stashPet: (monsterId: string) => void;
+  withdrawPet: (monsterId: string) => void;
   rest: () => void;
   collect: (loot: LootActor) => boolean;
   confirmSquad: (allyIds: string[], itemIds: ItemId[], basicId: string) => void;
@@ -188,6 +193,7 @@ const EMPTY: WorldState = {
   gold: 40,
   bag: [],
   storage: [],
+  petVault: [],
   weapon: null,
   armor: null,
   helm: null,
@@ -333,17 +339,21 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       if (regionId === current.regionId && current.scene === 'town') return { ...current, notice: 'Bạn đang ở thị trấn này.' };
       const denied = entryBlock(current.adventureLevel, townZone, current.homeRegion);
       if (denied) return { ...current, notice: denied };
+      if (current.gold < TELEPORT_FEE) {
+        return { ...current, notice: `Dịch chuyển tốn ${TELEPORT_FEE} vàng.` };
+      }
       const unlocked =
         isSpecialRegion(regionId) && !current.unlocked.includes(regionId) ? [...current.unlocked, regionId] : current.unlocked;
       return {
         ...current,
+        gold: current.gold - TELEPORT_FEE,
         scene: 'town',
         regionId,
         homeRegion: isSpecialRegion(regionId) ? current.homeRegion : regionId,
         zoneId: townZone,
         unlocked,
         arrival: null,
-        notice: `Đã tới thị trấn ${getRegion(regionId)?.nameVi ?? regionId}.`,
+        notice: `Đã tới thị trấn ${getRegion(regionId)?.nameVi ?? regionId} (−${TELEPORT_FEE} vàng).`,
       };
     });
   }, []);
@@ -545,6 +555,34 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   const withdraw = useCallback((itemId: ItemId) => {
     setState((current) => moveStack(current, 'storage', 'bag', itemId));
+  }, []);
+
+  const stashPet = useCallback((monsterId: string) => {
+    setState((current) => {
+      const pet = current.tamed.find((monster) => monster.id === monsterId);
+      if (!pet) return { ...current, notice: 'Không tìm thấy thú.' };
+      if (current.petVault.length >= 40) return { ...current, notice: 'Kho thú đã đầy (40).' };
+      return {
+        ...current,
+        tamed: current.tamed.filter((monster) => monster.id !== monsterId),
+        petVault: [...current.petVault, pet],
+        notice: `Đã cất ${pet.name} vào kho.`,
+      };
+    });
+  }, []);
+
+  const withdrawPet = useCallback((monsterId: string) => {
+    setState((current) => {
+      const pet = current.petVault.find((monster) => monster.id === monsterId);
+      if (!pet) return { ...current, notice: 'Không tìm thấy thú trong kho.' };
+      if (current.tamed.length >= 60) return { ...current, notice: 'Danh sách thú đã đầy.' };
+      return {
+        ...current,
+        petVault: current.petVault.filter((monster) => monster.id !== monsterId),
+        tamed: [...current.tamed, pet],
+        notice: `Đã lấy ${pet.name} ra khỏi kho.`,
+      };
+    });
   }, []);
 
   const rest = useCallback(() => {
@@ -904,6 +942,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       touchQuests,
       stash,
       withdraw,
+      stashPet,
+      withdrawPet,
       rest,
       collect,
       beginEncounter,
@@ -950,6 +990,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     touchQuests,
     stash,
     withdraw,
+    stashPet,
+    withdrawPet,
     rest,
     collect,
     beginEncounter,

@@ -202,6 +202,7 @@ function testSave(spec: SeedSpec, stats: ReturnType<typeof statsAtLevel>, previo
       { itemId: 'rainbow-shard', qty: 3 },
     ],
     storage: [],
+    petVault: [],
     weapon: { itemId: 'might-blade', plus: 0 },
     armor: { itemId: 'armor', plus: 0 },
     helm: { itemId: 'helm', plus: 0 },

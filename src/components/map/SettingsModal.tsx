@@ -6,6 +6,7 @@ import { getCharacter, getProfession } from '../../data/characters';
 import { ApiError } from '../../net/api';
 import type { SocialProvider } from '../../net/protocol';
 import { useAuth } from '../../state/AuthContext';
+import { useMapGrid } from '../../state/mapGrid';
 import { useSetup } from '../../state/SetupContext';
 import { theme } from '../../theme/theme';
 import { useLayout } from '../../theme/useLayout';
@@ -23,6 +24,7 @@ export function SettingsModal({ onClose }: Props) {
   const setup = useSetup();
   const auth = useAuth();
   const audio = useAudioSettings();
+  const [gridOn, setGridOn] = useMapGrid();
   const { s, font } = useLayout();
   const character = getCharacter(setup.player?.baseCharacterId);
   const profession = getProfession(character?.professionId);
@@ -54,6 +56,18 @@ export function SettingsModal({ onClose }: Props) {
         <Text style={[styles.copy, { fontSize: font(13) }]}>
           {guest ? 'Tài khoản khách. Liên kết để giữ tiến trình khi đổi máy.' : 'Liên kết thêm một cách đăng nhập. Nhân vật và túi đồ giữ nguyên.'}
         </Text>
+        <Text style={[styles.section, { fontSize: font(13) }]}>Hiển thị</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ checked: gridOn }}
+          testID="settings-grid-toggle"
+          onPress={() => setGridOn(!gridOn)}
+          style={styles.action}
+        >
+          <Text style={[styles.actionLabel, { fontSize: font(14) }]}>
+            {gridOn ? 'Tắt lưới' : 'Bật lưới'}
+          </Text>
+        </Pressable>
         <Text style={[styles.section, { fontSize: font(13) }]}>Âm thanh</Text>
         <Pressable
           accessibilityRole="button"

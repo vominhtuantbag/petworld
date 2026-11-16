@@ -2,11 +2,12 @@
  * Landscape viewport grid for the battle arena.
  * 32 columns (1–32, 3.125% each) and 16 rows (A–P, 6.25% each): 1,024 cells.
  * A cell name such as "I4" is the center of that cell.
- * Edit BATTLE_GRID_POSITIONS to move a unit. SHOW_DEBUG_GRID draws A1–P32 on every screen.
+ * Edit BATTLE_GRID_POSITIONS to move a unit. The runtime grid toggle (default off)
+ * draws A1–P32 when the player turns it on in Cài Đặt.
  *
  * Default spawns are shared by PvE, PvP, Arena, and Raid.
  */
-export const SHOW_DEBUG_GRID = false;
+export const SHOW_DEBUG_GRID = true;
 
 /**
  * Canonical spawn map (NV / P / Q).

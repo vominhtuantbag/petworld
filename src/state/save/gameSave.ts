@@ -64,6 +64,8 @@ export type GameSave = {
   inventory: {
     bag: Stack[];
     storage: Stack[];
+    /** Optional: older saves omit this and parse as []. */
+    petVault: TamedMonster[];
     weapon: Gear | null;
     armor: Gear | null;
     helm: Gear | null;
@@ -104,6 +106,7 @@ export type SaveSource = {
   gold: number;
   bag: Stack[];
   storage: Stack[];
+  petVault: TamedMonster[];
   weapon: Gear | null;
   armor: Gear | null;
   helm: Gear | null;
@@ -134,6 +137,7 @@ export type WorldSnapshot = {
   gold: number;
   bag: Stack[];
   storage: Stack[];
+  petVault: TamedMonster[];
   weapon: Gear | null;
   armor: Gear | null;
   helm: Gear | null;
@@ -226,6 +230,7 @@ export function captureGameSave(state: SaveSource, player: InitializedPlayer, av
     inventory: {
       bag: state.bag,
       storage: state.storage,
+      petVault: state.petVault,
       weapon: state.weapon,
       armor: state.armor,
       helm: state.helm,
@@ -292,6 +297,7 @@ export function applyGameSave(save: GameSave): WorldSnapshot {
     gold: save.status.gold,
     bag: save.inventory.bag,
     storage: save.inventory.storage,
+    petVault: save.inventory.petVault,
     weapon: save.inventory.weapon,
     armor: save.inventory.armor,
     helm: save.inventory.helm,
@@ -346,6 +352,7 @@ export function createStarterWorld(player: InitializedPlayer): WorldSnapshot {
       { itemId: 'net', qty: 3 },
     ],
     storage: [],
+    petVault: [],
     weapon: null,
     armor: null,
     helm: null,
@@ -541,6 +548,7 @@ function parseInventory(value: unknown): GameSave['inventory'] {
   return {
     bag: parseStacks(row.bag),
     storage: parseStacks(row.storage),
+    petVault: parseRoster(row.petVault),
     weapon: parseEquipped(row.weapon, 'weapon'),
     armor: parseEquipped(row.armor, 'armor'),
     helm: parseEquipped(row.helm, 'helm'),

@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Keyboard, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ImageBackground,
+  Keyboard,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { GlowButton } from '../components/GlowButton';
@@ -8,6 +16,8 @@ import type { SocialProvider } from '../net/protocol';
 import { useAuth } from '../state/AuthContext';
 import { theme } from '../theme/theme';
 import { useLayout } from '../theme/useLayout';
+
+const LOGIN_BG = require('../../assets/images/loginscreen.jpg');
 
 const SOCIAL: { id: SocialProvider; label: string }[] = [
   { id: 'google', label: 'Google' },
@@ -55,71 +65,87 @@ export function AuthScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top', 'bottom', 'left', 'right']}>
-      <View style={[styles.row, { flexDirection: wide ? 'row' : 'column', padding: s(16), gap: s(16) }]}>
-        <View style={styles.brand}>
-          <Text style={[styles.kicker, { fontSize: font(12) }]}>GAME THƯ GIÃN</Text>
-          <Text style={[styles.title, { fontSize: font(32) }]}>Đăng nhập để vào sân đấu</Text>
-          <Text style={[styles.copy, { fontSize: font(14) }]}>
-            Tài khoản giữ nhân vật, vùng xuất phát, và thành tích PvP. Mật khẩu được băm trên máy chủ.
-          </Text>
-        </View>
-        <View style={[styles.card, { borderRadius: s(18), padding: s(16), gap: s(10), maxWidth: wide ? s(420) : undefined }]}>
-          <View style={styles.modes}>
-            <ModeChip label="Đăng nhập" active={mode === 'login'} onPress={() => setMode('login')} />
-            <ModeChip label="Đăng ký" active={mode === 'register'} onPress={() => setMode('register')} />
-          </View>
-          {mode === 'register' ? (
-            <Field label="Tên đăng nhập" value={username} onChangeText={setUsername} testID="auth-username" />
-          ) : null}
-          <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" testID="auth-email" />
-          <Field label="Mật khẩu" value={password} onChangeText={setPassword} secureTextEntry testID="auth-password" />
-          {error ? <Text style={[styles.error, { fontSize: font(13) }]}>{error}</Text> : null}
-          <GlowButton
-            testID="auth-submit"
-            label={busy ? 'Đang xử lý...' : mode === 'register' ? 'Tạo tài khoản' : 'Vào game'}
-            enabled={!busy && email.trim().length > 0 && password.length > 0 && (mode === 'login' || username.trim().length >= 3)}
-            onPress={() => {
-              void submit();
-            }}
-          />
-          <GlowButton
-            testID="auth-guest"
-            label="Chơi ngay"
-            enabled={!busy}
-            onPress={() => {
-              setBusy(true);
-              setError(null);
-              void auth.playAsGuest().catch((caught: unknown) => {
-                setError(caught instanceof ApiError ? caught.message : 'Không vào được với tư cách khách.');
-                setBusy(false);
-              });
-            }}
-          />
-          <View style={styles.socialRow}>
-            {SOCIAL.map((provider) => (
-              <Pressable
-                key={provider.id}
-                accessibilityRole="button"
-                testID={`auth-${provider.id}`}
-                disabled={busy}
+    <View style={styles.root}>
+      <ImageBackground source={LOGIN_BG} style={styles.bg} resizeMode="stretch" imageStyle={styles.bgImage}>
+        <SafeAreaView style={styles.screen} edges={['top', 'bottom', 'left', 'right']}>
+          <View style={[styles.row, { flexDirection: wide ? 'row' : 'column', padding: s(16), gap: s(16) }]}>
+            <View style={styles.brand}>
+              <Text style={[styles.kicker, { fontSize: font(12) }]}>GAME THƯ GIÃN</Text>
+              <Text style={[styles.title, { fontSize: font(32) }]}>Đăng nhập để vào sân đấu</Text>
+              <Text style={[styles.copy, { fontSize: font(14) }]}>
+                Tài khoản giữ nhân vật, vùng xuất phát, và thành tích PvP. Mật khẩu được băm trên máy chủ.
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.card,
+                { borderRadius: s(18), padding: s(16), gap: s(10), maxWidth: wide ? s(420) : undefined },
+              ]}
+            >
+              <View style={styles.modes}>
+                <ModeChip label="Đăng nhập" active={mode === 'login'} onPress={() => setMode('login')} />
+                <ModeChip label="Đăng ký" active={mode === 'register'} onPress={() => setMode('register')} />
+              </View>
+              {mode === 'register' ? (
+                <Field label="Tên đăng nhập" value={username} onChangeText={setUsername} testID="auth-username" />
+              ) : null}
+              <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" testID="auth-email" />
+              <Field label="Mật khẩu" value={password} onChangeText={setPassword} secureTextEntry testID="auth-password" />
+              {error ? <Text style={[styles.error, { fontSize: font(13) }]}>{error}</Text> : null}
+              <GlowButton
+                testID="auth-submit"
+                label={busy ? 'Đang xử lý...' : mode === 'register' ? 'Tạo tài khoản' : 'Vào game'}
+                enabled={
+                  !busy &&
+                  email.trim().length > 0 &&
+                  password.length > 0 &&
+                  (mode === 'login' || username.trim().length >= 3)
+                }
+                onPress={() => {
+                  void submit();
+                }}
+              />
+              <GlowButton
+                testID="auth-guest"
+                label="Chơi ngay"
+                enabled={!busy}
                 onPress={() => {
                   setBusy(true);
                   setError(null);
-                  void auth.beginSocial(provider.id).catch((caught: unknown) => {
-                    setError(caught instanceof ApiError ? caught.message : 'Không mở được đăng nhập mạng xã hội.');
+                  void auth.playAsGuest().catch((caught: unknown) => {
+                    setError(caught instanceof ApiError ? caught.message : 'Không vào được với tư cách khách.');
                     setBusy(false);
                   });
                 }}
-                style={styles.social}
-              >
-                <Text style={[styles.socialLabel, { fontSize: font(13) }]}>{provider.label}</Text>
-              </Pressable>
-            ))}
+              />
+              <View style={styles.socialRow}>
+                {SOCIAL.map((provider) => (
+                  <Pressable
+                    key={provider.id}
+                    accessibilityRole="button"
+                    testID={`auth-${provider.id}`}
+                    disabled={busy}
+                    onPress={() => {
+                      setBusy(true);
+                      setError(null);
+                      void auth.beginSocial(provider.id).catch((caught: unknown) => {
+                        setError(
+                          caught instanceof ApiError ? caught.message : 'Không mở được đăng nhập mạng xã hội.',
+                        );
+                        setBusy(false);
+                      });
+                    }}
+                    style={styles.social}
+                  >
+                    <Text style={[styles.socialLabel, { fontSize: font(13) }]}>{provider.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
           </View>
-        </View>
-      </View>
-    </SafeAreaView>
+        </SafeAreaView>
+      </ImageBackground>
+    </View>
   );
 }
 
@@ -171,9 +197,22 @@ function Field({
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: '#7ec8e8',
+  },
+  bg: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  bgImage: {
+    width: '100%',
+    height: '100%',
+  },
   screen: {
     flex: 1,
-    backgroundColor: theme.bg,
+    backgroundColor: 'transparent',
   },
   row: {
     flex: 1,
@@ -185,23 +224,32 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   kicker: {
-    color: theme.gold,
+    color: '#fff7d6',
     fontWeight: '700',
     letterSpacing: 1.4,
+    textShadowColor: 'rgba(20, 40, 60, 0.55)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   title: {
-    color: theme.ink,
+    color: '#ffffff',
     fontWeight: '800',
+    textShadowColor: 'rgba(20, 40, 60, 0.65)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 6,
   },
   copy: {
-    color: theme.muted,
+    color: 'rgba(255,255,255,0.92)',
     maxWidth: 460,
+    textShadowColor: 'rgba(20, 40, 60, 0.55)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   card: {
     alignSelf: 'stretch',
-    backgroundColor: theme.card,
+    backgroundColor: 'rgba(18, 28, 42, 0.82)',
     borderWidth: 1,
-    borderColor: theme.lineSoft,
+    borderColor: 'rgba(255,255,255,0.18)',
     justifyContent: 'center',
   },
   modes: {

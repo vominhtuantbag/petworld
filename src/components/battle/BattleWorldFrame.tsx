@@ -1,6 +1,8 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Image, StyleSheet, View, type ImageSourcePropType, type LayoutChangeEvent } from 'react-native';
 
+import { DebugGrid } from './DebugGrid';
+
 /** Logical battle canvas — grid, arena art, and entities share this space. */
 export const BATTLE_DESIGN_W = 1280;
 export const BATTLE_DESIGN_H = 720;
@@ -77,6 +79,7 @@ export function BattleWorldFrame({ arenaSource, children, testID, onMetrics }: P
           <Image source={arenaSource} resizeMode="stretch" pointerEvents="none" style={styles.arena} />
           <View style={styles.content} pointerEvents="box-none">
             {children}
+            <DebugGrid />
           </View>
         </View>
       ) : null}

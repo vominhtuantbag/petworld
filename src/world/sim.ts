@@ -3,6 +3,7 @@ import { withDungeonGates } from './dungeons';
 import { isWaterKind, planLocomotion } from './gait';
 import { chunkKey, chunksNear } from './grid';
 import { HAZARD_TICK_SEC } from './hazards';
+import { inAgroRange } from './openWorldGrid';
 import { playerAtPortal, portalLayout } from './portals';
 import { dropChance } from './progression';
 import { zoneIndexAt } from './tiers';
@@ -363,7 +364,8 @@ function stepMonster(
   let calm = Math.max(0, monster.calm - dt);
   let pause = Math.max(0, monster.pause - dt);
   const distance = Math.hypot(monster.x - player.x, monster.y - player.y);
-  const chasing = !peaceful && calm <= 0 && distance <= monster.agro;
+  // Agro range lives in openWorldGrid so tooling and the sim share one rule.
+  const chasing = !peaceful && calm <= 0 && inAgroRange(player, monster);
   let patrolIndex = monster.patrolIndex;
   // Patrol points stay inside this monster's level zone. The leash below
   // stops a chase at the zone edge, so a higher band never pulls you in.
@@ -437,13 +439,25 @@ function moveBody(
   field: FieldState,
 ): Vec & { r: number } {
   const direction = normalize(axes.x, axes.y);
-  let nextX = x + direction.x * speed * dt;
-  let nextY = y + direction.y * speed * dt;
-  const world = clampToWorld(nextX, nextY, r, field.width, field.height);
-  nextX = world.x;
-  nextY = world.y;
-  const blocked = collideAll(nextX, nextY, r, field.blocks);
-  return { x: blocked.x, y: blocked.y, r };
+  if (direction.x === 0 && direction.y === 0) return { x, y, r };
+  const stepX = direction.x * speed * dt;
+  const stepY = direction.y * speed * dt;
+  // Resolve X then Y so corners against red solids do not tunnel diagonally.
+  const slideX = collideAll(clampToWorld(x + stepX, y, r, field.width, field.height).x, y, r, field.blocks).x;
+  const slideY = collideAll(slideX, clampToWorld(slideX, y + stepY, r, field.width, field.height).y, r, field.blocks).y;
+  if (!field.zoneId.startsWith('town:') || field.blocks.length === 0 || !overlapsSolid(slideX, slideY, r * 0.7, field.blocks)) {
+    return { x: slideX, y: slideY, r };
+  }
+  // Hard reject standing inside a red town cell — try single-axis slides from the origin.
+  const onlyX = collideAll(clampToWorld(x + stepX, y, r, field.width, field.height).x, y, r, field.blocks).x;
+  if (!overlapsSolid(onlyX, y, r * 0.7, field.blocks)) return { x: onlyX, y, r };
+  const onlyY = collideAll(x, clampToWorld(x, y + stepY, r, field.width, field.height).y, r, field.blocks).y;
+  if (!overlapsSolid(x, onlyY, r * 0.7, field.blocks)) return { x, y: onlyY, r };
+  return { x, y, r };
+}
+
+function overlapsSolid(x: number, y: number, r: number, blocks: Rect[]): boolean {
+  return blocks.some((block) => x + r > block.x && x - r < block.x + block.w && y + r > block.y && y - r < block.y + block.h);
 }
 
 function collideAll(x: number, y: number, r: number, blocks: Rect[]): Vec {

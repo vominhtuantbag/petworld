@@ -42,11 +42,14 @@ import {
   zoneIndexAt,
   ascentReturnPad,
 } from './tiers';
-import type { FieldState, ItemId, LootActor, MonsterActor, Rect, Sensor, ServiceId } from './types';
+import { createTownField, townNeedsResize, townReturnPad, townZoneId as hubTownZoneId } from './townManager';
+import type { FieldState, ItemId, LootActor, MonsterActor, Rect, Sensor } from './types';
 
 /**
  * Maps, monsters, and loot.
  *
+ * Town hubs are built by `townManager.ts` (16 regional themes + NPC services).
+ * Open-world chunks, agro, and portals are documented in `openWorldGrid.ts`.
  * Starter towns use the ring in `atlas.ts` and the tier maps in `tiers.ts`.
  * A town gate opens tier 1. Old ids `region:outskirts` and `region:depths`
  * alias to tiers 1 and 2. Expansion provinces still build a sector grid.
@@ -60,13 +63,10 @@ import type { FieldState, ItemId, LootActor, MonsterActor, Rect, Sensor, Service
  * Add a drop: extend `lootTable`. Weights are relative.
  */
 
-const TOWN_W = 1600;
-const TOWN_H = 900;
-
 type LootWeight = { weight: number; kind: 'gold'; min: number; max: number } | { weight: number; kind: 'item'; itemId: ItemId };
 
 export function townZoneId(regionId: RegionId): string {
-  return `town:${regionId}`;
+  return hubTownZoneId(regionId);
 }
 
 export function outskirtsId(regionId: RegionId): string {
@@ -86,16 +86,17 @@ export function nextRegion(regionId: RegionId): string | null {
 export function createField(zoneId: string): FieldState {
   const resolved = resolveZoneId(zoneId);
   if (resolved.startsWith('town:')) {
-    return createTown(resolved.slice(5) as RegionId);
+    return createTownField(resolved.slice(5) as RegionId);
   }
   if (parseTier(resolved)) return createTierMap(resolved);
   const sector = parseSector(resolved);
-  if (!sector) return createTown('forest');
+  if (!sector) return createTownField('forest');
   return createSector(sector.zoneId);
 }
 
 /** Saved maps from the old sector grid are rebuilt the next time they load. */
 export function fieldNeedsRebuild(field: FieldState): boolean {
+  if (townNeedsResize(field)) return true;
   if (plainsNeedsVista(field) || desertNeedsDressing(field) || swampNeedsDressing(field)) return true;
   if (field.chunkSize > 0 && isRingTown(field.provinceId)) {
     if (field.tier < 1 || field.width < TIER_MAP_W || field.height < TIER_MAP_H) return true;
@@ -136,76 +137,9 @@ export function monsterStats(kind: MonsterSpecies, level: number) {
   };
 }
 
-function createTown(regionId: RegionId): FieldState {
-  const region = getRegion(regionId);
-  const road = region?.accent ?? '#e4c27a';
-  // Spots sit on the cottages and signposts painted in assets/maps/town-valley.jpg.
-  // The picture is isometric, so these are markers, not solid building blocks.
-  const spots: { id: ServiceId; label: string; x: number; y: number }[] = [
-    { id: 'store', label: 'Tạp hóa', x: 540, y: 300 },
-    { id: 'smith', label: 'Thợ rèn', x: 880, y: 200 },
-    { id: 'inn', label: 'Nhà nghỉ', x: 980, y: 430 },
-    { id: 'storage', label: 'Kho đồ', x: 1240, y: 340 },
-    { id: 'travel', label: 'Dịch chuyển', x: 700, y: 560 },
-    { id: 'cup', label: 'Giải đấu', x: 250, y: 690 },
-    { id: 'pvp', label: 'Đấu trường', x: 460, y: 500 },
-  ];
-  const sensors: Sensor[] = spots.map((spot) => ({
-    id: spot.id,
-    x: spot.x,
-    y: spot.y,
-    r: 42,
-    label: spot.label,
-    service: spot.id,
-  }));
-  sensors.push({
-    id: 'gate',
-    x: TOWN_W - 90,
-    y: 520,
-    r: 48,
-    label: 'Cổng ra ngoài',
-    toZone: isRingTown(regionId) ? tierZoneId(regionId, 1) : sectorZoneId(regionId, 0, 0),
-    arrive: isRingTown(regionId) ? entrancePad(TIER_MAP_W, TIER_MAP_H) : { x: 180, y: SECTOR_SIZE / 2 },
-  });
-
-  return {
-    zoneId: townZoneId(regionId),
-    regionId,
-    title: `Thị trấn ${region?.nameVi ?? regionId}`,
-    levelMin: 0,
-    levelMax: 0,
-    width: TOWN_W,
-    height: TOWN_H,
-    ground: '#7ea85a',
-    road,
-    player: { x: 400, y: 620, r: 18 },
-    blocks: [],
-    decor: [],
-    sensors,
-    monsters: [],
-    loot: [],
-    heldSensorId: null,
-    chunkSize: 0,
-    chunks: {},
-    activeKeys: [],
-    provinceId: regionId,
-    sectorCol: 0,
-    sectorRow: 0,
-    provinceCols: 1,
-    provinceRows: 1,
-    hazards: [],
-    bossChunkKey: null,
-    fauna: regionId,
-    faunaRoster: MAP1_ROSTER_VERSION,
-    tier: 0,
-    zones: [],
-    quietSpawn: null,
-  };
-}
-
 function createSector(zoneId: string): FieldState {
   const sector = parseSector(zoneId);
-  if (!sector) return createTown('forest');
+  if (!sector) return createTownField('forest');
   const { province, col, row, level } = sector;
   const region = getRegion(province.regionId);
   const mid = SECTOR_SIZE / 2;
@@ -325,7 +259,7 @@ function createSector(zoneId: string): FieldState {
 
 function createTierMap(zoneId: string): FieldState {
   const map = parseTier(zoneId);
-  if (!map) return createTown('forest');
+  if (!map) return createTownField('forest');
   const { province, tier, levelMin, levelMax } = map;
   const region = getRegion(province.regionId);
   const width = TIER_MAP_W;
@@ -342,7 +276,7 @@ function createTierMap(zoneId: string): FieldState {
         zones,
         west: { id: neighbors.prev.id, regionId: neighbors.prev.regionId, label: gateLabel(neighbors.prev) },
         east: { id: neighbors.next.id, regionId: neighbors.next.regionId, label: gateLabel(neighbors.next) },
-        townArrive: { x: TOWN_W - 220, y: 520 },
+        townArrive: townReturnPad(province.regionId),
       })
     : [];
   const dressed = dressMap(province.id, map.zoneId, width, height);

@@ -21,6 +21,10 @@ const SCATTER_ITEMS: ItemId[] = [
 ];
 
 export function withGroundLoot(field: FieldState): FieldState {
+  // Town hubs stay clean — no ground pickups on any of the 16 regional towns.
+  if (field.zoneId.startsWith('town:') || field.chunkSize <= 0) {
+    return { ...field, loot: [], groundLoot: GROUND_LOOT_REV };
+  }
   if (field.tier < 1 || field.groundLoot === GROUND_LOOT_REV) return field;
   return { ...field, loot: [...field.loot, ...scatterGroundLoot(field)], groundLoot: GROUND_LOOT_REV };
 }

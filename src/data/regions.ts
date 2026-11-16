@@ -3,12 +3,18 @@ import type { RegionCatalog, RegionId, RegionMotifId, RegionStatus } from '../ty
 /**
  * World catalog — the extension point for new regions.
  *
- * To open a future region (Light, Dark, Chaos, Outer Space, or a new one):
+ * The 16 regional towns (Plains → Cosmic) live here for setup-screen copy
+ * and sky/ground colors. Flat-vector atmosphere, biome aliases, and unlock
+ * bands for the full ecosystem are centralized in `src/world/regionConfig.ts`.
+ * Hub NPCs / exits: `townManager.ts`. Open-world chunks / agro: `openWorldGrid.ts`.
+ *
+ * To open a future region (or promote a locked expansion to a starter):
  * 1. Add its id to `RegionId` in `src/types/game.ts`.
  * 2. Add a motif id and a drawing in `RegionMotif` if the icon is new.
  * 3. Append a record here. `satisfies Record<RegionId, ...>` will not compile
  *    until every id has an entry, and it rejects unknown ids.
- * 4. Set `status` to `'available'` when players may start there.
+ * 4. Mirror the theme in `regionConfig.ts`.
+ * 5. Set `status` to `'available'` when players may start there.
  *    `'locked'` keeps the card visible but unselectable.
  *
  * Branch gameplay on `id`, never on the translated name.

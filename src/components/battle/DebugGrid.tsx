@@ -4,7 +4,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useMapGrid } from '../../state/mapGrid';
 import { GRID_COLS, GRID_ROWS, SHOW_DEBUG_GRID } from './courtSlots';
 
-/** Hairline A1–P32 grid over the landscape viewport. Touches pass through. */
+/** Hairline A1–P32 grid over the landscape viewport. Touches pass through. Default off. */
 export const DebugGrid = memo(function DebugGrid() {
   const [shown] = useMapGrid();
   if (!SHOW_DEBUG_GRID || !shown) return null;

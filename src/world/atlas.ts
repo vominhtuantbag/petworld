@@ -5,6 +5,12 @@ import { MAP_TIERS, TIER_LEVELS, tierRange, tierZoneId } from './tiers';
 /**
  * Two maps live side by side.
  *
+ * 16 regional towns (art / biome bible in `regionConfig.ts`; hubs in
+ * `townManager.ts`; chunk + agro loops in `openWorldGrid.ts`):
+ *   1 Plains, 2 Mountains, 3 Jungle (forest), 4 Swamp, 5 Beach,
+ *   6 Ocean, 7 Frozen (tundra), 8 Savanna, 9 Volcanic, 10 Desert,
+ *   11 Light, 12 Shadow (dark), 13 Heaven, 14 Hell, 15 Chaos, 16 Cosmic.
+ *
  * Town ring — the ten starter regions, in road order:
  *   1 Đồng bằng, 2 Núi non, 3 Rừng rậm, 4 Đầm lầy, 5 Bãi biển,
  *   6 Đại dương, 7 Băng giá, 8 Thảo Nguyên, 9 Núi lửa, 10 Sa mạc.
@@ -13,8 +19,8 @@ import { MAP_TIERS, TIER_LEVELS, tierRange, tierZoneId } from './tiers';
  * ring: map 1 of Đồng bằng meets Núi non and Sa mạc. The far gate climbs
  * to the next tier of the same town. See `tiers.ts` for seeds and pads.
  *
- * Expansion — Dark, Chaos, Light, Outer Space, and the Void stay a 6×6
- * sector grid. A sector id is `province:col:row`.
+ * Expansion — Light, Shadow, Heaven, Hell, Chaos, Cosmic (plus Void) stay a
+ * 6×6 sector grid unlocked by adventure level. A sector id is `province:col:row`.
  *
  * Old starter ids still resolve: `region:outskirts` → tier 1,
  * `region:depths` → tier 2, and `region:col:row` → tier `col + row + 1`.

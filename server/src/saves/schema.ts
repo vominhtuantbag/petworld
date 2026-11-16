@@ -152,6 +152,8 @@ export const saveSchema = z.object({
   inventory: z.object({
     bag: z.array(stackSchema).max(64),
     storage: z.array(stackSchema).max(64),
+    /** Town Storage NPC vault for pets. Older saves omit this. */
+    petVault: z.array(tamedSchema).max(40).optional().default([]),
     weapon: gearSchema.nullable(),
     armor: gearSchema.nullable(),
     helm: gearSchema.nullable().optional(),
@@ -244,6 +246,7 @@ function remapInventory(row: Record<string, unknown>): Record<string, unknown> {
     ...row,
     bag: remapStacks(row.bag),
     storage: remapStacks(row.storage),
+    petVault: Array.isArray(row.petVault) ? row.petVault : [],
     helm: row.helm ?? null,
     shoes: row.shoes ?? null,
     ring: row.ring ?? null,
@@ -300,6 +303,7 @@ export function sampleSave(updatedAt: string, gold: number, revision = 1): GameS
         { itemId: 'hp-potion', qty: 2 },
       ],
       storage: [],
+      petVault: [],
       weapon: null,
       armor: null,
       helm: null,
