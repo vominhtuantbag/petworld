@@ -439,14 +439,25 @@ function applyDamage(
 
       const prepared = prepareConvert(next, liveActor, liveTarget, effect);
       next = prepared.state;
+      const defenderNow = findUnit(next, liveTarget.id) ?? liveTarget;
       const result = computeHit(
         findUnit(next, liveActor.id) ?? liveActor,
-        findUnit(next, liveTarget.id) ?? liveTarget,
+        defenderNow,
         { ...effect, power: prepared.power ?? power },
         rng,
         fromStealth && isPrimary && hit === 0,
         fromSkill,
       );
+      if (result.miss || result.damage <= 0) {
+        next = putUnit(next, {
+          ...result.target,
+          hp: defenderNow.hp,
+          shieldHp: defenderNow.shieldHp,
+          damageTaken: defenderNow.damageTaken,
+        });
+        notes.push(`Trượt ${liveTarget.name}.`);
+        continue;
+      }
       let damaged = result.target;
       let reflectedNote = '';
       if (result.damage > 0 && (damaged.reflectCharges ?? 0) > 0 && (damaged.reflectPct ?? 0) > 0) {

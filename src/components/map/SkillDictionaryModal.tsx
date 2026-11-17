@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { getCharacter, PROFESSIONS } from '../../data/characters';
 import { useSetup } from '../../state/SetupContext';
@@ -10,17 +10,18 @@ import { useLayout } from '../../theme/useLayout';
 import { ELEMENTS, elementLabel, type ElementId } from '../../world/combat/elements';
 import {
   LOCOMOTION_IDS,
-  classCatalog,
-  elementSkillList,
   locomotionBasicSkills,
   locomotionTitle,
+  numberedBiomeSkills,
+  numberedClassSkills,
   skillEffect,
   skillKind,
-  skillMark,
   skillTarget,
   type LocomotionId,
 } from '../../world/combat/kits';
 import type { Skill } from '../../world/combat/model';
+import { classSkillArt, petBasicArt, petBiomeArt } from '../../world/skillArt';
+import { biomeSkillTitle } from '../../world/combat/biomeSkills';
 
 type Props = { onClose: () => void };
 
@@ -32,6 +33,9 @@ type Row = {
   group: string;
   skill: Skill;
   tint: string;
+  /** 1–5. Class lists use the number. Regional lists mark slot 5 as Ultimate. */
+  slot?: number;
+  ultimate?: boolean;
 };
 
 const PROFESSION_TINT: Record<string, string> = {
@@ -95,10 +99,16 @@ export function SkillDictionaryModal({ onClose }: Props) {
   const heroRows = useMemo(() => {
     const rows: Row[] = [];
     for (const profession of PROFESSIONS) {
-      const catalog = classCatalog(profession.id);
       const tint = PROFESSION_TINT[profession.id] ?? theme.gold;
-      for (const skill of [...catalog.basics, ...catalog.skills]) {
-        rows.push({ key: `${profession.id}:${skill.id}`, groupId: profession.id, group: profession.title, skill, tint });
+      for (const entry of numberedClassSkills(profession.id)) {
+        rows.push({
+          key: `${profession.id}:${entry.skill.id}`,
+          groupId: profession.id,
+          group: profession.title,
+          skill: entry.skill,
+          tint,
+          slot: entry.slot,
+        });
       }
     }
     return rows;
@@ -106,22 +116,33 @@ export function SkillDictionaryModal({ onClose }: Props) {
 
   const wildRows = useMemo(() => {
     const rows: Row[] = [];
+    let basicSlot = 0;
     for (const motion of LOCOMOTION_IDS) {
       const tint = LOCOMOTION_TINT[motion];
       for (const skill of locomotionBasicSkills(motion)) {
+        basicSlot += 1;
         rows.push({
           key: `loco:${motion}:${skill.id}`,
           groupId: `body:${motion}`,
           group: locomotionTitle(motion),
           skill,
           tint,
+          slot: basicSlot,
         });
       }
     }
     for (const element of ELEMENTS) {
       const tint = ELEMENT_TINT[element];
-      for (const skill of elementSkillList(element)) {
-        rows.push({ key: `element:${element}:${skill.id}`, groupId: `elem:${element}`, group: `Hệ ${elementLabel(element)}`, skill, tint });
+      for (const entry of numberedBiomeSkills(element)) {
+        rows.push({
+          key: `element:${element}:${entry.skill.id}`,
+          groupId: `elem:${element}`,
+          group: `Hệ ${elementLabel(element)}`,
+          skill: entry.skill,
+          tint,
+          slot: entry.slot,
+          ultimate: entry.ultimate,
+        });
       }
     }
     return rows;
@@ -185,7 +206,7 @@ export function SkillDictionaryModal({ onClose }: Props) {
             />
           ))}
         </View>
-        <ScrollView style={styles.list} contentContainerStyle={[styles.grid, wide && styles.gridWide]}>
+        <ScrollView style={styles.list} contentContainerStyle={[styles.grid, wide && book !== 'hero' && styles.gridWide]}>
           {shown.length === 0 ? (
             <Text style={[styles.empty, { fontSize: font(13) }]}>Không có kỹ năng khớp.</Text>
           ) : (
@@ -200,19 +221,26 @@ export function SkillDictionaryModal({ onClose }: Props) {
 function SkillCard({ row, known, wide, font, pad, icon }: { row: Row; known: boolean; wide: boolean; font: (n: number) => number; pad: number; icon: number }) {
   const skill = row.skill;
   const kind = skillKind(skill);
+  const art = skillArtFor(row);
+  const title = row.ultimate ? biomeSkillTitle(row.slot ?? 5, skill.name) : row.slot ? `${row.slot}. ${skill.name}` : skill.name;
+  const kindLabel = row.ultimate ? 'Ultimate' : kind === 'basic' ? 'Đòn thường' : kind === 'heal' ? 'Hồi máu' : kind === 'utility' ? 'Hỗ trợ' : 'Kỹ năng';
   return (
-    <View style={[styles.card, wide && styles.cardWide, { padding: pad, gap: 4 }]}>
+    <View style={[styles.card, wide && styles.cardWide, row.ultimate && styles.cardUltimate, { padding: pad, gap: 4 }]}>
       <View style={styles.cardTop}>
-        <View style={[styles.icon, { width: icon, height: icon, borderRadius: icon / 4, backgroundColor: row.tint }]}>
-          <Text style={[styles.mark, { fontSize: font(14) }]}>{skillMark(skill)}</Text>
+        <View style={[styles.icon, { width: icon, height: icon, borderRadius: icon / 4, backgroundColor: art ? '#14110e' : row.ultimate ? '#6a4a12' : row.tint }]}>
+          {art ? (
+            <Image source={art} style={{ width: icon, height: icon, borderRadius: icon / 4 }} resizeMode="cover" />
+          ) : (
+            <Text style={[styles.mark, { fontSize: font(14) }]}>{row.ultimate ? 'U' : skill.name.slice(0, 1)}</Text>
+          )}
         </View>
         <View style={styles.cardBody}>
-          <Text style={[styles.name, { fontSize: font(14) }]} numberOfLines={1}>
-            {skill.name}
+          <Text style={[styles.name, row.slot || row.ultimate ? styles.nameNumbered : null, row.ultimate ? styles.nameUltimate : null, { fontSize: font(14) }]} numberOfLines={2}>
+            {title}
           </Text>
           <Text style={[styles.meta, { fontSize: font(11) }]} numberOfLines={1}>
             {row.group} ·{' '}
-            {kind === 'basic' ? 'Đòn thường' : kind === 'heal' ? 'Hồi máu' : kind === 'utility' ? 'Hỗ trợ' : 'Kỹ năng'}
+            {kindLabel}
             {known ? ' · Đã mở' : ''}
           </Text>
         </View>
@@ -223,6 +251,13 @@ function SkillCard({ row, known, wide, font, pad, icon }: { row: Row; known: boo
       <Text style={[styles.effect, { fontSize: font(12) }]}>{skillEffect(skill)}</Text>
     </View>
   );
+}
+
+function skillArtFor(row: Row) {
+  if (row.groupId.startsWith('body:') && row.slot) return petBasicArt(row.slot);
+  if (row.groupId.startsWith('elem:') && row.slot) return petBiomeArt(row.groupId.slice(5), row.slot);
+  if (row.slot && !row.ultimate) return classSkillArt(row.groupId, row.slot);
+  return null;
 }
 
 function Tab({ label, selected, onPress, fontSize, testID, compact }: { label: string; selected: boolean; onPress: () => void; fontSize: number; testID?: string; compact?: boolean }) {
@@ -296,12 +331,21 @@ const styles = StyleSheet.create({
   grid: { gap: 8, paddingBottom: 12 },
   gridWide: { flexDirection: 'row', flexWrap: 'wrap' },
   card: { borderRadius: 12, backgroundColor: theme.cardRaised, borderWidth: 1, borderColor: theme.line },
+  cardUltimate: { borderColor: '#ffe082', backgroundColor: '#2a2214' },
   cardWide: { flexGrow: 1, flexBasis: '46%', maxWidth: '49%' },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   icon: { alignItems: 'center', justifyContent: 'center' },
   mark: { color: '#1b140c', fontWeight: '900' },
   cardBody: { flex: 1, minWidth: 0 },
   name: { color: theme.ink, fontWeight: '800' },
+  nameNumbered: {
+    color: '#ffffff',
+    letterSpacing: 0.2,
+    textShadowColor: 'rgba(16, 12, 8, 0.95)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  nameUltimate: { color: '#ffe082' },
   meta: { color: theme.muted, fontWeight: '700' },
   effect: { color: theme.ink },
   empty: { color: theme.muted, textAlign: 'center', padding: 16 },

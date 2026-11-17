@@ -6,6 +6,8 @@ import type { ItemId } from '../world/types';
 
 type Props = {
   itemId?: ItemId | string | null;
+  /** Species face for a monster shard. Falls back to that land's first creature. */
+  kindId?: string | null;
   /** Fallback fill when no art (and for gold-like tint chips). */
   tint?: string;
   size?: number;
@@ -19,8 +21,8 @@ type Props = {
  * Shared item face: pixel art when registered, otherwise the catalog tint chip.
  * Pass only `tint` (no itemId) for non-item chips like gold.
  */
-export function ItemIcon({ itemId, tint, size = 28, radius, bare = false, style }: Props) {
-  const art = itemArt(itemId);
+export function ItemIcon({ itemId, kindId, tint, size = 28, radius, bare = false, style }: Props) {
+  const art = itemArt(itemId, kindId);
   const fill =
     tint ??
     (itemId && itemId in ITEMS ? ITEMS[itemId as ItemId].tint : 'rgba(8,14,12,0.45)');

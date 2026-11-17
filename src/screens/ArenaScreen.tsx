@@ -35,6 +35,8 @@ import { combatSfx } from '../world/combat/combatSfx';
 import { heroTraits } from '../world/combat/kits';
 import type { DuelUnitView } from '../net/protocol';
 import { useBattle } from '../state/BattleContext';
+import { useWorld } from '../state/WorldContext';
+import { DEFEND_SKILL_ART, classSkillArt, classSkillIcon } from '../world/skillArt';
 import { theme } from '../theme/theme';
 import { useLayout } from '../theme/useLayout';
 import { rankTint, rankTitle } from '../world/ranks';
@@ -53,6 +55,7 @@ type Pick = 'attack' | 0 | 1;
  */
 export function ArenaScreen() {
   const battle = useBattle();
+  const world = useWorld();
   const snapshot = battle.battle;
   const { s, font } = useLayout();
   const { cmdSize, cmdFont, panelScale, logScale, unitScale, timeScale } = useBattleCommandSize();
@@ -93,6 +96,7 @@ export function ArenaScreen() {
 
   useEffect(() => {
     setPicked('attack');
+    setUtilityPicked(null);
     setAimKey(null);
   }, [snapshot?.turnId]);
 
@@ -192,6 +196,8 @@ export function ArenaScreen() {
       : null;
   const skillCard1 = snapshot.skills?.[0];
   const skillCard2 = snapshot.skills?.[1];
+  const professionId = youCharacter?.professionId;
+  const basicIcon = classSkillIcon(professionId, world.heroSkills?.basicId) ?? classSkillArt(professionId, 1);
   const skill1 = skillCard1?.name ?? 'Kỹ năng 1';
   const skill2 = skillCard2?.name ?? 'Kỹ năng 2';
   const skill1Wait = skillCard1?.wait ?? 0;
@@ -517,8 +523,10 @@ export function ArenaScreen() {
               <>
                 <GestureActionButton
                   label="Đánh thường"
+                  icon={basicIcon}
+                  plain
                   hint="Đòn đánh thường"
-                  picked={picked === 'attack'}
+                  picked={picked === 'attack' && utilityPicked == null}
                   aiming={aimKey === 'attack' && quick.aiming}
                   aimPopup={aimPopup}
                   disabled={!yourTurn}
@@ -529,9 +537,10 @@ export function ArenaScreen() {
                 />
                 <GestureActionButton
                   label={skill1}
+                  icon={classSkillIcon(professionId, skillCard1?.id)}
+                  plain
                   hint={`${skill1} · MP ${skillCard1?.mana ?? 0}`}
-                  tint="#7fd0c4"
-                  picked={picked === 0}
+                  picked={picked === 0 && utilityPicked == null}
                   aiming={aimKey === '0' && quick.aiming}
                   aimPopup={aimPopup}
                   disabled={!yourTurn || skill1Locked}
@@ -543,9 +552,10 @@ export function ArenaScreen() {
                 />
                 <GestureActionButton
                   label={skill2}
+                  icon={classSkillIcon(professionId, skillCard2?.id)}
+                  plain
                   hint={`${skill2} · MP ${skillCard2?.mana ?? 0}`}
-                  tint="#7fd0c4"
-                  picked={picked === 1}
+                  picked={picked === 1 && utilityPicked == null}
                   aiming={aimKey === '1' && quick.aiming}
                   aimPopup={aimPopup}
                   disabled={!yourTurn || skill2Locked}
@@ -557,9 +567,9 @@ export function ArenaScreen() {
                 />
                 <RoundButton
                   label="Phòng thủ"
+                  icon={DEFEND_SKILL_ART}
+                  plain
                   hint="Giảm sát thương đến lượt sau · chạm 2 lần để dùng"
-                  square
-                  tint="#2f6fe0"
                   picked={utilityPicked === 'defend'}
                   disabled={!yourTurn}
                   testID="arena-defend"

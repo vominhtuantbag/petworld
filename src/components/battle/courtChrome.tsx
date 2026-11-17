@@ -421,6 +421,7 @@ export function RoundButton({
   font,
   tint,
   icon,
+  plain,
   square,
   width,
   juicy = true,
@@ -440,6 +441,8 @@ export function RoundButton({
   font: number;
   tint?: string;
   icon?: ImageSourcePropType | null;
+  /** Icon only. No fill or frame unless this button is the active command. */
+  plain?: boolean;
   square?: boolean;
   width?: number;
   /** Press scale + click + release glow. Off for inert labels. */
@@ -479,21 +482,21 @@ export function RoundButton({
         onPressIn={pressIn}
         onPressOut={pressOut}
         style={[
-          square ? styles.square : styles.round,
+          plain ? styles.plain : square ? styles.square : styles.round,
           {
             width: buttonWidth,
             height: size,
-            borderRadius: square ? 8 : size / 2,
-            backgroundColor: icon ? 'rgba(8,14,12,0.72)' : tint ?? '#24352f',
-            overflow: 'visible',
+            borderRadius: plain ? 10 : square ? 8 : size / 2,
+            backgroundColor: plain ? 'transparent' : icon ? 'rgba(8,14,12,0.72)' : tint ?? '#24352f',
+            overflow: 'hidden',
           },
-          hot && !picked && styles.roundHot,
-          picked && styles.picked,
+          !plain && hot && !picked && styles.roundHot,
+          picked && (plain ? styles.plainOn : styles.picked),
           (disabled || dim) && styles.fainted,
         ]}
       >
         {icon ? (
-          <Image source={icon} style={{ width: size * 0.78, height: size * 0.78 }} resizeMode="contain" />
+          <Image source={icon} style={{ width: plain ? size : size * 0.78, height: plain ? size : size * 0.78 }} resizeMode="contain" />
         ) : (
           <Text style={[styles.roundLabel, { fontSize: font }]} numberOfLines={2}>
             {label}
@@ -713,6 +716,13 @@ export const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.85)',
     backgroundColor: '#24352f',
   },
+  plain: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+  },
+  plainOn: { borderWidth: 3, borderColor: '#ffe082' },
   slotIndex: {
     position: 'absolute',
     top: 1,

@@ -73,6 +73,22 @@ const ITEM_IDS = [
   'shard-savannah',
   'shard-volcano',
   'shard-desert',
+  'badge-plains',
+  'badge-mountains',
+  'badge-forest',
+  'badge-swamp',
+  'badge-beach',
+  'badge-ocean',
+  'badge-tundra',
+  'badge-savannah',
+  'badge-volcano',
+  'badge-desert',
+  'badge-light',
+  'badge-dark',
+  'badge-heaven',
+  'badge-hell',
+  'badge-chaos',
+  'badge-outer-space',
 ] as const;
 
 const ITEM_ALIASES: Record<string, (typeof ITEM_IDS)[number]> = {
@@ -89,6 +105,7 @@ const stackSchema = z.object({
   itemId: z.enum(ITEM_IDS),
   qty: z.number().int().min(1).max(999),
   plus: z.number().int().min(0).max(5).optional(),
+  kindId: z.string().regex(/^[a-z0-9:_-]{1,80}$/i).optional(),
   slot: z.number().int().min(0).max(63).optional(),
 });
 

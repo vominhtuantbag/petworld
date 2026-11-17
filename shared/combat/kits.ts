@@ -125,6 +125,15 @@ export function classCatalog(professionId: string | undefined): { basics: Skill[
   return { basics: [...kit.basics], skills: [...kit.skills] };
 }
 
+/** Active list in Kỹ Năng: basics then class skills, numbered 1 through 5. */
+export function numberedClassSkills(professionId: string | undefined): { slot: number; skill: Skill }[] {
+  const catalog = classCatalog(professionId);
+  return [...catalog.basics, ...catalog.skills].slice(0, 5).map((skill, index) => ({
+    slot: index + 1,
+    skill,
+  }));
+}
+
 export function monsterCatalog(kindId: string): { basics: Skill[]; skills: Skill[] } {
   return {
     basics: [...locomotionKit(kindId).basics],
@@ -163,6 +172,8 @@ export function speciesBasicSkills(id: SpeciesId): Skill[] {
 export function elementSkillList(element: ElementId): Skill[] {
   return elementPool(element);
 }
+
+export { biomeSkillTitle, numberedBiomeSkills } from './biomeSkills.js';
 
 export function biomeCatalogSkills(element: ElementId): Skill[] {
   return elementPool(element);

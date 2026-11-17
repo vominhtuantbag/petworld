@@ -28,6 +28,7 @@ import { useBattleCommandSize } from '../hooks/useBattleCommandSize';
 import { useQuickTarget } from '../hooks/useQuickTarget';
 import { useSocketCombatFx } from '../hooks/useSocketCombatFx';
 import { combatSfx } from '../world/combat/combatSfx';
+import { DEFEND_SKILL_ART, classSkillArt, classSkillIcon } from '../world/skillArt';
 import { heroTraits } from '../world/combat/kits';
 import type { RaidUnitView } from '../net/protocol';
 import { useBattle } from '../state/BattleContext';
@@ -92,6 +93,7 @@ export function RaidScreen() {
 
   useEffect(() => {
     setPicked('attack');
+    setUtilityPicked(null);
     setAimKey(null);
   }, [snapshot?.turnId]);
 
@@ -181,6 +183,8 @@ export function RaidScreen() {
   };
   const skillCard1 = snapshot.skills?.[0];
   const skillCard2 = snapshot.skills?.[1];
+  const professionId = world.heroSkills?.professionId;
+  const basicIcon = classSkillIcon(professionId, world.heroSkills?.basicId) ?? classSkillArt(professionId, 1);
   const skill1 = skillCard1?.name ?? 'Kỹ năng 1';
   const skill2 = skillCard2?.name ?? 'Kỹ năng 2';
   const skill1Wait = skillCard1?.wait ?? 0;
@@ -468,8 +472,10 @@ export function RaidScreen() {
               <>
                 <GestureActionButton
                   label="Đánh thường"
+                  icon={basicIcon}
+                  plain
                   hint="Đòn đánh thường"
-                  picked={picked === 'attack'}
+                  picked={picked === 'attack' && utilityPicked == null}
                   aiming={aimKey === 'attack' && quick.aiming}
                   aimPopup={aimPopup}
                   disabled={!yourTurn}
@@ -480,9 +486,10 @@ export function RaidScreen() {
                 />
                 <GestureActionButton
                   label={skill1}
+                  icon={classSkillIcon(professionId, skillCard1?.id)}
+                  plain
                   hint={`${skill1} · MP ${skillCard1?.mana ?? 0}`}
-                  tint="#7fd0c4"
-                  picked={picked === 0}
+                  picked={picked === 0 && utilityPicked == null}
                   aiming={aimKey === '0' && quick.aiming}
                   aimPopup={aimPopup}
                   disabled={!yourTurn || skill1Locked}
@@ -494,9 +501,10 @@ export function RaidScreen() {
                 />
                 <GestureActionButton
                   label={skill2}
+                  icon={classSkillIcon(professionId, skillCard2?.id)}
+                  plain
                   hint={`${skill2} · MP ${skillCard2?.mana ?? 0}`}
-                  tint="#7fd0c4"
-                  picked={picked === 1}
+                  picked={picked === 1 && utilityPicked == null}
                   aiming={aimKey === '1' && quick.aiming}
                   aimPopup={aimPopup}
                   disabled={!yourTurn || skill2Locked}
@@ -508,9 +516,9 @@ export function RaidScreen() {
                 />
                 <RoundButton
                   label="Phòng thủ"
+                  icon={DEFEND_SKILL_ART}
+                  plain
                   hint="Giảm sát thương đến lượt sau · chạm 2 lần để dùng"
-                  square
-                  tint="#2f6fe0"
                   picked={utilityPicked === 'defend'}
                   disabled={!yourTurn}
                   testID="raid-defend"

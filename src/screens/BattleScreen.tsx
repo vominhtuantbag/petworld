@@ -65,10 +65,11 @@ import {
 import { combatSfx } from '../world/combat/combatSfx';
 import { allowsFallenTargets, selectableCombatants } from '../world/combat/faint';
 import { describeSkill } from '../world/combat/kits';
-import { floatKindFromLog, IMPACT_MS, SLASH_MS, STANCE_MS, STANCE_PX, TEAR_MS, TURN_MS } from '../world/combat/loop';
+import { dodgeNamesFromLog, floatKindFromLog, IMPACT_MS, SLASH_MS, STANCE_MS, STANCE_PX, TEAR_MS, TURN_MS } from '../world/combat/loop';
 import { upcomingQueue } from '../world/combat/order';
 import { MINE_WAVE_COUNT, mineClearDrops, mineEncounter, mineLabel } from '../world/dungeons';
 import { itemArt } from '../world/itemArt';
+import { DEFEND_SKILL_ART, NET_SKILL_ART, classSkillIcon } from '../world/skillArt';
 import { ITEMS } from '../world/items';
 import type { Encounter, ItemId } from '../world/types';
 
@@ -181,6 +182,7 @@ export function BattleScreen() {
   const mineAcc = useRef({ exp: 0, gold: 0 });
   const advancingRef = useRef(false);
   const hpWatch = useRef<Map<string, number> | null>(null);
+  const dodgeLog = useRef<string | null>(null);
   const floatSerial = useRef(0);
   const fxSerial = useRef(0);
   const battleRef = useRef<BattleState | null>(null);
@@ -216,6 +218,7 @@ export function BattleScreen() {
   );
   useEffect(() => {
     setActionId('basic');
+    setUtilityPicked(null);
     setAimKey(null);
   }, [battle?.turnId]);
   useEffect(() => {
@@ -279,6 +282,7 @@ export function BattleScreen() {
   useEffect(() => {
     if (!battle) {
       hpWatch.current = null;
+      dodgeLog.current = null;
       setFloats((current) => (current.length === 0 ? current : []));
       return;
     }
@@ -291,10 +295,12 @@ export function BattleScreen() {
       return;
     }
     const born: { id: number; fighterId: string; amount: number; kind?: 'damage' | 'heal' | 'crit' | 'miss' }[] = [];
+    const hurt = new Set<string>();
     for (const fighter of lineup) {
       if (!previous.has(fighter.id)) continue;
       const delta = fighter.hp - (previous.get(fighter.id) ?? fighter.hp);
       if (!Number.isFinite(delta) || delta === 0) continue;
+      if (delta < 0) hurt.add(fighter.id);
       floatSerial.current += 1;
       born.push({
         id: floatSerial.current,
@@ -302,6 +308,22 @@ export function BattleScreen() {
         amount: delta,
         kind: floatKindFromLog(battle.log, delta),
       });
+    }
+    if (dodgeLog.current !== battle.log) {
+      dodgeLog.current = battle.log;
+      for (const name of dodgeNamesFromLog(battle.log)) {
+        const fighter = lineup.find((entry) => entry.name === name && !hurt.has(entry.id));
+        if (!fighter || !previous.has(fighter.id)) continue;
+        const delta = fighter.hp - (previous.get(fighter.id) ?? fighter.hp);
+        if (delta < 0) continue;
+        floatSerial.current += 1;
+        born.push({
+          id: floatSerial.current,
+          fighterId: fighter.id,
+          amount: 0,
+          kind: 'miss',
+        });
+      }
     }
     if (born.length === 0) return;
     setFloats((current) => [...current, ...born].slice(-24));
@@ -1133,6 +1155,7 @@ export function BattleScreen() {
                 <RoundButton
                   key={skill.id}
                   label={skill.name}
+                  icon={classSkillIcon(playerPreview.kindId, skill.id)}
                   hint="Đòn đánh thường"
                   square
                   hot={(basicId ?? playerPreview.basic.id) === skill.id}
@@ -1150,7 +1173,7 @@ export function BattleScreen() {
                   key={stack.itemId}
                   label={shortItem(stack.itemId)}
                   tint={ITEMS[stack.itemId].tint}
-                  icon={itemArt(stack.itemId)}
+                  icon={itemArt(stack.itemId, stack.kindId)}
                   hot={itemIds.includes(stack.itemId)}
                   onHighlight={() => setTipOverride(`${ITEMS[stack.itemId].nameVi} · mang vào trận.`)}
                   onPress={() => {
@@ -1179,9 +1202,9 @@ export function BattleScreen() {
               {actingAlly ? null : (
                 <RoundButton
                   label={nets > 0 ? `Lưới ×${nets}` : 'Lưới'}
+                  icon={NET_SKILL_ART}
+                  plain
                   hint={nets > 0 ? `Thu phục, còn ${nets} lưới · chạm 2 lần để dùng` : 'Hết lưới bắt quái!'}
-                  square
-                  tint="#3cba45"
                   picked={utilityPicked === 'tame'}
                   disabled={!playerTurn}
                   dim={nets <= 0}
@@ -1212,8 +1235,10 @@ export function BattleScreen() {
               )}
               <GestureActionButton
                 label="Đánh thường"
+                icon={actingAlly ? null : classSkillIcon(battle.player.kindId, battle.player.basic?.id)}
+                plain
                 hint={`Đòn đánh thường ${(actingAlly ?? battle.player).basic?.name ?? 'Đòn thường'}`}
-                picked={actionId === 'basic'}
+                picked={actionId === 'basic' && utilityPicked == null}
                 aiming={aimKey === 'basic' && quick.aiming}
                 aimPopup={aimPopup}
                 disabled={!commandTurn}
@@ -1230,10 +1255,10 @@ export function BattleScreen() {
                   <GestureActionButton
                     key={skill.id}
                     label={skill.name}
+                    icon={actingAlly ? null : classSkillIcon(battle.player.kindId, skill.id)}
+                    plain
                     hint={describeSkill(skill)}
-                    tint="#7fd0c4"
-                    hot={actionId === skill.id}
-                    picked={actionId === skill.id}
+                    picked={actionId === skill.id && utilityPicked == null}
                     aiming={aimKey === skill.id && quick.aiming}
                     aimPopup={aimPopup}
                     disabled={!commandTurn || locked}
@@ -1247,9 +1272,9 @@ export function BattleScreen() {
               })}
               <RoundButton
                 label="Phòng thủ"
+                icon={DEFEND_SKILL_ART}
+                plain
                 hint="Giảm 25% sát thương đến lượt sau · chạm 2 lần để dùng"
-                square
-                tint="#2f6fe0"
                 picked={utilityPicked === 'defend'}
                 disabled={!commandTurn}
                 testID="battle-defend"

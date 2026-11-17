@@ -78,6 +78,7 @@ type TameAttempt = {
 
 type RaidRoom = {
   id: string;
+  zoneId: string;
   level: number;
   round: number;
   deadline: number;
@@ -347,7 +348,7 @@ export class DungeonRaids {
       }
       return;
     }
-    void this.openRoom(ready);
+    void this.openRoom(ready, lobby.zoneId);
   }
 
   private allReady(lobby: Lobby): boolean {
@@ -355,7 +356,7 @@ export class DungeonRaids {
     return filled.length >= MIN_PARTY && filled.every((member) => member.ready);
   }
 
-  private async openRoom(party: { member: Member; slot: number }[]) {
+  private async openRoom(party: { member: Member; slot: number }[], zoneId: string) {
     await Promise.all(
       party.map(async (entry) => {
         const save = await this.store.findAdventure(entry.member.userId);
@@ -370,6 +371,7 @@ export class DungeonRaids {
     const actor = units.find((unit) => unit.id === turnId);
     const room: RaidRoom = {
       id: `raid-fight-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      zoneId,
       level,
       round: 1,
       deadline: Date.now() + TURN_MS,
@@ -490,9 +492,9 @@ export class DungeonRaids {
     if (room.status === 'finished' || room.status === 'taming') return;
     room.victory = victory;
     room.deadline = Date.now();
-    room.rewards = victory ? raidPayout(room.level) : null;
+    room.rewards = victory ? raidPayout(room.level, Math.random, room.zoneId) : null;
     room.payouts = victory
-      ? new Map(room.members.map((member) => [member.userId, raidPayout(room.level)]))
+      ? new Map(room.members.map((member) => [member.userId, raidPayout(room.level, Math.random, room.zoneId)]))
       : new Map();
     if (!victory) {
       room.status = 'finished';

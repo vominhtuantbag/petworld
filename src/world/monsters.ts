@@ -9,7 +9,7 @@
  * each species' `role` + zone, scaled by level in `monsterStats`.
  *
  * On Đồng bằng, "đồng" means grassland: field rabbit, field mouse, and the
- * tree frog Nhái bén. The collection screen lists those three by id.
+ * tree frog Nhái bén. PET lists the rabbit; mouse and frog stay wild spawns.
  *
  * Maps 2–10 of the same town still have no roster of their own. They
  * reuse the pair for the matching sub-zone, at that map's real level.

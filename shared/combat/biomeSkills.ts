@@ -351,6 +351,22 @@ export function biomeSkillList(biome: BiomeId): Skill[] {
   return BIOME_KITS[biome].map((skill) => ({ ...skill, effects: skill.effects?.map((effect) => ({ ...effect })) }));
 }
 
+export type NumberedBiomeSkill = { slot: number; ultimate: boolean; skill: Skill };
+
+/** Regional list in menu order: skills 1–4, then the 5th as Ultimate. */
+export function numberedBiomeSkills(biome: BiomeId): NumberedBiomeSkill[] {
+  return biomeSkillList(biome).slice(0, 5).map((skill, index) => ({
+    slot: index + 1,
+    ultimate: index === 4,
+    skill,
+  }));
+}
+
+export function biomeSkillTitle(slot: number, name: string): string {
+  if (slot >= 5) return `5. Ultimate: ${name}`;
+  return `${slot}. ${name}`;
+}
+
 export function biomeUltimate(biome: BiomeId): Skill {
   return { ...BIOME_KITS[biome][4] };
 }

@@ -65,6 +65,22 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   'shard-savannah': item('shard-savannah', 'Mảnh thảo nguyên', 0, '#c6a15a', 'Mảnh tiến hoá thú thảo nguyên.'),
   'shard-volcano': item('shard-volcano', 'Mảnh núi lửa', 0, '#3a2420', 'Mảnh tiến hoá thú núi lửa.'),
   'shard-desert': item('shard-desert', 'Mảnh sa mạc', 0, '#e2c48a', 'Mảnh tiến hoá thú sa mạc.'),
+  'badge-plains': item('badge-plains', 'Huy hiệu Đồng bằng', 0, '#6ea24e', 'Huy hiệu rơi khi thắng Hầm ngục Đồng bằng. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-mountains': item('badge-mountains', 'Huy hiệu Núi non', 0, '#5c6b73', 'Huy hiệu rơi khi thắng Hầm ngục Núi non. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-forest': item('badge-forest', 'Huy hiệu Rừng rậm', 0, '#2d5a38', 'Huy hiệu rơi khi thắng Hầm ngục Rừng rậm. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-swamp': item('badge-swamp', 'Huy hiệu Đầm lầy', 0, '#2a3a2c', 'Huy hiệu rơi khi thắng Hầm ngục Đầm lầy. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-beach': item('badge-beach', 'Huy hiệu Bãi biển', 0, '#e6d2a8', 'Huy hiệu rơi khi thắng Hầm ngục Bãi biển. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-ocean': item('badge-ocean', 'Huy hiệu Đại dương', 0, '#134868', 'Huy hiệu rơi khi thắng Hầm ngục Đại dương. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-tundra': item('badge-tundra', 'Huy hiệu Băng giá', 0, '#eef5f8', 'Huy hiệu rơi khi thắng Hầm ngục Băng giá. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-savannah': item('badge-savannah', 'Huy hiệu Thảo nguyên', 0, '#c6a15a', 'Huy hiệu rơi khi thắng Hầm ngục Thảo nguyên. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-volcano': item('badge-volcano', 'Huy hiệu Núi lửa', 0, '#3a2420', 'Huy hiệu rơi khi thắng Hầm ngục Núi lửa. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-desert': item('badge-desert', 'Huy hiệu Sa mạc', 0, '#e2c48a', 'Huy hiệu rơi khi thắng Hầm ngục Sa mạc. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-light': item('badge-light', 'Huy hiệu Ánh sáng', 0, '#f0d48a', 'Huy hiệu rơi khi thắng Hầm ngục Ánh sáng. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-dark': item('badge-dark', 'Huy hiệu Bóng tối', 0, '#b1a4ff', 'Huy hiệu rơi khi thắng Hầm ngục Bóng tối. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-heaven': item('badge-heaven', 'Huy hiệu Thiên đường', 0, '#ce93d8', 'Huy hiệu rơi khi thắng Hầm ngục Thiên đường. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-hell': item('badge-hell', 'Huy hiệu Địa ngục', 0, '#e07050', 'Huy hiệu rơi khi thắng Hầm ngục Địa ngục. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-chaos': item('badge-chaos', 'Huy hiệu Hỗn mang', 0, '#c45cff', 'Huy hiệu rơi khi thắng Hầm ngục Hỗn mang. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
+  'badge-outer-space': item('badge-outer-space', 'Huy hiệu Vũ trụ', 0, '#7aa2ff', 'Huy hiệu rơi khi thắng Hầm ngục Vũ trụ. Giữ trong Vật phẩm để dịch chuyển vùng đặc biệt.'),
 };
 
 /** Older fruit ids still present in local saves. */
@@ -232,8 +248,9 @@ export function countSlots(bag: Stack[], gear: Gear | null): number {
   return bag.length + (gear ? 1 : 0);
 }
 
-export function addStack(bag: Stack[], itemId: ItemId, qty = 1, plus = 0): Stack[] | null {
+export function addStack(bag: Stack[], itemId: ItemId, qty = 1, plus = 0, kindId?: string): Stack[] | null {
   const def = ITEMS[itemId];
+  const mark = shardKind(itemId, kindId);
   if (!def.stack) {
     if (bag.some((stack) => stack.itemId === itemId)) return null;
     if (countSlots(bag, null) >= BAG_SLOTS) return null;
@@ -241,14 +258,19 @@ export function addStack(bag: Stack[], itemId: ItemId, qty = 1, plus = 0): Stack
     if (slot == null) return null;
     return [...bag, { itemId, qty: 1, plus, slot }];
   }
-  const existing = bag.find((stack) => stack.itemId === itemId);
+  const existing = bag.find((stack) => stack.itemId === itemId && (stack.kindId ?? undefined) === mark);
   if (existing) {
-    return bag.map((stack) => (stack.itemId === itemId ? { ...stack, qty: stack.qty + qty } : stack));
+    return bag.map((stack) => (stack === existing ? { ...stack, qty: stack.qty + qty } : stack));
   }
   if (bag.length >= BAG_SLOTS) return null;
   const slot = firstFreeSlot(bag);
   if (slot == null) return null;
-  return [...bag, { itemId, qty, slot }];
+  return [...bag, { itemId, qty, slot, ...(mark ? { kindId: mark } : {}) }];
+}
+
+function shardKind(itemId: ItemId, kindId?: string): string | undefined {
+  if (!itemId.startsWith('shard-') || !kindId) return undefined;
+  return kindId;
 }
 
 export function removeOne(bag: Stack[], itemId: ItemId): Stack[] | null {
@@ -256,26 +278,40 @@ export function removeOne(bag: Stack[], itemId: ItemId): Stack[] | null {
   return taken ? taken.bag : null;
 }
 
-export function takeStack(bag: Stack[], itemId: ItemId): { bag: Stack[]; plus: number } | null {
-  const stack = bag.find((entry) => entry.itemId === itemId);
+export function takeStack(bag: Stack[], itemId: ItemId, kindId?: string): { bag: Stack[]; plus: number; kindId?: string } | null {
+  const stack = bag.find((entry) => entry.itemId === itemId && (kindId == null || entry.kindId === kindId));
   if (!stack) return null;
-  if (stack.qty <= 1) return { bag: bag.filter((entry) => entry.itemId !== itemId), plus: stack.plus ?? 0 };
+  const mark = stack.kindId;
+  if (stack.qty <= 1) return { bag: bag.filter((entry) => entry !== stack), plus: stack.plus ?? 0, kindId: mark };
   return {
-    bag: bag.map((entry) => (entry.itemId === itemId ? { ...entry, qty: entry.qty - 1 } : entry)),
+    bag: bag.map((entry) => (entry === stack ? { ...entry, qty: entry.qty - 1 } : entry)),
     plus: stack.plus ?? 0,
+    kindId: mark,
   };
 }
 
 export function removeMany(bag: Stack[], itemId: ItemId, qty: number): Stack[] | null {
   if (qty <= 0) return bag;
-  const stack = bag.find((entry) => entry.itemId === itemId);
-  if (!stack || stack.qty < qty) return null;
-  if (stack.qty === qty) return bag.filter((entry) => entry.itemId !== itemId);
-  return bag.map((entry) => (entry.itemId === itemId ? { ...entry, qty: entry.qty - qty } : entry));
+  if (countItem(bag, itemId) < qty) return null;
+  let left = qty;
+  const next: Stack[] = [];
+  for (const stack of bag) {
+    if (stack.itemId !== itemId || left <= 0) {
+      next.push(stack);
+      continue;
+    }
+    if (stack.qty <= left) {
+      left -= stack.qty;
+      continue;
+    }
+    next.push({ ...stack, qty: stack.qty - left });
+    left = 0;
+  }
+  return next;
 }
 
 export function countItem(bag: Stack[], itemId: ItemId): number {
-  return bag.find((entry) => entry.itemId === itemId)?.qty ?? 0;
+  return bag.reduce((total, stack) => (stack.itemId === itemId ? total + stack.qty : total), 0);
 }
 
 /** Returns the next vitals, or null when the item would not change anything. */
@@ -384,6 +420,7 @@ export function shortItemName(itemId: ItemId): string {
       return '7 màu';
     default:
       if (itemId.startsWith('shard-')) return 'Mảnh';
+      if (itemId.startsWith('badge-')) return 'Hiệu';
       return ITEMS[itemId].nameVi.slice(0, 4);
   }
 }
@@ -495,7 +532,7 @@ function itemFamily(itemId: ItemId): number {
   if (itemId.startsWith('mana-potion')) return 1;
   if (itemId.startsWith('stamina-potion')) return 2;
   if (fruitRestore(itemId)) return 3;
-  if (itemId === 'town-scroll' || itemId === 'net' || itemId === 'mine-ticket') return 4;
+  if (itemId === 'town-scroll' || itemId === 'net' || itemId === 'mine-ticket' || itemId.startsWith('badge-')) return 4;
   const slot = gearSlot(itemId);
   if (slot === 'helm') return 5;
   if (slot === 'armor') return 6;

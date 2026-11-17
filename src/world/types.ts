@@ -50,7 +50,23 @@ export type ItemId =
   | 'shard-tundra'
   | 'shard-savannah'
   | 'shard-volcano'
-  | 'shard-desert';
+  | 'shard-desert'
+  | 'badge-plains'
+  | 'badge-mountains'
+  | 'badge-forest'
+  | 'badge-swamp'
+  | 'badge-beach'
+  | 'badge-ocean'
+  | 'badge-tundra'
+  | 'badge-savannah'
+  | 'badge-volcano'
+  | 'badge-desert'
+  | 'badge-light'
+  | 'badge-dark'
+  | 'badge-heaven'
+  | 'badge-hell'
+  | 'badge-chaos'
+  | 'badge-outer-space';
 
 export type GearSlot = 'weapon' | 'armor' | 'helm' | 'shoes' | 'ring';
 export type GearRarity = 'normal' | 'rare' | 'special';
@@ -118,7 +134,7 @@ export type Rect = {
   slow?: number;
 };
 
-export type Stack = { itemId: ItemId; qty: number; plus?: number; slot?: number };
+export type Stack = { itemId: ItemId; qty: number; plus?: number; slot?: number; kindId?: string };
 
 export type Gear = { itemId: ItemId; plus: number };
 

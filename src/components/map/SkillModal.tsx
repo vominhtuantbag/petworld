@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
 
 import { PROFESSIONS, getCharacter, getProfession } from '../../data/characters';
 import { useSetup } from '../../state/SetupContext';
@@ -7,8 +7,10 @@ import { useWorld } from '../../state/WorldContext';
 import { theme } from '../../theme/theme';
 import { useLayout } from '../../theme/useLayout';
 import { combatElement, elementLabel } from '../../world/combat/elements';
-import { biologicalLocomotionTitle, classCatalog, describeSkill, monsterCatalog, resolveHeroLoadout, resolvePetLoadout, skillKind } from '../../world/combat/kits';
+import { biologicalLocomotionTitle, classCatalog, describeSkill, monsterCatalog, numberedClassSkills, resolveHeroLoadout, resolvePetLoadout, skillKind } from '../../world/combat/kits';
 import type { Skill } from '../../world/combat/model';
+import { classSkillArt, petBasicArt, petBasicSlot, petBiomeArt } from '../../world/skillArt';
+import { biomeSkillTitle } from '../../world/combat/biomeSkills';
 
 type Props = { onClose: () => void };
 
@@ -39,7 +41,7 @@ export function SkillModal({ onClose }: Props) {
         <View style={styles.header}>
           <Text style={[styles.title, { fontSize: font(16) }]}>Kỹ Năng</Text>
           <Text style={[styles.copy, { fontSize: font(12) }]} numberOfLines={1}>
-            {getProfession(mine)?.title ?? 'Nhân vật'} · một đòn thường · hai kỹ năng
+            {getProfession(mine)?.title ?? 'Nhân vật'} · kỹ năng 1–5
           </Text>
           <Pressable accessibilityRole="button" onPress={onClose} style={styles.close} testID="skills-close">
             <Text style={[styles.closeLabel, { fontSize: font(13) }]}>Đóng</Text>
@@ -67,30 +69,33 @@ export function SkillModal({ onClose }: Props) {
               {title}
               {viewingMine ? ' · đang dùng' : ' · chỉ xem'}
             </Text>
-            {catalog.basics.map((skill) => (
-              <SkillRow
-                key={skill.id}
-                skill={skill}
-                font={font}
-                equipped={viewingMine && hero.basicId === skill.id ? 'basic' : 'none'}
-                locked={!viewingMine}
-                selected={picked?.owner === 'hero' && picked.skillId === skill.id}
-                onInspect={() => setPicked({ owner: 'hero', skillId: skill.id })}
-                onEquip={viewingMine ? () => world.equipHeroBasic(skill.id) : undefined}
-              />
-            ))}
-            {catalog.skills.map((skill) => {
-              const slot = viewingMine ? hero.skillIds.indexOf(skill.id) : -1;
+            {numberedClassSkills(professionId).map(({ slot, skill }) => {
+              const basic = catalog.basics.some((entry) => entry.id === skill.id);
+              const equippedSlot = viewingMine ? hero.skillIds.indexOf(skill.id) : -1;
               return (
                 <SkillRow
                   key={skill.id}
                   skill={skill}
+                  number={slot}
+                  art={classSkillArt(professionId, slot)}
                   font={font}
-                  equipped={slot === 0 ? 'first' : slot === 1 ? 'second' : 'none'}
+                  equipped={
+                    viewingMine && basic && hero.basicId === skill.id
+                      ? 'basic'
+                      : equippedSlot === 0
+                        ? 'first'
+                        : equippedSlot === 1
+                          ? 'second'
+                          : 'none'
+                  }
                   locked={!viewingMine}
                   selected={picked?.owner === 'hero' && picked.skillId === skill.id}
                   onInspect={() => setPicked({ owner: 'hero', skillId: skill.id })}
-                  onEquip={viewingMine ? () => world.equipHeroSkill(skill.id) : undefined}
+                  onEquip={
+                    viewingMine
+                      ? () => (basic ? world.equipHeroBasic(skill.id) : world.equipHeroSkill(skill.id))
+                      : undefined
+                  }
                 />
               );
             })}
@@ -109,24 +114,34 @@ export function SkillModal({ onClose }: Props) {
                     <Text style={[styles.section, { fontSize: font(12) }]} numberOfLines={1}>
                       {monster.name} · {biologicalLocomotionTitle(monster.kindId)} · {elementLabel(combatElement(monster.kindId))} · cấp {monster.level}
                     </Text>
-                    {book.basics.map((skill) => (
+                    {book.basics.map((skill) => {
+                      const number = petBasicSlot(skill.id) ?? 1;
+                      return (
                       <SkillRow
                         key={skill.id}
                         skill={skill}
+                        number={number}
+                        art={petBasicArt(number)}
                         font={font}
                         equipped={loadout.basicId === skill.id ? 'basic' : 'none'}
                         selected={picked?.owner === monster.id && picked.skillId === skill.id}
                         onInspect={() => setPicked({ owner: monster.id, skillId: skill.id })}
                         onEquip={() => world.equipPetBasic(monster.id, skill.id)}
                       />
-                    ))}
-                    {book.skills.map((skill) => {
+                      );
+                    })}
+                    {book.skills.map((skill, index) => {
+                      const number = index + 1;
+                      const ultimate = number === 5;
                       const slot = loadout.skillIds.indexOf(skill.id);
                       const locked = !offered.has(skill.id);
                       return (
                         <SkillRow
                           key={skill.id}
                           skill={skill}
+                          number={number}
+                          ultimate={ultimate}
+                          art={petBiomeArt(combatElement(monster.kindId), number)}
                           font={font}
                           equipped={slot === 0 ? 'first' : slot === 1 ? 'second' : 'none'}
                           locked={locked}
@@ -162,6 +177,9 @@ function skillPool(kindId: string | undefined): Skill[] {
 
 function SkillRow({
   skill,
+  number,
+  ultimate,
+  art,
   font,
   equipped,
   locked,
@@ -170,6 +188,9 @@ function SkillRow({
   onEquip,
 }: {
   skill: Skill;
+  number?: number;
+  ultimate?: boolean;
+  art?: ImageSourcePropType | null;
   font: (size: number) => number;
   equipped: 'none' | 'basic' | 'first' | 'second';
   locked?: boolean;
@@ -183,13 +204,17 @@ function SkillRow({
   const mark = equipped === 'basic' ? 'Đang dùng' : equipped === 'first' ? 'Ô 1' : equipped === 'second' ? 'Ô 2' : locked ? 'Khóa' : 'Mang theo';
   return (
     <View style={[styles.row, selected && styles.rowOn]}>
-      <Pressable accessibilityRole="button" accessibilityLabel={skill.name} onPress={onInspect} style={styles.inspect}>
-        <View style={[styles.icon, { backgroundColor: locked ? '#5c6b66' : tint }]}>
-          <Text style={[styles.glyph, { fontSize: font(14) }]}>{skill.name.slice(0, 1)}</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel={number ? `${number}. ${skill.name}` : skill.name} onPress={onInspect} style={styles.inspect}>
+        <View style={[styles.icon, { backgroundColor: art ? '#14110e' : locked ? '#5c6b66' : tint, overflow: 'hidden' }]}>
+          {art ? (
+            <Image source={art} style={styles.glyphArt} resizeMode="cover" />
+          ) : (
+            <Text style={[styles.glyph, { fontSize: font(14) }]}>{skill.name.slice(0, 1)}</Text>
+          )}
         </View>
         <View style={styles.body}>
-          <Text style={[styles.name, { fontSize: font(13) }]} numberOfLines={1}>
-            {skill.name}
+          <Text style={[styles.name, number ? styles.nameNumbered : null, ultimate && styles.nameUltimate, { fontSize: font(13) }]} numberOfLines={2}>
+            {number ? (ultimate ? biomeSkillTitle(5, skill.name) : `${number}. ${skill.name}`) : skill.name}
           </Text>
           <Text style={[styles.copy, { fontSize: font(11) }]} numberOfLines={1}>
             {kindLabel} · MP {skill.mana} · CD {skill.cooldown}
@@ -264,8 +289,17 @@ const styles = StyleSheet.create({
   inspect: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
   icon: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   glyph: { color: '#10211c', fontWeight: '800' },
+  glyphArt: { width: 32, height: 32 },
   body: { flex: 1, minWidth: 0 },
   name: { color: theme.ink, fontWeight: '800' },
+  nameNumbered: {
+    color: '#ffffff',
+    letterSpacing: 0.2,
+    textShadowColor: 'rgba(16, 12, 8, 0.95)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  nameUltimate: { color: '#ffe082' },
   copy: { color: theme.muted },
   equip: { minWidth: 72, alignItems: 'center', paddingVertical: 6, paddingHorizontal: 6, borderRadius: 8, backgroundColor: theme.goldDeep },
   equipOff: { opacity: 0.55 },

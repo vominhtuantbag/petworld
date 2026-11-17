@@ -9,6 +9,7 @@ import { emptyQuests, findQuest, normalizeQuests, type QuestTrack } from '../wor
 import type { RegionId } from '../types/game';
 import { useSetup } from './SetupContext';
 import { entryBlock, isSpecialRegion, LOCKED_LAND, parseSector, parseTier, resolveZoneId, specialRegionOpen } from '../world/atlas';
+import { badgeSetNotice, hasBadgeSet } from '../world/badges';
 import { createField, fieldNeedsRebuild, monsterStats, nextRegion, townZoneId } from '../world/catalog';
 import { MINE_DAILY_LIMIT, MINE_FLOOR_COUNT, mineEncounter, mineLabel, withoutDungeonGates } from '../world/dungeons';
 import { speciesById } from '../world/monsters';
@@ -45,6 +46,7 @@ import {
   grantShards,
   MAX_EVO_STAGE,
   redundantPets,
+  rollFragmentShards,
   rollTradeShards,
   shardForKind,
 } from '../world/evolution';
@@ -146,11 +148,13 @@ type WorldContextValue = WorldState & {
   moveBagSlot: (from: number, to: number) => void;
   sortInventory: () => void;
   tradePet: (monsterId: string) => void;
+  renamePet: (monsterId: string, name: string) => void;
+  fragmentPet: (monsterId: string) => void;
   evolvePet: (monsterId: string) => void;
   claimQuest: (id: string) => void;
   touchQuests: () => void;
-  stash: (itemId: ItemId) => void;
-  withdraw: (itemId: ItemId) => void;
+  stash: (itemId: ItemId, kindId?: string) => void;
+  withdraw: (itemId: ItemId, kindId?: string) => void;
   stashPet: (monsterId: string) => void;
   withdrawPet: (monsterId: string) => void;
   rest: () => void;
@@ -278,7 +282,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const travelTo = useCallback((toZone: string, arrive?: Vec, unlock?: RegionId) => {
     const snapshot = stateRef.current;
     const zoneId = resolveZoneId(toZone);
-    const blocked = entryBlock(snapshot.adventureLevel, zoneId, snapshot.homeRegion);
+    const blocked = entryBlock(snapshot.adventureLevel, zoneId, snapshot.homeRegion, snapshot.unlocked);
     if (blocked) {
       rejectPortal();
       Alert.alert(blocked === LOCKED_LAND ? 'Vùng đất' : 'Không vào được', blocked);
@@ -286,7 +290,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       return;
     }
     setState((current) => {
-      const denied = entryBlock(current.adventureLevel, zoneId, current.homeRegion);
+      const denied = entryBlock(current.adventureLevel, zoneId, current.homeRegion, current.unlocked);
       if (denied) return { ...current, notice: denied };
       const tierMap = parseTier(zoneId);
       const sector = parseSector(zoneId);
@@ -323,13 +327,15 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   const fastTravel = useCallback((regionId: RegionId) => {
     const snapshot = stateRef.current;
-    if (isSpecialRegion(regionId) && !specialRegionOpen(regionId, snapshot.adventureLevel)) {
-      Alert.alert('Vùng đất', LOCKED_LAND);
-      setState((current) => ({ ...current, notice: LOCKED_LAND }));
+    if (isSpecialRegion(regionId) && !hasBadgeSet(regionId, snapshot.bag)) {
+      const notice = badgeSetNotice(regionId);
+      Alert.alert('Bộ huy hiệu', notice);
+      setState((current) => ({ ...current, notice }));
       return;
     }
     const townZone = townZoneId(regionId);
-    const blocked = entryBlock(snapshot.adventureLevel, townZone, snapshot.homeRegion);
+    const pass = isSpecialRegion(regionId) ? [...snapshot.unlocked, regionId] : snapshot.unlocked;
+    const blocked = entryBlock(snapshot.adventureLevel, townZone, snapshot.homeRegion, pass);
     if (blocked) {
       Alert.alert(blocked === LOCKED_LAND ? 'Vùng đất' : 'Không vào được', blocked);
       setState((current) => ({ ...current, notice: blocked }));
@@ -337,7 +343,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     }
     setState((current) => {
       if (regionId === current.regionId && current.scene === 'town') return { ...current, notice: 'Bạn đang ở thị trấn này.' };
-      const denied = entryBlock(current.adventureLevel, townZone, current.homeRegion);
+      if (isSpecialRegion(regionId) && !hasBadgeSet(regionId, current.bag)) {
+        return { ...current, notice: badgeSetNotice(regionId) };
+      }
+      const opened = isSpecialRegion(regionId) ? [...current.unlocked, regionId] : current.unlocked;
+      const denied = entryBlock(current.adventureLevel, townZone, current.homeRegion, opened);
       if (denied) return { ...current, notice: denied };
       if (current.gold < TELEPORT_FEE) {
         return { ...current, notice: `Dịch chuyển tốn ${TELEPORT_FEE} vàng.` };
@@ -399,13 +409,49 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       if (!pet) return { ...current, notice: 'Chỉ đổi được thú trùng. Giữ lại một con mạnh nhất.' };
       const qty = rollTradeShards();
       const shardId = shardForKind(pet.kindId);
-      const bag = grantShards(current.bag, shardId, qty);
+      const bag = grantShards(current.bag, shardId, qty, pet.kindId);
       if (!bag) return { ...current, notice: `Túi đã đầy (${BAG_SLOTS}).` };
       return {
         ...current,
         bag,
         tamed: current.tamed.filter((monster) => monster.id !== pet.id),
         notice: `Đã đổi ${pet.name} lấy ${qty} ${ITEMS[shardId].nameVi}.`,
+      };
+    });
+  }, []);
+
+  const fragmentPet = useCallback((monsterId: string) => {
+    setState((current) => {
+      const pet = current.tamed.find((monster) => monster.id === monsterId);
+      if (!pet) return { ...current, notice: 'Không tìm thấy thú.' };
+      const qty = rollFragmentShards();
+      const shardId = shardForKind(pet.kindId);
+      const bag = grantShards(current.bag, shardId, qty, pet.kindId);
+      if (!bag) return { ...current, notice: `Túi đã đầy (${BAG_SLOTS}).` };
+      const squad = current.squad
+        ? { ...current.squad, allyIds: current.squad.allyIds.filter((id) => id !== pet.id) }
+        : null;
+      return {
+        ...current,
+        bag,
+        squad,
+        tamed: current.tamed.filter((monster) => monster.id !== pet.id),
+        notice: `Đã phân mảnh ${pet.name}. Nhận ${qty} ${ITEMS[shardId].nameVi}.`,
+      };
+    });
+  }, []);
+
+  const renamePet = useCallback((monsterId: string, name: string) => {
+    const nextName = name.trim().slice(0, 40);
+    setState((current) => {
+      if (!nextName) return { ...current, notice: 'Tên thú không được để trống.' };
+      const pet = current.tamed.find((monster) => monster.id === monsterId);
+      if (!pet) return { ...current, notice: 'Không tìm thấy thú.' };
+      if (pet.name === nextName) return current;
+      return {
+        ...current,
+        tamed: current.tamed.map((monster) => (monster.id === monsterId ? { ...monster, name: nextName } : monster)),
+        notice: `${pet.name} đổi tên thành ${nextName}.`,
       };
     });
   }, []);
@@ -445,6 +491,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       }
       if (itemId === 'rainbow-shard') {
         return { ...current, quests, notice: 'Mảnh 7 màu. Thay mọi mảnh tiến hoá thú tại nhà nghỉ.' };
+      }
+      if (itemId.startsWith('badge-')) {
+        return { ...current, quests, notice: 'Huy hiệu vùng. Giữ trong Vật phẩm để dịch chuyển tới vùng đặc biệt.' };
       }
       if (itemId === 'town-scroll') {
         if (current.scene === 'town') return { ...current, quests, notice: 'Bạn đang ở thị trấn.' };
@@ -549,12 +598,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const stash = useCallback((itemId: ItemId) => {
-    setState((current) => moveStack(current, 'bag', 'storage', itemId));
+  const stash = useCallback((itemId: ItemId, kindId?: string) => {
+    setState((current) => moveStack(current, 'bag', 'storage', itemId, kindId));
   }, []);
 
-  const withdraw = useCallback((itemId: ItemId) => {
-    setState((current) => moveStack(current, 'storage', 'bag', itemId));
+  const withdraw = useCallback((itemId: ItemId, kindId?: string) => {
+    setState((current) => moveStack(current, 'storage', 'bag', itemId, kindId));
   }, []);
 
   const stashPet = useCallback((monsterId: string) => {
@@ -937,6 +986,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       moveBagSlot,
       sortInventory,
       tradePet,
+      renamePet,
+      fragmentPet,
       evolvePet,
       claimQuest,
       touchQuests,
@@ -985,6 +1036,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     moveBagSlot,
     sortInventory,
     tradePet,
+    renamePet,
+    fragmentPet,
     evolvePet,
     claimQuest,
     touchQuests,
@@ -1148,18 +1201,18 @@ function rememberSpecies(list: string[], id: string): string[] {
   return [...list, id];
 }
 
-function moveStack(current: WorldState, from: 'bag' | 'storage', to: 'bag' | 'storage', itemId: ItemId): WorldState {
-  const source = removeOne(current[from], itemId);
-  if (!source) return { ...current, notice: 'Không có món này.' };
+function moveStack(current: WorldState, from: 'bag' | 'storage', to: 'bag' | 'storage', itemId: ItemId, kindId?: string): WorldState {
+  const taken = takeStack(current[from], itemId, kindId);
+  if (!taken) return { ...current, notice: 'Không có món này.' };
   if (isGearItem(itemId) && from === 'bag') {
     const slot = gearSlot(itemId);
     if (slot && current[slot]?.itemId === itemId) return { ...current, notice: 'Hãy tháo trang bị trước khi cất.' };
   }
-  const dest = addStack(current[to], itemId);
+  const dest = addStack(current[to], itemId, 1, taken.plus, taken.kindId);
   if (!dest) return { ...current, notice: to === 'bag' ? 'Túi đầy.' : 'Kho đầy.' };
   return {
     ...current,
-    [from]: source,
+    [from]: taken.bag,
     [to]: dest,
     notice: to === 'storage' ? `Đã cất ${ITEMS[itemId].nameVi}.` : `Đã lấy ${ITEMS[itemId].nameVi}.`,
   };

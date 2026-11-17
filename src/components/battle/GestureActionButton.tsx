@@ -1,5 +1,5 @@
 import { useRef, type ReactNode } from 'react';
-import { Animated, PanResponder, StyleSheet, Text, View } from 'react-native';
+import { Animated, Image, PanResponder, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
 
 import { HOLD_MS } from '../../hooks/useQuickTarget';
 import { combatSfx } from '../../world/combat/combatSfx';
@@ -12,6 +12,9 @@ type Props = {
   size: number;
   font: number;
   tint?: string;
+  icon?: ImageSourcePropType | null;
+  /** Icon only. No fill or frame unless this button is the active command. */
+  plain?: boolean;
   disabled?: boolean;
   dim?: boolean;
   picked?: boolean;
@@ -37,6 +40,8 @@ export function GestureActionButton({
   size,
   font,
   tint,
+  icon,
+  plain,
   disabled,
   dim,
   picked,
@@ -165,22 +170,26 @@ export function GestureActionButton({
           accessibilityState={{ disabled: Boolean(disabled), selected: Boolean(picked) }}
           testID={testID}
           style={[
-            court.square,
+            plain ? local.plain : court.square,
             {
               width: size,
               height: size,
-              backgroundColor: tint ?? '#24352f',
-              overflow: 'visible',
+              backgroundColor: plain ? 'transparent' : icon ? 'rgba(8,14,12,0.72)' : tint ?? '#24352f',
+              overflow: 'hidden',
             },
-            hot && !picked && court.roundHot,
-            picked && court.picked,
+            !plain && hot && !picked && court.roundHot,
+            picked && (plain ? local.plainOn : court.picked),
             (disabled || dim) && court.fainted,
             (picked || aiming) && local.held,
           ]}
         >
-          <Text style={[court.roundLabel, { fontSize: font }]} numberOfLines={2}>
-            {label}
-          </Text>
+          {icon ? (
+            <Image source={icon} style={{ width: plain ? size : size * 0.86, height: plain ? size : size * 0.86, borderRadius: plain ? 8 : 6 }} resizeMode="contain" />
+          ) : (
+            <Text style={[court.roundLabel, { fontSize: font }]} numberOfLines={2}>
+              {label}
+            </Text>
+          )}
           <Animated.View pointerEvents="none" style={[local.shade, { opacity: shade }]} />
           <Animated.View
             pointerEvents="none"
@@ -212,6 +221,17 @@ const local = StyleSheet.create({
     elevation: 40,
   },
   held: { transform: [{ scale: 1.05 }] },
+  plain: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+  },
+  plainOn: {
+    borderWidth: 3,
+    borderColor: '#ffe082',
+    borderRadius: 10,
+  },
   shade: {
     ...StyleSheet.absoluteFill,
     backgroundColor: '#000',

@@ -166,7 +166,7 @@ export function SquadSetupScreen() {
       </Text>
       <View style={styles.split}>
         <View style={styles.pane}>
-          <Text style={[styles.paneTitle, { fontSize: font(14) }]}>Sưu tập · Đã thu phục</Text>
+          <Text style={[styles.paneTitle, { fontSize: font(14) }]}>PET · Đã thu phục</Text>
           {captured.length === 0 ? (
             <Text style={[styles.copy, { fontSize: font(12) }]}>Chưa có thú đã thu phục. Bạn vẫn có thể vào trận một mình.</Text>
           ) : (
@@ -231,7 +231,7 @@ export function SquadSetupScreen() {
                     onPress={() => toggleItem(stack.itemId)}
                     style={[styles.card, on && styles.cardOn]}
                   >
-                    <ItemIcon itemId={stack.itemId} size={42} style={styles.swatch} />
+                    <ItemIcon itemId={stack.itemId} kindId={stack.kindId} size={42} style={styles.swatch} />
                     <View style={styles.cardBody}>
                       <Text style={[styles.cardName, { fontSize: font(13) }]} numberOfLines={1}>
                         {item.nameVi} ×{stack.qty} · {on ? 'Mang theo' : 'Chưa chọn'}

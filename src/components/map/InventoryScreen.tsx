@@ -652,7 +652,7 @@ function BagGrid({
     >
       {cells.map((stack, index) => (
         <BagCell
-          key={stack ? `${stack.itemId}-${stack.slot ?? index}` : `empty-${index}`}
+          key={stack ? `${stack.itemId}-${stack.kindId ?? ''}-${stack.slot ?? index}` : `empty-${index}`}
           index={index}
           stack={stack}
           size={cell}
@@ -680,7 +680,7 @@ function BagCell({
   selected: boolean;
   dimmed: boolean;
 }) {
-  const art = stack ? itemArt(stack.itemId) : null;
+  const art = stack ? itemArt(stack.itemId, stack.kindId) : null;
   return (
     <View
       testID={`inventory-slot-${index}`}
@@ -702,12 +702,12 @@ function BagCell({
 }
 
 function FilledCell({ stack, size, font }: { stack: Stack; size: number; font: (size: number) => number }) {
-  const art = itemArt(stack.itemId);
+  const art = itemArt(stack.itemId, stack.kindId);
   const qtySize = Math.max(8, Math.min(font(10), size * 0.26));
   return (
     <View style={[styles.fillCell, { width: size, height: size }]}>
       {art ? (
-        <ItemIcon itemId={stack.itemId} size={Math.round(size * 0.88)} radius={Math.max(3, Math.round(size * 0.12))} />
+        <ItemIcon itemId={stack.itemId} kindId={stack.kindId} size={Math.round(size * 0.88)} radius={Math.max(3, Math.round(size * 0.12))} />
       ) : (
         <Text style={[styles.cellName, { fontSize: Math.max(8, Math.min(font(10), size * 0.28)) }]} numberOfLines={1}>
           {shortItemName(stack.itemId)}

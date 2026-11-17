@@ -35,11 +35,13 @@ export function useSocketCombatFx(input: {
   const [shakes, setShakes] = useState<Record<string, number>>({});
   const hpWatch = useRef<Map<string, number> | null>(null);
   const serial = useRef(0);
+  const missMark = useRef<string | null>(null);
   const hpKey = units.map((unit) => `${unit.id}:${unit.hp}`).join('|');
 
   useEffect(() => {
     if (finished || units.length === 0) {
       hpWatch.current = null;
+      missMark.current = null;
       setFloats((current) => (current.length === 0 ? current : []));
       return;
     }
@@ -62,6 +64,22 @@ export function useSocketCombatFx(input: {
         kind: lastHit ? classifyLastHit(lastHit, unit.id, delta) : floatFromLog(lastLog, delta),
       });
       if (delta < 0) hitIds.push(unit.id);
+    }
+    if (lastHit?.miss && lastHit.damage <= 0) {
+      const mark = `${lastHit.attackerId}:${lastHit.targetId}:${lastLog ?? ''}`;
+      const previousHp = previous.get(lastHit.targetId);
+      const currentHp = next.get(lastHit.targetId);
+      const untouched = previousHp != null && currentHp != null && currentHp >= previousHp;
+      if (untouched && missMark.current !== mark) {
+        missMark.current = mark;
+        serial.current += 1;
+        born.push({
+          id: serial.current,
+          fighterId: lastHit.targetId,
+          amount: 0,
+          kind: 'miss',
+        });
+      }
     }
     if (born.length > 0) setFloats((current) => [...current, ...born].slice(-24));
 
@@ -137,8 +155,10 @@ export function useSocketCombatFx(input: {
 
 function floatFromLog(line: string | undefined, delta: number) {
   if (delta > 0) return 'heal' as const;
-  const text = (line ?? '').toLowerCase();
-  if (text.includes('trượt') || text.includes('miss') || text.includes('né')) return 'miss' as const;
-  if (text.includes('chí mạng') || text.includes('crit')) return 'crit' as const;
+  if (delta < 0) {
+    const text = (line ?? '').toLowerCase();
+    if (text.includes('chí mạng') || text.includes('crit')) return 'crit' as const;
+    return 'damage' as const;
+  }
   return 'damage' as const;
 }

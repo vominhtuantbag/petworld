@@ -10,7 +10,10 @@ import type { ItemId, Stack } from './types';
 export const MAX_EVO_STAGE = 2;
 export const TRADE_SHARD_MIN = 3;
 export const TRADE_SHARD_MAX = 5;
-export const EVO_SHARD_COST = [0, 8, 15] as const;
+export const FRAGMENT_SHARD_MIN = 1;
+export const FRAGMENT_SHARD_MAX = 7;
+export const EVO_SHARD_MIN = 300;
+export const EVO_SHARD_MAX = 400;
 export const EVO_LEVEL_NEED = [0, 8, 16] as const;
 export const EVO_STAT_MULT = [1, 1.22, 1.48] as const;
 
@@ -46,12 +49,19 @@ export function shardForKind(kindId: string): ItemId {
   return FAUNA_SHARDS[faunaOf(kindId)] ?? 'evo-shard';
 }
 
+/** Stable shard price for this species, from 300 through 400. */
+export function speciesShardCost(kindId: string): number {
+  let hash = 0;
+  for (let i = 0; i < kindId.length; i += 1) hash = (hash * 33 + kindId.charCodeAt(i)) >>> 0;
+  return EVO_SHARD_MIN + (hash % (EVO_SHARD_MAX - EVO_SHARD_MIN + 1));
+}
+
 export function evoCost(monster: TamedMonster): { shards: number; level: number; shardId: ItemId } | null {
   const stage = evoStageOf(monster);
   if (stage >= MAX_EVO_STAGE) return null;
   const next = stage + 1;
   return {
-    shards: EVO_SHARD_COST[next] ?? 8,
+    shards: speciesShardCost(monster.kindId),
     level: EVO_LEVEL_NEED[next] ?? 8,
     shardId: shardForKind(monster.kindId),
   };
@@ -69,6 +79,11 @@ export function redundantPets(tamed: TamedMonster[]): TamedMonster[] {
 
 export function rollTradeShards(rng: () => number = Math.random): number {
   return TRADE_SHARD_MIN + Math.floor(rng() * (TRADE_SHARD_MAX - TRADE_SHARD_MIN + 1));
+}
+
+/** Breaking a pet in PET yields this many regional shards. */
+export function rollFragmentShards(rng: () => number = Math.random): number {
+  return FRAGMENT_SHARD_MIN + Math.floor(rng() * (FRAGMENT_SHARD_MAX - FRAGMENT_SHARD_MIN + 1));
 }
 
 export function consumeEvolutionShards(bag: Stack[], shardId: ItemId, need: number): Stack[] | null {
@@ -89,8 +104,8 @@ export function consumeEvolutionShards(bag: Stack[], shardId: ItemId, need: numb
   return left <= 0 ? next : null;
 }
 
-export function grantShards(bag: Stack[], shardId: ItemId, qty: number): Stack[] | null {
-  return addStack(bag, shardId, qty);
+export function grantShards(bag: Stack[], shardId: ItemId, qty: number, kindId?: string): Stack[] | null {
+  return addStack(bag, shardId, qty, 0, kindId);
 }
 
 export function shardLabel(itemId: ItemId): string {

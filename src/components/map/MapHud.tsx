@@ -27,7 +27,7 @@ type Props = {
 
 const BUTTONS: { id: MapMenuId; label: string; testID: string }[] = [
   { id: 'items', label: 'Vật phẩm', testID: 'map-items' },
-  { id: 'collection', label: 'Sưu Tập', testID: 'map-collection' },
+  { id: 'collection', label: 'PET', testID: 'map-collection' },
   { id: 'quests', label: 'Nhiệm Vụ', testID: 'map-quests' },
   { id: 'dictionary', label: 'Kỹ Năng', testID: 'map-skills' },
   { id: 'settings', label: 'Cài Đặt', testID: 'map-settings' },

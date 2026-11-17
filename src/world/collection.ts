@@ -3,16 +3,12 @@ import { monsterStats } from './catalog';
 import { MAP1_ROSTER, type MonsterSpecies } from './monsters';
 
 /**
- * Plains species the collection screen always lists. They already spawn:
- * rabbit and mouse in the level 1–2 band, tree frog in the level 3–4 band.
- * Taming one adds a live copy to `world.tamed`; this registry is the species card.
+ * Species cards always shown in PET as "Chưa gặp" placeholders. Empty for now:
+ * rabbit, mouse, and tree frog still spawn in the wild, but none is listed.
+ * A tamed copy of any species still shows from `world.tamed`.
  */
 
-const LISTED: readonly { id: string; levelMin: number; levelMax: number }[] = [
-  { id: 'plains-rabbit', levelMin: 1, levelMax: 2 },
-  { id: 'plains-mouse', levelMin: 1, levelMax: 2 },
-  { id: 'plains-tree-frog', levelMin: 3, levelMax: 4 },
-];
+const LISTED: readonly { id: string; levelMin: number; levelMax: number }[] = [];
 
 export type CollectionSpecies = {
   id: string;

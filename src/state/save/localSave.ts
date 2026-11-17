@@ -1,10 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-import { parseSave, preferSave, type GameSave } from './gameSave';
+import { parsePetBackup, parseSave, preferSave, withOwnedPets, type GameSave } from './gameSave';
 
 const PREFIX = 'game-thu-gian.save.v1.';
 const LATEST = 'game-thu-gian.save.latest';
+const PETS = 'game-thu-gian.pets.v1.';
 
 type LatestSave = { userId: string; save: GameSave };
 
@@ -20,7 +21,7 @@ export function readLocalSaveSync(userId: string): GameSave | null {
   const storage = browserStorage();
   if (!storage) return null;
   try {
-    return richer(parseSave(storage.getItem(userKey(userId))), backupFor(userId, storage.getItem(LATEST)));
+    return keepPets(userId, richer(parseSave(storage.getItem(userKey(userId))), backupFor(userId, storage.getItem(LATEST))), storage);
   } catch (error) {
     console.warn('[Game Thư Giãn] Không đọc được bản lưu trên máy.', error);
     return null;
@@ -33,7 +34,10 @@ export async function readLocalSave(userId: string): Promise<GameSave | null> {
   try {
     const own = parseSave(await AsyncStorage.getItem(userKey(userId)));
     const latestRaw = await AsyncStorage.getItem(LATEST);
-    return richer(richer(quick, own), backupFor(userId, latestRaw));
+    const merged = keepPets(userId, richer(richer(quick, own), backupFor(userId, latestRaw)), browserStorage());
+    const petRaw = await AsyncStorage.getItem(PETS + userId);
+    const pets = parsePetBackup(petRaw ? JSON.parse(petRaw) : null);
+    return merged && pets ? withOwnedPets(merged, pets.roster, pets.petVault) : merged;
   } catch (error) {
     console.warn('[Game Thư Giãn] Không đọc được bản lưu trên máy.', error);
     return quick;
@@ -57,8 +61,11 @@ export async function writeLocalSave(userId: string, save: GameSave): Promise<vo
   const packed = JSON.stringify({ userId, save } satisfies LatestSave);
   writeRawNow(userKey(userId), raw);
   writeRawNow(LATEST, packed);
+  const pets = JSON.stringify({ roster: save.roster, petVault: save.inventory.petVault ?? [] });
+  writeRawNow(PETS + userId, pets);
   await AsyncStorage.setItem(userKey(userId), raw);
   await AsyncStorage.setItem(LATEST, packed);
+  await AsyncStorage.setItem(PETS + userId, pets);
 }
 
 /** Web unload does not wait for AsyncStorage's promise. localStorage writes in this turn. */
@@ -66,7 +73,10 @@ export function writeLocalSaveNow(userId: string, raw: string): void {
   writeRawNow(userKey(userId), raw);
   try {
     const save = parseSave(raw);
-    if (save) writeRawNow(LATEST, JSON.stringify({ userId, save } satisfies LatestSave));
+    if (save) {
+      writeRawNow(LATEST, JSON.stringify({ userId, save } satisfies LatestSave));
+      writeRawNow(PETS + userId, JSON.stringify({ roster: save.roster, petVault: save.inventory.petVault ?? [] }));
+    }
   } catch (error) {
     console.warn('[Game Thư Giãn] Không ghi được bản lưu trên máy.', error);
   }
@@ -86,6 +96,19 @@ function richer(left: GameSave | null, right: GameSave | null): GameSave | null 
   if (!left) return right;
   if (!right) return left;
   return preferSave(left, right);
+}
+
+function keepPets(userId: string, save: GameSave | null, storage: Storage | null): GameSave | null {
+  if (!save || !storage) return save;
+  let extra: unknown = null;
+  try {
+    extra = JSON.parse(storage.getItem(PETS + userId) ?? 'null');
+  } catch {
+    return save;
+  }
+  const pets = parsePetBackup(extra);
+  if (!pets) return save;
+  return withOwnedPets(save, pets.roster, pets.petVault);
 }
 
 function backupFor(userId: string, raw: string | null): GameSave | null {

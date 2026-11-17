@@ -418,7 +418,7 @@ export function progressScore(save: GameSave): number {
     (save.inventory.ring ? 1 : 0);
   return (
     save.profile.level * 1_000_000 +
-    save.roster.length * 100_000 +
+    (save.roster.length + (save.inventory.petVault?.length ?? 0)) * 100_000 +
     save.profile.exp +
     save.quests.totalWins * 1_000 +
     save.codex.species.length +
@@ -429,14 +429,57 @@ export function progressScore(save: GameSave): number {
 }
 
 /**
- * The device copy stays unless the server has gone further (higher level,
- * more pets, more exp, more of the codex). A newer but equal or weaker Render
- * copy — including one written after a reset — does not replace gold, items,
- * or position stored on this device.
+ * The further adventure supplies level, gold, and position.
+ * Pets from either copy stay, so a server document cannot wipe a tame.
  */
 export function preferSave(local: GameSave, remote: GameSave): GameSave {
-  if (progressScore(remote) > progressScore(local)) return remote;
-  return local;
+  const remoteAhead = progressScore(remote) > progressScore(local);
+  const base = remoteAhead ? remote : local;
+  const other = remoteAhead ? local : remote;
+  const roster = mergeMonsters(base.roster, other.roster, base.inventory.petVault ?? [], 200);
+  const petVault = mergeMonsters(base.inventory.petVault ?? [], other.inventory.petVault ?? [], roster, 40);
+  const sameRoster = samePets(roster, base.roster);
+  const sameVault = samePets(petVault, base.inventory.petVault ?? []);
+  if (base === local && sameRoster && sameVault) return local;
+  return {
+    ...base,
+    roster,
+    inventory: { ...base.inventory, petVault },
+  };
+}
+
+/** Put pets that exist only on the device copy back onto a save that lost them. */
+export function withOwnedPets(save: GameSave, roster: TamedMonster[], petVault: TamedMonster[]): GameSave {
+  const nextRoster = mergeMonsters(save.roster, roster, save.inventory.petVault ?? [], 200);
+  const nextVault = mergeMonsters(save.inventory.petVault ?? [], petVault, nextRoster, 40);
+  if (samePets(nextRoster, save.roster) && samePets(nextVault, save.inventory.petVault ?? [])) return save;
+  return { ...save, roster: nextRoster, inventory: { ...save.inventory, petVault: nextVault } };
+}
+
+export function parsePetBackup(raw: unknown): { roster: TamedMonster[]; petVault: TamedMonster[] } | null {
+  if (!isRecord(raw)) return null;
+  return { roster: parseRoster(raw.roster), petVault: parseRoster(raw.petVault) };
+}
+
+function mergeMonsters(
+  primary: TamedMonster[],
+  extra: TamedMonster[],
+  heldElsewhere: TamedMonster[],
+  cap: number,
+): TamedMonster[] {
+  const seen = new Set<string>([...primary, ...heldElsewhere].map((pet) => pet.id));
+  const merged = [...primary];
+  for (const pet of extra) {
+    if (seen.has(pet.id)) continue;
+    seen.add(pet.id);
+    merged.push(pet);
+    if (merged.length >= cap) break;
+  }
+  return merged;
+}
+
+function samePets(next: TamedMonster[], previous: TamedMonster[]): boolean {
+  return next.length === previous.length && next.every((pet, index) => pet === previous[index]);
 }
 
 export function playerFromSave(save: GameSave): InitializedPlayer | null {
@@ -566,13 +609,15 @@ function parseStacks(value: unknown): Stack[] {
     if (!itemId) continue;
     const qty = int(entry.qty, 1, 999, 1);
     const slot = typeof entry.slot === 'number' ? int(entry.slot, 0, BAG_SLOTS - 1, -1) : -1;
+    const kindId =
+      itemId.startsWith('shard-') && typeof entry.kindId === 'string' && TOKEN.test(entry.kindId) ? entry.kindId : undefined;
     if (!ITEMS[itemId].stack) {
       if (stacks.some((stack) => stack.itemId === itemId)) continue;
       stacks.push({ itemId, qty: 1, plus: int(entry.plus, 0, UPGRADE_CAP, 0), ...(slot >= 0 ? { slot } : {}) });
     } else {
-      const existing = stacks.find((stack) => stack.itemId === itemId);
+      const existing = stacks.find((stack) => stack.itemId === itemId && stack.kindId === kindId);
       if (existing) existing.qty = Math.min(999, existing.qty + qty);
-      else stacks.push({ itemId, qty, ...(slot >= 0 ? { slot } : {}) });
+      else stacks.push({ itemId, qty, ...(kindId ? { kindId } : {}), ...(slot >= 0 ? { slot } : {}) });
     }
     if (stacks.length >= BAG_SLOTS) break;
   }
@@ -600,12 +645,20 @@ function parseRoster(value: unknown): TamedMonster[] {
   return roster;
 }
 
+function tokenOf(value: string): string {
+  const trimmed = value.trim().slice(0, 80);
+  if (TOKEN.test(trimmed)) return trimmed;
+  const cleaned = trimmed.replace(/[^a-zA-Z0-9:_-]/g, '').slice(0, 80);
+  return TOKEN.test(cleaned) ? cleaned : '';
+}
+
 function parseTamed(value: unknown): TamedMonster | null {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.kindId !== 'string') return null;
-  const id = value.id.trim().slice(0, 80);
-  const kind = speciesById(value.kindId);
-  if (!id || !TOKEN.test(id) || !kind) return null;
-  const name = typeof value.name === 'string' && value.name.trim() ? value.name.trim().slice(0, 40) : kind.name;
+  const id = tokenOf(value.id);
+  const kindId = tokenOf(value.kindId);
+  const kind = kindId ? speciesById(kindId) : null;
+  if (!id || !kindId) return null;
+  const name = typeof value.name === 'string' && value.name.trim() ? value.name.trim().slice(0, 40) : (kind?.name ?? 'Thú');
   const maxHp = int(value.maxHp, 1, 99_999, 1);
   const maxMp = int(value.maxMp, 0, 99_999, 0);
   const basicId = typeof value.basicId === 'string' && TOKEN.test(value.basicId) ? value.basicId : undefined;
@@ -614,18 +667,18 @@ function parseTamed(value: unknown): TamedMonster | null {
     : undefined;
   return {
     id,
-    kindId: kind.id,
+    kindId: kind?.id ?? kindId,
     name,
     level: int(value.level, 1, ADVENTURE_LEVEL_CAP, 1),
     exp: int(value.exp, 0, 10_000_000, 0),
-    tint: typeof value.tint === 'string' && HEX.test(value.tint) ? value.tint : kind.tint,
+    tint: typeof value.tint === 'string' && HEX.test(value.tint) ? value.tint : (kind?.tint ?? '#8d7356'),
     maxHp,
     maxMp,
     hp: int(value.hp, 0, maxHp, maxHp),
     mp: int(value.mp, 0, maxMp, maxMp),
     attack: int(value.attack, 0, 99_999, 1),
     defense: int(value.defense, 0, 99_999, 0),
-    speed: int(value.speed, 0, 9_999, kind.speed),
+    speed: int(value.speed, 0, 9_999, kind?.speed ?? 8),
     ...(basicId ? { basicId } : {}),
     ...(skillIds && skillIds.length > 0 ? { skillIds } : {}),
     evoStage: int(value.evoStage, 0, 2, 0),

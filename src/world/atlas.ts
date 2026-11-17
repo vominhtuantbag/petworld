@@ -187,8 +187,8 @@ export function provinceCount(): number {
 export const LOCKED_LAND = 'vùng đất chưa mở';
 
 /**
- * The six endgame lands. They stay shut until the adventurer reaches the
- * province's lowest level. Teleport and gates both use this list.
+ * The six endgame lands. Walking a gate still waits for the province's
+ * lowest level. The teleport screen opens them with a badge set instead.
  */
 export const SPECIAL_REGION_IDS = ['dark', 'light', 'heaven', 'hell', 'chaos', 'outer-space'] as const;
 
@@ -227,16 +227,23 @@ function zoneProvinceId(zoneId: string): string {
 /**
  * Hunting maps stay open from map 1 up through the current band (and the next
  * map). Higher-level players can always walk back through lower maps and into
- * any ring town. Special regions stay shut until their unlock level.
+ * any ring town. Special regions stay shut until their unlock level, unless
+ * the traveller already opened that land (badge teleport adds it to unlocked).
  */
-export function entryBlock(adventureLevel: number, zoneId: string, homeProvince: string): string | null {
+export function entryBlock(
+  adventureLevel: number,
+  zoneId: string,
+  homeProvince: string,
+  unlocked: readonly string[] = [],
+): string | null {
   const resolved = resolveZoneId(zoneId);
   const provinceId = zoneProvinceId(resolved);
+  const specialShut = isSpecialRegion(provinceId) && !unlocked.includes(provinceId) && !specialRegionOpen(provinceId, adventureLevel);
   if (resolved.startsWith('town:') || zoneId.startsWith('town:')) {
-    if (isSpecialRegion(provinceId) && !specialRegionOpen(provinceId, adventureLevel)) return LOCKED_LAND;
+    if (specialShut) return LOCKED_LAND;
     return null;
   }
-  if (isSpecialRegion(provinceId) && !specialRegionOpen(provinceId, adventureLevel)) return LOCKED_LAND;
+  if (specialShut) return LOCKED_LAND;
 
   const tier = parseTier(resolved);
   if (tier) {

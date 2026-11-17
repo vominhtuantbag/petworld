@@ -5,7 +5,8 @@ import { useWorld } from '../../state/WorldContext';
 import { theme } from '../../theme/theme';
 import { useLayout } from '../../theme/useLayout';
 import { getRegion } from '../../data/regions';
-import { isRingTown, LOCKED_LAND, specialRegionOpen, tierWindow } from '../../world/atlas';
+import { isRingTown, isSpecialRegion, tierWindow } from '../../world/atlas';
+import { badgeSetNotice } from '../../world/badges';
 import { TIER_MAP_H, TIER_MAP_W } from '../../world/grid';
 import { entrancePad, MAP_TIERS, tierRange, tierZoneId } from '../../world/tiers';
 import {
@@ -185,12 +186,13 @@ function StorageRows() {
           {world.bag.length === 0 ? <Text style={styles.copy}>Trống</Text> : null}
           {world.bag.map((stack) => (
             <Row
-              key={`bag-${stack.itemId}`}
+              key={`bag-${stack.itemId}-${stack.kindId ?? ''}`}
               itemId={stack.itemId}
+              kindId={stack.kindId}
               title={`${ITEMS[stack.itemId].nameVi} ×${stack.qty}`}
               detail="Cất vào kho"
               action="Cất"
-              onPress={() => world.stash(stack.itemId)}
+              onPress={() => world.stash(stack.itemId, stack.kindId)}
             />
           ))}
         </View>
@@ -199,12 +201,13 @@ function StorageRows() {
           {world.storage.length === 0 ? <Text style={styles.copy}>Trống</Text> : null}
           {world.storage.map((stack) => (
             <Row
-              key={`bin-${stack.itemId}`}
+              key={`bin-${stack.itemId}-${stack.kindId ?? ''}`}
               itemId={stack.itemId}
+              kindId={stack.kindId}
               title={`${ITEMS[stack.itemId].nameVi} ×${stack.qty}`}
               detail="Lấy ra túi"
               action="Lấy"
-              onPress={() => world.withdraw(stack.itemId)}
+              onPress={() => world.withdraw(stack.itemId, stack.kindId)}
             />
           ))}
         </View>
@@ -275,14 +278,16 @@ function TravelRows() {
           })}
         </>
       ) : null}
-      <Text style={styles.copy}>Thị trấn mở rộng</Text>
+      <Text style={styles.copy}>
+        Thị trấn mở rộng. Cần đủ bộ 5 huy hiệu trong Vật phẩm. Huy hiệu vùng rơi 30–35% khi thắng Hầm ngục vùng đó.
+      </Text>
       {listExpansionTowns().map((town) => {
-        const open = specialRegionOpen(town.id, world.adventureLevel);
+        const need = isSpecialRegion(town.id) ? badgeSetNotice(town.id) : '';
         return (
           <Row
             key={town.id}
             title={town.nameVi}
-            detail={open ? `${town.atmosphere} · ${TELEPORT_FEE} vàng` : LOCKED_LAND}
+            detail={`${need} · ${TELEPORT_FEE} vàng`}
             action="Đến"
             onPress={() => world.fastTravel(town.id)}
           />
@@ -317,7 +322,7 @@ function InnRows() {
           onPress={() => world.tradePet(monster.id)}
         />
       ))}
-      <Text style={styles.copy}>Tiến hoá thú. Mảnh 7 màu và mảnh tiến hoá thay được mảnh vùng.</Text>
+      <Text style={styles.copy}>Tiến hoá thú cần 300–400 mảnh tuỳ loài. Mảnh 7 màu và mảnh tiến hoá thay được mảnh vùng.</Text>
       {evolving.length === 0 ? <Text style={styles.copy}>Chưa có thú để tiến hoá.</Text> : null}
       {evolving.map((monster) => {
         const cost = evoCost(monster);
@@ -344,8 +349,9 @@ function BagRows() {
     <>
       {usable.map((stack) => (
         <Row
-          key={`use-${stack.itemId}`}
+          key={`use-${stack.itemId}-${stack.kindId ?? ''}`}
           itemId={stack.itemId}
+          kindId={stack.kindId}
           title={`${ITEMS[stack.itemId].nameVi} ×${stack.qty}`}
           detail={ITEMS[stack.itemId].blurb}
           action="Dùng"
@@ -374,16 +380,18 @@ function Row({
   action,
   onPress,
   itemId,
+  kindId,
 }: {
   title: string;
   detail: string;
   action: string;
   onPress: () => void;
   itemId?: ItemId;
+  kindId?: string;
 }) {
   return (
     <View style={styles.row}>
-      {itemId ? <ItemIcon itemId={itemId} size={36} /> : null}
+      {itemId ? <ItemIcon itemId={itemId} kindId={kindId} size={36} /> : null}
       <View style={styles.rowText}>
         <Text style={styles.rowTitle}>{title}</Text>
         <Text style={styles.copy}>{detail}</Text>
