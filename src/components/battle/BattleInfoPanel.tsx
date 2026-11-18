@@ -91,12 +91,14 @@ function StatBar({
   fill,
   track,
   scale,
+  mirror = false,
 }: {
   value: number;
   max: number;
   fill: string;
   track: string;
   scale: number;
+  mirror?: boolean;
 }) {
   const ratio = max <= 0 ? 0 : Math.max(0, Math.min(1, value / max));
   const barH = Math.round(14 * scale);
@@ -107,7 +109,13 @@ function StatBar({
         { backgroundColor: track, height: barH, borderRadius: Math.round(barH / 2) },
       ]}
     >
-      <View style={[styles.barFill, { width: `${ratio * 100}%`, backgroundColor: fill }]} />
+      <View
+        style={[
+          styles.barFill,
+          mirror ? styles.barFillMirror : styles.barFillLeft,
+          { width: `${ratio * 100}%`, backgroundColor: fill },
+        ]}
+      />
       <Text style={[styles.barText, { fontSize: Math.max(8, Math.round(9 * scale)) }]} numberOfLines={1}>
         {Math.round(value)} / {Math.round(max)}
       </Text>
@@ -132,6 +140,7 @@ export function BattleInfoPanel({
   const elements = elementList(unit);
   const skills = (unit?.skills ?? []).slice(0, 4);
   const facing = side === 'right' ? 'left' : 'right';
+  const mirror = side === 'right';
   const z = scale;
   const face = avatarSize ?? Math.round(48 * z);
   const idW = Math.round(58 * z);
@@ -154,7 +163,7 @@ export function BattleInfoPanel({
     >
       {unit ? (
         <View style={styles.body}>
-          <View style={[styles.topRow, { gap: Math.round(8 * z) }]}>
+          <View style={[styles.topRow, mirror && styles.rowMirror, { gap: Math.round(8 * z) }]}>
             <View style={[styles.identity, { width: idW, gap: Math.round(2 * z) }]}>
               <Text style={[styles.name, { fontSize: Math.max(10, Math.round(11 * z)), maxWidth: idW }]} numberOfLines={1}>
                 {unit.name}
@@ -174,7 +183,7 @@ export function BattleInfoPanel({
             </View>
 
             <View style={[styles.stats, { gap: Math.round(3 * z) }]}>
-              <View style={[styles.elementRow, { gap: Math.round(3 * z) }]}>
+              <View style={[styles.elementRow, mirror && styles.rowMirror, { gap: Math.round(3 * z) }]}>
                 {(elements.length ? elements : ['']).map((element, index) => {
                   if (!element) {
                     return (
@@ -189,6 +198,7 @@ export function BattleInfoPanel({
                       key={`${element}-${index}`}
                       style={[
                         styles.elementChip,
+                        mirror && styles.rowMirror,
                         {
                           borderColor: tint,
                           backgroundColor: 'rgba(12, 28, 48, 0.92)',
@@ -217,9 +227,9 @@ export function BattleInfoPanel({
                   );
                 })}
               </View>
-              <StatBar value={unit.hp} max={unit.maxHp} fill="#e53935" track="#4a1818" scale={z} />
-              <StatBar value={unit.mp} max={unit.maxMp} fill="#b39ddb" track="#241848" scale={z} />
-              <View style={[styles.skillRow, { gap: Math.round(4 * z), marginTop: Math.round(1 * z) }]}>
+              <StatBar value={unit.hp} max={unit.maxHp} fill="#e53935" track="#4a1818" scale={z} mirror={mirror} />
+              <StatBar value={unit.mp} max={unit.maxMp} fill="#b39ddb" track="#241848" scale={z} mirror={mirror} />
+              <View style={[styles.skillRow, mirror && styles.rowMirror, { gap: Math.round(4 * z), marginTop: Math.round(1 * z) }]}>
                 {(skills.length
                   ? skills
                   : [
@@ -300,6 +310,7 @@ const styles = StyleSheet.create({
   },
   body: { width: '100%', height: '100%' },
   topRow: { flex: 1, flexDirection: 'row', alignItems: 'stretch' },
+  rowMirror: { flexDirection: 'row-reverse' },
   identity: {
     alignItems: 'center',
     justifyContent: 'flex-start',
@@ -333,7 +344,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     justifyContent: 'center',
   },
-  barFill: { position: 'absolute', left: 0, top: 0, bottom: 0 },
+  barFill: { position: 'absolute', top: 0, bottom: 0 },
+  barFillLeft: { left: 0 },
+  barFillMirror: { right: 0 },
   barText: {
     color: '#ffffff',
     fontWeight: '800',

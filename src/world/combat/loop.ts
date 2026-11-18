@@ -11,6 +11,8 @@
  */
 
 export const TURN_MS = 30_000;
+/** Quiet gap after one unit's turn ends, before the next unit becomes active. */
+export const TURN_GAP_MS = 1500;
 export const STANCE_MS = 340;
 export const SLASH_MS = 500;
 export const IMPACT_MS = 160;
@@ -18,7 +20,7 @@ export const TEAR_MS = 500;
 /** Pixels the active unit steps toward its target while anticipating. */
 export const STANCE_PX = 28;
 
-export type CombatFloatKind = 'damage' | 'heal' | 'crit' | 'miss';
+export type CombatFloatKind = 'damage' | 'heal' | 'crit' | 'miss' | 'mana';
 
 export type CombatFloat = {
   id: number;

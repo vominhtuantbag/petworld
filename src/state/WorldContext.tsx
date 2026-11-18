@@ -878,7 +878,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         const hp = result.victory ? gain.hp : 0;
         return growTamed(monster, gain.exp, hp, gain.mp);
       });
-      const captured = result.tamed.filter((monster) => !updated.some((entry) => entry.id === monster.id));
+      const captured = result.victory ? result.tamed.filter((monster) => !updated.some((entry) => entry.id === monster.id)) : [];
       let discovered = current.encounter ? rememberSpecies(current.discovered, current.encounter.kindId ?? current.encounter.id) : current.discovered;
       for (const monster of captured) discovered = rememberSpecies(discovered, monster.kindId);
       let bag = result.bag;

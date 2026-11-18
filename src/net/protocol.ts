@@ -128,6 +128,8 @@ export type DuelUnitView = {
   staggered?: boolean;
   kindId?: string;
   element?: string;
+  /** Equipped basic-attack id, so a pet button can use its numbered icon. */
+  basicId?: string;
   shieldHp?: number;
   statuses?: DuelStatusView[];
 };
@@ -281,6 +283,8 @@ export type RaidUnitView = {
   element?: string;
   shieldHp?: number;
   statuses?: DuelStatusView[];
+  /** Equipped basic-attack id when this unit is a monster. */
+  basicId?: string;
 };
 
 export type RaidRewardView = {

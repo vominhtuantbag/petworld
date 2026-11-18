@@ -11,7 +11,7 @@ import {
 import { CHUNK_RADIUS, CHUNK_SIZE, chunkCoord, chunkKey, chunksNear, TIER_MAP_H, TIER_MAP_W } from './grid';
 import { portalLayout, playerAtPortal, type PortalLayout } from './portals';
 import { MAP_TIERS, TIER_LEVELS, tierRange, tierZoneId } from './tiers';
-import { findTownPath, resolveTownWalkTarget } from './townGridNav';
+import { findTownPath, resolveTownWalkTarget, townGridBlocksFor } from './townGridNav';
 import { isTownZone, townReturnPad, townZoneId } from './townManager';
 import type { FieldState, MonsterActor, Sensor, Vec } from './types';
 
@@ -129,7 +129,7 @@ export function returnPadFromWilds(): Vec {
  */
 export function resolveWalkTarget(field: FieldState, x: number, y: number): Vec | null {
   if (isTownZone(field.zoneId)) {
-    return resolveTownWalkTarget(x, y);
+    return resolveTownWalkTarget(x, y, 400, townGridBlocksFor(field.regionId));
   }
   if (field.blocks.length === 0) return { x, y };
   const blocked = field.blocks.some(
@@ -141,7 +141,7 @@ export function resolveWalkTarget(field: FieldState, x: number, y: number): Vec 
 /** A* along town green corridors. Null when the destination cannot be reached / is deep in red. */
 export function findWalkPath(field: FieldState, from: Vec, to: Vec): Vec[] | null {
   if (isTownZone(field.zoneId)) {
-    return findTownPath(from, to);
+    return findTownPath(from, to, 2500, townGridBlocksFor(field.regionId));
   }
   const target = resolveWalkTarget(field, to.x, to.y);
   return target ? [from, target] : null;

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Image, Pressable, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
+import Svg, { Circle, Path } from 'react-native-svg';
 
 import { CharacterAvatar } from '../CharacterAvatar';
 import { portraitScaleX } from '../world/facing';
@@ -70,6 +71,8 @@ export function CourtUnit({
   slot,
   active,
   targeted,
+  mark,
+  suppressRings,
   face,
   size,
   statFont,
@@ -89,6 +92,10 @@ export function CourtUnit({
   slot: { x: number; y: number };
   active?: boolean;
   targeted?: boolean;
+  /** Skill-aim ring. Green marks an ally, red marks a foe. The turn ring stays `active`. */
+  mark?: 'green' | 'red' | null;
+  /** Hide every underfoot ring while the player is only reading a unit. */
+  suppressRings?: boolean;
   face: 'left' | 'right';
   size: number;
   statFont: number;
@@ -111,7 +118,7 @@ export function CourtUnit({
   const trackW = Math.max(16, Math.round(barWidth * 0.6));
   const boxW = Math.max(size + 28, trackW);
   const hasShield = !fainted && (fighter.shieldHp ?? 0) > 0;
-  const barH = 3;
+  const barH = 6;
   const iconSize = Math.max(10, Math.round(size * 0.12));
   const barCount = fainted ? 1 : hasShield ? 3 : 2;
   const barsH = barCount * (barH + 1);
@@ -218,7 +225,7 @@ export function CourtUnit({
             fainted && styles.faintedSprite,
           ]}
         >
-          {active && !fainted ? <View style={[styles.greenRing, { width: size * 0.9, height: size * 0.32 }]} /> : null}
+          {(active || (!suppressRings && mark === 'green')) && !fainted ? <View style={[styles.greenRing, { width: size * 0.9, height: size * 0.32 }]} /> : null}
           {!fainted && fighter.statuses?.some((entry) => entry.id === 'defend' && entry.turns > 0) ? (
             <View
               pointerEvents="none"
@@ -236,7 +243,7 @@ export function CourtUnit({
           ) : (
             <FaceArt kindId={fighter.kindId} tint={fighter.tint} name={fighter.name} size={size} facing={face} />
           )}
-          {targeted && !fainted ? (
+          {!suppressRings && (mark === 'red' || (mark == null && targeted)) && !fainted ? (
             <View pointerEvents="none" style={[styles.redRing, { width: size * 1.05, height: size * 0.72, borderRadius: size }]} />
           ) : null}
         </Animated.View>
@@ -408,6 +415,65 @@ export function armThenFire(
   return 'armed';
 }
 
+/**
+ * Cooldown is stored at full length and ticks down when the unit acts.
+ * On that unit's turn, show the value after the pending tick: CD 2 lights
+ * half the button, CD 4 lights a quarter.
+ */
+export function visibleCooldown(wait: number, onTurn: boolean): number {
+  if (wait <= 0) return 0;
+  return onTurn ? Math.max(0, wait - 1) : wait;
+}
+
+/** Dim wedge left after a clockwise fan of light opens from 12 o'clock. `cover` is the fraction still dark. */
+function cooldownFanPath(size: number, cover: number): string | null {
+  if (cover >= 0.999) return null;
+  const cx = size / 2;
+  const cy = size / 2;
+  const radius = size * 0.75;
+  const start = (1 - cover) * 360;
+  const polar = (deg: number) => {
+    const rad = ((deg - 90) * Math.PI) / 180;
+    return [cx + radius * Math.cos(rad), cy + radius * Math.sin(rad)];
+  };
+  const [x0, y0] = polar(start);
+  const [x1, y1] = polar(360);
+  const large = 360 - start > 180 ? 1 : 0;
+  return `M ${cx} ${cy} L ${x0} ${y0} A ${radius} ${radius} 0 ${large} 1 ${x1} ${y1} Z`;
+}
+
+export function CommandMarks({
+  badge,
+  cooldownWait = 0,
+  cooldownMax = 0,
+  size,
+}: {
+  /** Small count in the top-right. Nets pass 0–10. Skills pass the remaining turns. */
+  badge?: number;
+  cooldownWait?: number;
+  cooldownMax?: number;
+  size: number;
+}) {
+  const cooling = cooldownWait > 0 && cooldownMax > 0;
+  const cover = cooling ? Math.min(1, cooldownWait / cooldownMax) : 0;
+  const box = Math.max(15, Math.round(size * 0.34));
+  const fan = cover > 0 ? cooldownFanPath(size, cover) : null;
+  return (
+    <>
+      {cover > 0 ? (
+        <Svg pointerEvents="none" width={size} height={size} style={styles.cooldownFan}>
+          {fan ? <Path d={fan} fill="rgba(8, 10, 16, 0.4)" /> : <Circle cx={size / 2} cy={size / 2} r={size * 0.75} fill="rgba(8, 10, 16, 0.4)" />}
+        </Svg>
+      ) : null}
+      {badge != null ? (
+        <View pointerEvents="none" style={[styles.cornerBadge, { minWidth: box, height: box, borderRadius: box / 2 }]}>
+          <Text style={[styles.cornerBadgeText, { fontSize: Math.max(9, Math.round(size * 0.22)) }]}>{badge}</Text>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
 export function RoundButton({
   label,
   onPress,
@@ -426,6 +492,9 @@ export function RoundButton({
   width,
   juicy = true,
   onHighlight,
+  badge,
+  cooldownWait,
+  cooldownMax,
 }: {
   label: string;
   onPress: () => void;
@@ -449,8 +518,15 @@ export function RoundButton({
   juicy?: boolean;
   /** Fires on press-in so the dock tip can preview this command. */
   onHighlight?: () => void;
+  /** Top-right count, such as nets left this battle. */
+  badge?: number;
+  /** Turns left before the command can be used. */
+  cooldownWait?: number;
+  /** Full cooldown length, used to brighten the icon as it recovers. */
+  cooldownMax?: number;
 }) {
   const buttonWidth = width ?? size;
+  const cooling = (cooldownWait ?? 0) > 0 && (cooldownMax ?? 0) > 0;
   const press = useRef(new Animated.Value(0)).current;
   const ripple = useRef(new Animated.Value(0)).current;
   const scale = press.interpolate({ inputRange: [0, 1], outputRange: [1, 0.95] });
@@ -492,16 +568,25 @@ export function RoundButton({
           },
           !plain && hot && !picked && styles.roundHot,
           picked && (plain ? styles.plainOn : styles.picked),
-          (disabled || dim) && styles.fainted,
+          (disabled || dim) && !cooling && styles.fainted,
         ]}
       >
         {icon ? (
-          <Image source={icon} style={{ width: plain ? size : size * 0.78, height: plain ? size : size * 0.78 }} resizeMode="contain" />
+          <Image
+            source={icon}
+            style={{
+              width: plain ? size : size * 0.78,
+              height: plain ? size : size * 0.78,
+              opacity: 1,
+            }}
+            resizeMode="contain"
+          />
         ) : (
           <Text style={[styles.roundLabel, { fontSize: font }]} numberOfLines={2}>
             {label}
           </Text>
         )}
+        <CommandMarks badge={badge} cooldownWait={cooldownWait} cooldownMax={cooldownMax} size={size} />
         {juicy ? <Animated.View pointerEvents="none" style={[styles.pressShade, { opacity: shade }]} /> : null}
         {juicy ? (
           <Animated.View
@@ -587,8 +672,8 @@ export const styles = StyleSheet.create({
     borderColor: '#ff2d2d',
   },
   floatTrack: {
-    height: 4,
-    borderRadius: 2,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: 'rgba(20, 24, 22, 0.55)',
     overflow: 'hidden',
   },
@@ -723,6 +808,25 @@ export const styles = StyleSheet.create({
     borderWidth: 0,
   },
   plainOn: { borderWidth: 3, borderColor: '#ffe082' },
+  cooldownFan: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    zIndex: 3,
+  },
+  cornerBadge: {
+    position: 'absolute',
+    top: 1,
+    right: 1,
+    zIndex: 4,
+    paddingHorizontal: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1a1208',
+    borderWidth: 1,
+    borderColor: '#ffe082',
+  },
+  cornerBadgeText: { color: '#fff8e1', fontWeight: '800' },
   slotIndex: {
     position: 'absolute',
     top: 1,

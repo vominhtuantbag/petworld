@@ -1,6 +1,7 @@
 import type { Server, Socket } from 'socket.io';
 
 import { advancedAtLevel } from '../combat/advanced.js';
+import { strikeRestMs } from './combatPace.js';
 import { arenaHeroKit, professionFromAvatar } from '../combat/classSkills.js';
 import { petLoadoutSkills, resolveRaidAction, statusViewOf, type DuelCombatUnit } from '@game/combat/duelBridge.js';
 import type { Skill } from '@game/combat/model.js';
@@ -296,6 +297,10 @@ export class DungeonRaids {
       socket.emit('raid:error', { message: 'Chưa tới lượt của bạn.' });
       return;
     }
+    if (room.deadline - Date.now() > TURN_MS + 40) {
+      socket.emit('raid:error', { message: 'Chưa hết nhịp nghỉ.' });
+      return;
+    }
     const skill = payload && typeof payload === 'object' && 'skill' in payload && payload.skill === 1 ? 1 : 0;
     const targetId = payload && typeof payload === 'object' && 'targetId' in payload && typeof payload.targetId === 'string' ? payload.targetId : undefined;
     this.resolve(room, action, skill, targetId);
@@ -445,6 +450,7 @@ export class DungeonRaids {
     });
     if (resolved.log) room.log.push(resolved.log);
     room.lastHit = resolved.lastHit;
+    const restMs = strikeRestMs(resolved.lastHit);
     const heroesAlive = room.units.some((unit) => unit.kind === 'hero' && unit.hp > 0);
     const foesAlive = room.units.some((unit) => unit.kind !== 'hero' && unit.hp > 0);
     if (!foesAlive) {
@@ -455,10 +461,10 @@ export class DungeonRaids {
       this.finish(room, false);
       return;
     }
-    this.advance(room);
+    this.advance(room, restMs);
   }
 
-  private advance(room: RaidRoom) {
+  private advance(room: RaidRoom, restMs = 0) {
     const take = (unit: Unit, preface?: string) => {
       if (unit.staggered) {
         unit.staggered = false;
@@ -466,7 +472,7 @@ export class DungeonRaids {
         return false;
       }
       room.turnId = unit.id;
-      room.deadline = Date.now() + (isNpc(unit) ? NPC_TURN_MS : TURN_MS);
+      room.deadline = Date.now() + restMs + (isNpc(unit) ? NPC_TURN_MS : TURN_MS);
       room.log.push(`${preface ? `${preface} ` : ''}Tới lượt ${unit.name}.`);
       return true;
     };
@@ -485,7 +491,7 @@ export class DungeonRaids {
     }
     room.turnId = room.order[0] ?? room.turnId;
     const lead = room.units.find((unit) => unit.id === room.turnId);
-    room.deadline = Date.now() + (lead && isNpc(lead) ? NPC_TURN_MS : TURN_MS);
+    room.deadline = Date.now() + restMs + (lead && isNpc(lead) ? NPC_TURN_MS : TURN_MS);
   }
 
   private finish(room: RaidRoom, victory: boolean) {
@@ -785,10 +791,13 @@ function heroUnit(member: Member, slot: number): Unit {
   };
 }
 
+/** Temporary test scale so a party can clear the dungeon while checking the turn flow. */
+const RAID_TEST_SCALE = 0.2;
+
 function foeUnits(level: number): Unit[] {
-  const addHp = 55 + level * 16;
-  const addAtk = 8 + level * 3;
-  const addDef = 4 + level;
+  const addHp = Math.max(12, Math.round((55 + level * 16) * RAID_TEST_SCALE));
+  const addAtk = Math.max(1, Math.round((8 + level * 3) * RAID_TEST_SCALE));
+  const addDef = Math.max(0, Math.round((4 + level) * RAID_TEST_SCALE));
   const add = (slot: number, name: string, tint: string, kindId: string, elite = false): Unit => {
     const advanced = advancedAtLevel(level, elite ? 'elite' : 'pet');
     const kit = petLoadoutSkills(kindId, `raid-foe-${slot}-${level}`);
@@ -924,6 +933,7 @@ function toView(unit: Unit): RaidUnitView {
     maxTgh: unit.maxTgh,
     staggered: Boolean(unit.staggered),
     element: unit.element,
+    basicId: unit.basic?.id,
     shieldHp: unit.shieldHp ?? 0,
     statuses: statusViewOf(unit),
   };

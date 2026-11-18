@@ -20,6 +20,7 @@ import {
   TimelineFace,
   armThenFire,
   styles as court,
+  visibleCooldown,
   timelineFaceSize,
   type CourtActor,
 } from '../components/battle/courtChrome';
@@ -28,7 +29,9 @@ import { useBattleCommandSize } from '../hooks/useBattleCommandSize';
 import { useQuickTarget } from '../hooks/useQuickTarget';
 import { useSocketCombatFx } from '../hooks/useSocketCombatFx';
 import { combatSfx } from '../world/combat/combatSfx';
-import { DEFEND_SKILL_ART, classSkillArt, classSkillIcon } from '../world/skillArt';
+import { TURN_MS } from '../world/combat/loop';
+import { battleAim, skillAim, skillById } from '../world/combat/skillAim';
+import { DEFEND_SKILL_ART, PET_DEFEND_ART, classSkillArt, classSkillIcon, petSkillArt } from '../world/skillArt';
 import { heroTraits } from '../world/combat/kits';
 import type { RaidUnitView } from '../net/protocol';
 import { useBattle } from '../state/BattleContext';
@@ -63,6 +66,9 @@ export function RaidScreen() {
   const [aimKey, setAimKey] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [allyFocusId, setAllyFocusId] = useState<string | null>(null);
+  const [allyPin, setAllyPin] = useState<string | null>(null);
+  const [foePin, setFoePin] = useState<string | null>(null);
+  const [inspecting, setInspecting] = useState(false);
   const [utilityPicked, setUtilityPicked] = useState<string | null>(null);
   const utilityArm = useRef({ key: '', at: 0 });
   const aimUnits = useMemo(
@@ -95,6 +101,14 @@ export function RaidScreen() {
     setPicked('attack');
     setUtilityPicked(null);
     setAimKey(null);
+    setAllyPin(null);
+    setFoePin(null);
+    setFocusId(null);
+    setInspecting(false);
+    const mine = (snapshot?.units ?? []).find((unit) => unit.id === snapshot?.turnId && unit.side === 'party');
+    if (mine) setAllyFocusId(mine.id);
+    // Reset only when the acting unit changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot?.turnId]);
 
   useEffect(() => {
@@ -108,7 +122,11 @@ export function RaidScreen() {
   const party = units.filter((unit) => unit.side === 'party');
   const foes = units.filter((unit) => unit.side === 'foe');
   const livingFoes = foes.filter((unit) => unit.hp > 0);
-  const focus = livingFoes.find((unit) => unit.id === focusId) ?? livingFoes[0] ?? null;
+  const focus =
+    livingFoes.find((unit) => unit.id === focusId) ??
+    livingFoes.find((unit) => unit.id === quick.lowestId) ??
+    livingFoes[0] ??
+    null;
   const finishedEarly = snapshot?.status === 'finished' || snapshot?.status === 'taming';
   const footMemo = useMemo(() => {
     return (cell: string) => feetInView(cell, screen.w, screen.h, stageBox.x, stageBox.y);
@@ -119,7 +137,7 @@ export function RaidScreen() {
       return unit ? footMemo(cellFor(unit)) : null;
     };
   }, [footMemo, units]);
-  const { floats, dismissFloat, steps, slashes, shakes } = useSocketCombatFx({
+  const { floats, dismissFloat, steps, slashes, shakes, presentedTurnId } = useSocketCombatFx({
     units,
     turnId: finishedEarly ? null : snapshot?.turnId ?? null,
     focusId: focus?.id ?? null,
@@ -133,12 +151,13 @@ export function RaidScreen() {
 
   const finished = snapshot.status === 'finished';
   const taming = snapshot.status === 'taming';
-  const yourTurn = snapshot.yourTurn && !finished && !taming;
-  const seconds = Math.max(
-    0,
-    Math.ceil((((taming ? snapshot.tameUntil : snapshot.deadline) ?? snapshot.deadline) - now) / 1000),
-  );
+  const shownTurnId = presentedTurnId ?? snapshot.turnId;
+  const yourTurn = snapshot.yourTurn && !finished && !taming && shownTurnId === snapshot.turnId;
   const actor = units.find((unit) => unit.id === snapshot.turnId) ?? null;
+  const remaining = ((taming ? snapshot.tameUntil : snapshot.deadline) ?? snapshot.deadline) - now;
+  const budget = taming || actor?.kind === 'hero' ? TURN_MS : 450;
+  const visibleMs = taming || shownTurnId === snapshot.turnId ? remaining : Math.min(remaining, budget);
+  const seconds = Math.max(0, Math.ceil(visibleMs / 1000));
   const queued = snapshot.queue ?? [];
   const turnQueue = queued.length > 0 ? queued : units.filter((unit) => unit.hp > 0).map((unit) => unit.id);
   const panelReserve = Math.round(BATTLE_INFO_PANEL_W * panelScale) * 2 + 28;
@@ -184,13 +203,18 @@ export function RaidScreen() {
   const skillCard1 = snapshot.skills?.[0];
   const skillCard2 = snapshot.skills?.[1];
   const professionId = world.heroSkills?.professionId;
-  const basicIcon = classSkillIcon(professionId, world.heroSkills?.basicId) ?? classSkillArt(professionId, 1);
+  const petTurn = Boolean(snapshot.yourTurn && actor && actor.kind !== 'hero');
+  const basicIcon = petTurn
+    ? petSkillArt(actor?.basicId)
+    : classSkillIcon(professionId, world.heroSkills?.basicId) ?? classSkillArt(professionId, 1);
   const skill1 = skillCard1?.name ?? 'Kỹ năng 1';
   const skill2 = skillCard2?.name ?? 'Kỹ năng 2';
   const skill1Wait = skillCard1?.wait ?? 0;
   const skill2Wait = skillCard2?.wait ?? 0;
-  const skill1Locked = skill1Wait > 0 || (actor != null && (skillCard1?.mana ?? 0) > (actor.mp ?? 0));
-  const skill2Locked = skill2Wait > 0 || (actor != null && (skillCard2?.mana ?? 0) > (actor.mp ?? 0));
+  const skill1Shown = visibleCooldown(skill1Wait, Boolean(snapshot.yourTurn));
+  const skill2Shown = visibleCooldown(skill2Wait, Boolean(snapshot.yourTurn));
+  const skill1Locked = skill1Shown > 0 || (actor != null && (skillCard1?.mana ?? 0) > (actor.mp ?? 0));
+  const skill2Locked = skill2Shown > 0 || (actor != null && (skillCard2?.mana ?? 0) > (actor.mp ?? 0));
   const lastLine = snapshot.log[snapshot.log.length - 1] ?? '';
   const resultTitle = snapshot.victory ? 'Chiến thắng' : 'Thất bại';
   const rewardLine = rewardText(snapshot.rewards);
@@ -236,6 +260,9 @@ export function RaidScreen() {
         setTipOverride(null);
         setPicked(choice);
         setAimKey(null);
+        setInspecting(false);
+        const mine = (snapshot?.units ?? []).find((unit) => unit.id === snapshot?.turnId && unit.side === 'party');
+        if (mine) setAllyFocusId(mine.id);
         combatSfx('arm');
       },
       onDoubleTap: () => {
@@ -243,7 +270,7 @@ export function RaidScreen() {
         setTipOverride(null);
         setPicked(choice);
         setAimKey(null);
-        fire(choice, 'lowest');
+        fire(choice, 'focus');
       },
       onHoldStart: () => {
         setUtilityPicked(null);
@@ -261,22 +288,48 @@ export function RaidScreen() {
     };
   };
 
+  const armedSkill =
+    !yourTurn || utilityPicked === 'defend'
+      ? null
+      : picked === 'attack'
+        ? skillById(actor?.basicId) ?? skillById('attack')
+        : skillById(picked === 0 ? skillCard1?.id : skillCard2?.id);
+  const aim = skillAim(armedSkill);
+  const aimMarks = battleAim({
+    userTurn: yourTurn,
+    actorId: shownTurnId,
+    actorIsFoe: units.some((unit) => unit.id === shownTurnId && unit.side === 'foe'),
+    aim,
+    party,
+    pets: party.filter((unit) => unit.kind !== 'hero'),
+    foes,
+    allyViewId: allyFocusId,
+    allyPin,
+    foePin,
+  });
+  const greenIds = new Set(aimMarks.greenIds);
+  const redIds = new Set(aimMarks.redIds);
   const leftUnit =
+    party.find((unit) => unit.id === (inspecting ? allyFocusId : aimMarks.leftId)) ??
     party.find((unit) => unit.id === allyFocusId) ??
     party.find((unit) => unit.hp > 0) ??
     party[0] ??
     null;
   const rightUnit =
-    foes.find((unit) => unit.id === focusId) ??
+    foes.find((unit) => unit.id === aimMarks.rightId) ??
+    focus ??
     livingFoes[0] ??
     foes[0] ??
     null;
   const inspectAlly = (unit: RaidUnitView) => {
+    setInspecting(true);
     setAllyFocusId(unit.id);
     setUtilityPicked(null);
     setTipOverride(formatUnitInspectTip(panelUnit(unit, unit.kind === 'hero' && unit.ownerId != null)));
   };
   const inspectEnemy = (unit: RaidUnitView) => {
+    setInspecting(false);
+    setFoePin(unit.id);
     setFocusId(unit.id);
     setUtilityPicked(null);
     setTipOverride(formatUnitInspectTip(panelUnit(unit)));
@@ -349,7 +402,7 @@ export function RaidScreen() {
           <View style={court.headerCenter}>
             <TurnTimeline
               ids={turnQueue}
-              activeId={finished ? null : snapshot.turnId}
+              activeId={finished ? null : shownTurnId}
               size={faceSize}
               renderFace={(id, role) => {
                 const fighter = units.find((entry) => entry.id === id);
@@ -413,12 +466,18 @@ export function RaidScreen() {
                 key={unit.id}
                 fighter={toCourt(unit)}
                 slot={foot(cellFor(unit))}
-                active={snapshot.turnId === unit.id}
-                targeted={
+                active={shownTurnId === unit.id}
+                mark={
                   unit.side === 'party'
-                    ? allyFocusId === unit.id
-                    : focusId === unit.id && unit.hp > 0
+                    ? greenIds.has(unit.id)
+                      ? 'green'
+                      : null
+                    : redIds.has(unit.id)
+                      ? 'red'
+                      : null
                 }
+                suppressRings={yourTurn && inspecting}
+                targeted={false}
                 face={unit.side === 'party' ? 'right' : 'left'}
                 size={size}
                 statFont={font(10)}
@@ -486,14 +545,17 @@ export function RaidScreen() {
                 />
                 <GestureActionButton
                   label={skill1}
-                  icon={classSkillIcon(professionId, skillCard1?.id)}
+                  icon={petTurn ? petSkillArt(skillCard1?.id) : classSkillIcon(professionId, skillCard1?.id)}
                   plain
+                  badge={skill1Shown > 0 ? skill1Shown : undefined}
+                  cooldownWait={skill1Shown}
+                  cooldownMax={Math.max(skillCard1?.cooldown ?? 0, skill1Wait)}
                   hint={`${skill1} · MP ${skillCard1?.mana ?? 0}`}
                   picked={picked === 0 && utilityPicked == null}
                   aiming={aimKey === '0' && quick.aiming}
                   aimPopup={aimPopup}
                   disabled={!yourTurn || skill1Locked}
-                  dim={skill1Locked}
+                  dim={skill1Shown <= 0 && skill1Locked}
                   testID="raid-skill-1"
                   size={cmdSize}
                   font={cmdFont}
@@ -501,14 +563,17 @@ export function RaidScreen() {
                 />
                 <GestureActionButton
                   label={skill2}
-                  icon={classSkillIcon(professionId, skillCard2?.id)}
+                  icon={petTurn ? petSkillArt(skillCard2?.id) : classSkillIcon(professionId, skillCard2?.id)}
                   plain
+                  badge={skill2Shown > 0 ? skill2Shown : undefined}
+                  cooldownWait={skill2Shown}
+                  cooldownMax={Math.max(skillCard2?.cooldown ?? 0, skill2Wait)}
                   hint={`${skill2} · MP ${skillCard2?.mana ?? 0}`}
                   picked={picked === 1 && utilityPicked == null}
                   aiming={aimKey === '1' && quick.aiming}
                   aimPopup={aimPopup}
                   disabled={!yourTurn || skill2Locked}
-                  dim={skill2Locked}
+                  dim={skill2Shown <= 0 && skill2Locked}
                   testID="raid-skill-2"
                   size={cmdSize}
                   font={cmdFont}
@@ -516,7 +581,7 @@ export function RaidScreen() {
                 />
                 <RoundButton
                   label="Phòng thủ"
-                  icon={DEFEND_SKILL_ART}
+                  icon={petTurn ? PET_DEFEND_ART : DEFEND_SKILL_ART}
                   plain
                   hint="Giảm sát thương đến lượt sau · chạm 2 lần để dùng"
                   picked={utilityPicked === 'defend'}

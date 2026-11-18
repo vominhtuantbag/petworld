@@ -11,6 +11,7 @@ import {
   TOWN_MAP_SIZE,
   TOWN_NAV_VERSION,
   snapTownWalk,
+  townGridBlocksFor,
 } from './townGridNav';
 import type { FieldState, Rect, Sensor, ServiceId, Vec } from './types';
 
@@ -72,9 +73,10 @@ export type TownExit = {
   arrive: Vec;
 };
 
-function servicesFor(_regionId: RegionId): readonly TownServiceDef[] {
+function servicesFor(regionId: RegionId): readonly TownServiceDef[] {
+  const blocks = townGridBlocksFor(regionId);
   return TOWN_SERVICES.map((spot) => {
-    const at = snapTownWalk(spot.x, spot.y);
+    const at = snapTownWalk(spot.x, spot.y, 400, blocks);
     return { ...spot, x: at.x, y: at.y };
   });
 }
@@ -95,7 +97,7 @@ export function townRegionFromZone(zoneId: string): RegionId | null {
 /** East gate on the green ring corridor → open-world hunting map / sector. */
 export function openWorldExit(regionId: RegionId): TownExit {
   const ring = isRingTown(regionId);
-  const gate = snapTownWalk(4900, 2500);
+  const gate = snapTownWalk(4900, 2500, 400, townGridBlocksFor(regionId));
   return {
     id: 'gate',
     x: gate.x,
@@ -108,13 +110,13 @@ export function openWorldExit(regionId: RegionId): TownExit {
 }
 
 /** Pad used when a hunting map returns the player to town. */
-export function townReturnPad(_regionId: RegionId = 'plains'): Vec {
-  return snapTownWalk(4700, 2500);
+export function townReturnPad(regionId: RegionId = 'plains'): Vec {
+  return snapTownWalk(4700, 2500, 400, townGridBlocksFor(regionId));
 }
 
 /** Fresh spawn on the center plaza. */
-export function townSpawnPad(_regionId: RegionId = 'plains'): Vec {
-  return snapTownWalk(2500, 2500);
+export function townSpawnPad(regionId: RegionId = 'plains'): Vec {
+  return snapTownWalk(2500, 2500, 400, townGridBlocksFor(regionId));
 }
 
 export function townServiceSensors(regionId: RegionId = 'plains'): Sensor[] {
@@ -148,8 +150,11 @@ export function townTheme(regionId: RegionId): RegionalTownConfig | null {
   return getRegionalTown(regionId);
 }
 
-function townBlocks(pads: readonly Vec[]): Rect[] {
-  return clearPads([...TOWN_GRID_BLOCKS], pads, 48);
+function townBlocks(regionId: RegionId, pads: readonly Vec[]): Rect[] {
+  const mask = townGridBlocksFor(regionId);
+  // Hand-drawn masks are authoritative: red stays solid, so no carving around pads.
+  if (mask !== TOWN_GRID_BLOCKS) return [...mask];
+  return clearPads([...mask], pads, 48);
 }
 
 /** Rebuild when size, nav version, or stale loot caches change. */
@@ -160,7 +165,8 @@ export function townNeedsResize(
   if (field.width !== TOWN_W || field.height !== TOWN_H) return true;
   if (field.loot.length > 0) return true;
   if (field.sectorCol !== TOWN_NAV_VERSION) return true;
-  if (field.blocks.length < Math.floor(TOWN_GRID_BLOCKS.length * 0.5)) return true;
+  const mask = townGridBlocksFor(townRegionFromZone(field.zoneId));
+  if (field.blocks.length < Math.floor(mask.length * 0.5)) return true;
   return false;
 }
 
@@ -188,7 +194,7 @@ export function createTownField(regionId: RegionId): FieldState {
     ground,
     road,
     player: { x: spawn.x, y: spawn.y, r: 18 },
-    blocks: townBlocks(pads),
+    blocks: townBlocks(regionId, pads),
     decor: [],
     sensors,
     monsters: [],

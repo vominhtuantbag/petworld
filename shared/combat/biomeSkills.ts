@@ -194,8 +194,8 @@ export const BIOME_KITS: Record<BiomeId, BiomeKit> = {
       { type: 'damage', power: 0.9, aoe: 'enemies' },
       { type: 'status', id: 'burn', chance: 1, turns: 3, power: 0.05, target: 'enemies' },
     ]),
-    sk('volcano-4', 'Tháp Lửa Phòng Thủ', 12, 0, 3, 'Giáp dung nham: phản đòn cận chiến và gây Bỏng.', 'self', [
-      { type: 'melee_thorns', pct: 0.25, turns: 2, burn: true },
+    sk('volcano-4', 'Tháp Lửa Phòng Thủ', 12, 0, 3, 'Giáp dung nham: +25% DEF trong 2 lượt.', 'self', [
+      { type: 'mod', stat: 'def', amount: 0.25, turns: 2, target: 'self' },
     ]),
     sk('volcano-5', 'Cuồng Nộ Địa Ngục', 0, 0, 0, 'Ultimate (bị động). Tự kích khi HP dưới 30%: +50% ATK và +30% chí mạng.', 'self', [
       { type: 'enrage_below', hpPct: 0.3, atk: 0.5, crit: 0.3 },

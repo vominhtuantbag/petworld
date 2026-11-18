@@ -99,6 +99,35 @@ type Fighter = EffectFighter;
 
 type CastResult = { state: BattleState; log: string };
 
+type AuraSnap = {
+  hp: number;
+  mp: number;
+  statuses?: Fighter['statuses'];
+  mods?: Fighter['mods'];
+  shieldHp?: number;
+  tgh: number;
+  staggered?: boolean;
+  damageTaken?: number;
+  stealthTurns?: number;
+  tauntTurns?: number;
+  guardTurns?: number;
+  guardTargetId?: string;
+  guardAbsorb?: number;
+  critBlockTurns?: number;
+  magicReduceTurns?: number;
+  meleeThornsTurns?: number;
+  meleeThornsBurn?: boolean;
+  trapTurns?: number;
+  reflectCharges?: number;
+  reflectPct?: number;
+  delayed?: boolean;
+  enraged?: boolean;
+  mpCostMult?: number;
+  nextAttackBoost?: number;
+};
+
+type EffectHit = { state: BattleState; notes: string[]; evaded?: string[]; landed?: string[] };
+
 const DEBUFF_IDS: StatusId[] = ENGINE_DEBUFF_IDS;
 
 const RANDOM_HIT_STATUSES: StatusId[] = ['burn', 'freeze', 'poison', 'stun'];
@@ -183,11 +212,35 @@ export function castSkill(
 
   // Stealth bonus for next damaging attack leaving stealth.
   const fromStealth = (actor.stealthTurns ?? 0) > 0;
+  const auraBefore = new Map(everyone(next).map((unit) => [unit.id, snapAura(unit)]));
+  const orderBefore = next.order.slice();
+  const evaded = new Set<string>();
+  const landed = new Set<string>();
 
   for (const effect of effects) {
     const applied = applyEffect(next, actor.id, effect, targetId, rng, fromStealth, fromSkill);
     next = applied.state;
     if (applied.notes.length) notes.push(...applied.notes);
+    for (const id of applied.landed ?? []) {
+      landed.add(id);
+      evaded.delete(id);
+    }
+    for (const id of applied.evaded ?? []) {
+      if (!landed.has(id)) evaded.add(id);
+    }
+  }
+
+  if (evaded.size > 0) {
+    const names: string[] = [];
+    for (const id of evaded) {
+      const snap = auraBefore.get(id);
+      const live = findUnit(next, id);
+      if (!snap || !live) continue;
+      names.push(live.name);
+      next = putUnit(next, restoreAura(live, snap));
+    }
+    next = { ...next, order: undoEvadedDelay(orderBefore, next.order, evaded) };
+    notes = notes.filter((note) => keepAfterDodge(note, names));
   }
 
   if (fromStealth) {
@@ -207,7 +260,7 @@ function applyEffect(
   rng: () => number,
   fromStealth: boolean,
   fromSkill = false,
-): { state: BattleState; notes: string[] } {
+): EffectHit {
   const actor = findUnit(state, actorId);
   if (!actor) return { state, notes: [] };
 
@@ -398,7 +451,7 @@ function applyDamage(
   rng: () => number,
   fromStealth: boolean,
   fromSkill = false,
-): { state: BattleState; notes: string[] } {
+): EffectHit {
   let next = state;
   const notes: string[] = [];
   if (effect.mpSpentPower) {
@@ -414,6 +467,10 @@ function applyDamage(
     : Math.max(1, effect.hits ?? 1);
   const targets = resolveDamageTargets(next, actor, primary, effect.aoe);
   if (!targets.length) return { state: next, notes: ['Không có mục tiêu.'] };
+  const verdict = new Map<string, 'hit' | 'miss'>();
+  const markMiss = (id: string) => {
+    if (verdict.get(id) !== 'hit') verdict.set(id, 'miss');
+  };
 
   for (const target of targets) {
     const isPrimary = primary ? target.id === primary.id : targets[0]?.id === target.id;
@@ -433,6 +490,7 @@ function applyDamage(
       const liveTarget = findUnit(next, target.id);
       if (!liveTarget || liveTarget.hp <= 0) continue;
       if ((liveTarget.stealthTurns ?? 0) > 0) {
+        markMiss(liveTarget.id);
         notes.push(`${liveTarget.name} đang ẩn, né đòn.`);
         continue;
       }
@@ -449,15 +507,19 @@ function applyDamage(
         fromSkill,
       );
       if (result.miss || result.damage <= 0) {
+        markMiss(liveTarget.id);
         next = putUnit(next, {
           ...result.target,
-          hp: defenderNow.hp,
-          shieldHp: defenderNow.shieldHp,
-          damageTaken: defenderNow.damageTaken,
+          hp: liveTarget.hp,
+          mp: liveTarget.mp,
+          shieldHp: liveTarget.shieldHp,
+          mods: liveTarget.mods,
+          damageTaken: liveTarget.damageTaken,
         });
         notes.push(`Trượt ${liveTarget.name}.`);
         continue;
       }
+      verdict.set(liveTarget.id, 'hit');
       let damaged = result.target;
       let reflectedNote = '';
       if (result.damage > 0 && (damaged.reflectCharges ?? 0) > 0 && (damaged.reflectPct ?? 0) > 0) {
@@ -525,7 +587,13 @@ function applyDamage(
         next = putUnit(next, { ...self, hp: Math.min(self.maxHp, self.hp + heal) });
         notes.push(`${self.name} hút ${heal} HP.`);
       }
-      if (dealt > 0 && (liveActor.meleeThornsTurns ?? 0) <= 0 && (damaged.meleeThornsTurns ?? 0) > 0 && !effect.aoe) {
+      if (
+        dealt > 0 &&
+        damaged.element !== 'volcano' &&
+        (liveActor.meleeThornsTurns ?? 0) <= 0 &&
+        (damaged.meleeThornsTurns ?? 0) > 0 &&
+        !effect.aoe
+      ) {
         const thorn = Math.max(1, Math.round(dealt * (damaged.meleeThornsPct ?? 0.25)));
         const attacker = findUnit(next, liveActor.id)!;
         let hurt: Fighter = { ...attacker, hp: Math.max(0, attacker.hp - thorn), damageTaken: (attacker.damageTaken ?? 0) + thorn };
@@ -570,7 +638,14 @@ function applyDamage(
   if (boosted?.nextAttackBoost) {
     next = putUnit(next, { ...boosted, nextAttackBoost: 0 });
   }
-  return { state: next, notes };
+  const evaded: string[] = [];
+  const landed: string[] = [];
+  for (const [id, kind] of verdict) {
+    if (id === actor.id) continue;
+    if (kind === 'hit') landed.push(id);
+    else evaded.push(id);
+  }
+  return { state: next, notes, evaded, landed };
 }
 
 function prepareConvert(
@@ -1534,7 +1609,7 @@ function applyRandom(
   rng: () => number,
   fromStealth: boolean,
   fromSkill = false,
-): { state: BattleState; notes: string[] } {
+): EffectHit {
   const chances = effect.chances ?? effect.options.map(() => 1 / Math.max(1, effect.options.length));
   let roll = rng();
   let index = effect.options.length - 1;
@@ -1547,12 +1622,16 @@ function applyRandom(
   }
   let next = state;
   const notes: string[] = [];
+  const evaded: string[] = [];
+  const landed: string[] = [];
   for (const child of effect.options[index] ?? []) {
     const applied = applyEffect(next, actorId, child, targetId, rng, fromStealth, fromSkill);
     next = applied.state;
     notes.push(...applied.notes);
+    evaded.push(...(applied.evaded ?? []));
+    landed.push(...(applied.landed ?? []));
   }
-  return { state: next, notes };
+  return { state: next, notes, evaded, landed };
 }
 
 /** Start-of-turn ticks: DoT, bio-field, mod/status decay helpers used by combat.after. */
@@ -1825,6 +1904,113 @@ function getStatus(fighter: Fighter, id: StatusId): StatusEntry | undefined {
   return (fighter.statuses ?? []).find((entry) => entry.id === id && entry.turns > 0);
 }
 
+function snapAura(unit: Fighter): AuraSnap {
+  return {
+    hp: unit.hp,
+    mp: unit.mp,
+    statuses: unit.statuses?.map((entry) => ({ ...entry })),
+    mods: unit.mods?.map((mod) => ({ ...mod })),
+    shieldHp: unit.shieldHp,
+    tgh: unit.tgh,
+    staggered: unit.staggered,
+    damageTaken: unit.damageTaken,
+    stealthTurns: unit.stealthTurns,
+    tauntTurns: unit.tauntTurns,
+    guardTurns: unit.guardTurns,
+    guardTargetId: unit.guardTargetId,
+    guardAbsorb: unit.guardAbsorb,
+    critBlockTurns: unit.critBlockTurns,
+    magicReduceTurns: unit.magicReduceTurns,
+    meleeThornsTurns: unit.meleeThornsTurns,
+    meleeThornsBurn: unit.meleeThornsBurn,
+    trapTurns: unit.trapTurns,
+    reflectCharges: unit.reflectCharges,
+    reflectPct: unit.reflectPct,
+    delayed: unit.delayed,
+    enraged: unit.enraged,
+    mpCostMult: unit.mpCostMult,
+    nextAttackBoost: unit.nextAttackBoost,
+  };
+}
+
+/** A dodge spends one-shot evade charges, then puts every other aura back. */
+function restoreAura(live: Fighter, snap: AuraSnap): Fighter {
+  const spent = new Set(['nullify', 'evade_skill']);
+  const statuses = (snap.statuses ?? []).filter((entry) => {
+    if (!spent.has(entry.id)) return true;
+    return (live.statuses ?? []).some((current) => current.id === entry.id);
+  });
+  return {
+    ...live,
+    hp: snap.hp,
+    mp: snap.mp,
+    statuses,
+    mods: snap.mods?.map((mod) => ({ ...mod })) ?? [],
+    shieldHp: snap.shieldHp ?? 0,
+    tgh: snap.tgh,
+    staggered: snap.staggered,
+    damageTaken: snap.damageTaken,
+    stealthTurns: snap.stealthTurns ?? 0,
+    tauntTurns: snap.tauntTurns ?? 0,
+    guardTurns: snap.guardTurns ?? 0,
+    guardTargetId: snap.guardTargetId,
+    guardAbsorb: snap.guardAbsorb,
+    critBlockTurns: snap.critBlockTurns ?? 0,
+    magicReduceTurns: snap.magicReduceTurns ?? 0,
+    meleeThornsTurns: snap.meleeThornsTurns ?? 0,
+    meleeThornsBurn: snap.meleeThornsBurn,
+    trapTurns: snap.trapTurns ?? 0,
+    reflectCharges: snap.reflectCharges ?? 0,
+    reflectPct: snap.reflectPct ?? 0,
+    delayed: snap.delayed,
+    enraged: snap.enraged,
+    mpCostMult: snap.mpCostMult,
+    nextAttackBoost: snap.nextAttackBoost,
+  };
+}
+
+function undoEvadedDelay(before: readonly string[], after: readonly string[], evaded: ReadonlySet<string>): string[] {
+  const result = after.filter((id) => !evaded.has(id));
+  for (const id of before) {
+    if (!evaded.has(id)) continue;
+    const at = before.indexOf(id);
+    result.splice(Math.min(Math.max(0, at), result.length), 0, id);
+  }
+  return result;
+}
+
+function keepAfterDodge(note: string, names: string[]): boolean {
+  if (/Trượt |né /.test(note)) return true;
+  return !names.some((name) => name.length > 0 && note.includes(name));
+}
+
+function wipeFaintedAuras(fighter: Fighter): Fighter {
+  if (fighter.hp > 0) return fighter;
+  return {
+    ...fighter,
+    statuses: [],
+    mods: [],
+    shieldHp: 0,
+    stealthTurns: 0,
+    tauntTurns: 0,
+    guardTurns: 0,
+    guardTargetId: undefined,
+    guardAbsorb: undefined,
+    critBlockTurns: 0,
+    magicReduceTurns: 0,
+    meleeThornsTurns: 0,
+    meleeThornsBurn: false,
+    trapTurns: 0,
+    reflectCharges: 0,
+    reflectPct: 0,
+    delayed: false,
+    enraged: false,
+    mpCostMult: 1,
+    nextAttackBoost: 0,
+    staggered: false,
+  };
+}
+
 function withStatus(fighter: Fighter, entry: StatusEntry): Fighter {
   const others = (fighter.statuses ?? []).filter((status) => status.id !== entry.id);
   return { ...fighter, statuses: [...others, entry] };
@@ -1836,11 +2022,12 @@ export function findUnit(state: BattleState, id: string): Fighter | undefined {
 }
 
 export function putUnit(state: BattleState, fighter: Fighter): BattleState {
-  if (fighter.id === state.player.id) return { ...state, player: fighter };
-  if (fighter.side === 'ally' || state.allies.some((entry) => entry.id === fighter.id)) {
-    return { ...state, allies: state.allies.map((entry) => (entry.id === fighter.id ? fighter : entry)) };
+  const next = wipeFaintedAuras(fighter);
+  if (next.id === state.player.id) return { ...state, player: next };
+  if (next.side === 'ally' || state.allies.some((entry) => entry.id === next.id)) {
+    return { ...state, allies: state.allies.map((entry) => (entry.id === next.id ? next : entry)) };
   }
-  return { ...state, foes: state.foes.map((entry) => (entry.id === fighter.id ? fighter : entry)) };
+  return { ...state, foes: state.foes.map((entry) => (entry.id === next.id ? next : entry)) };
 }
 
 function cloneState(state: BattleState): BattleState {

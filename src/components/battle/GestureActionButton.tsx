@@ -3,7 +3,7 @@ import { Animated, Image, PanResponder, StyleSheet, Text, View, type ImageSource
 
 import { HOLD_MS } from '../../hooks/useQuickTarget';
 import { combatSfx } from '../../world/combat/combatSfx';
-import { styles as court } from './courtChrome';
+import { CommandMarks, styles as court } from './courtChrome';
 
 type Props = {
   label: string;
@@ -27,6 +27,10 @@ type Props = {
   onHoldStart: () => void;
   onHoldMove: (dx: number, dy: number) => void;
   onHoldEnd: (dy: number, cancelled: boolean) => void;
+  /** Top-right count. Skills pass the remaining cooldown. */
+  badge?: number;
+  cooldownWait?: number;
+  cooldownMax?: number;
 };
 
 /**
@@ -53,6 +57,9 @@ export function GestureActionButton({
   onHoldStart,
   onHoldMove,
   onHoldEnd,
+  badge,
+  cooldownWait,
+  cooldownMax,
 }: Props) {
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const held = useRef(false);
@@ -150,6 +157,7 @@ export function GestureActionButton({
     }),
   ).current;
 
+  const cooling = (cooldownWait ?? 0) > 0 && (cooldownMax ?? 0) > 0;
   const scale = press.interpolate({ inputRange: [0, 1], outputRange: [1, 0.95] });
   const shade = press.interpolate({ inputRange: [0, 1], outputRange: [0, 0.22] });
   const rippleScale = ripple.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.55] });
@@ -179,17 +187,27 @@ export function GestureActionButton({
             },
             !plain && hot && !picked && court.roundHot,
             picked && (plain ? local.plainOn : court.picked),
-            (disabled || dim) && court.fainted,
+            (disabled || dim) && !cooling && court.fainted,
             (picked || aiming) && local.held,
           ]}
         >
           {icon ? (
-            <Image source={icon} style={{ width: plain ? size : size * 0.86, height: plain ? size : size * 0.86, borderRadius: plain ? 8 : 6 }} resizeMode="contain" />
+            <Image
+              source={icon}
+              style={{
+                width: plain ? size : size * 0.86,
+                height: plain ? size : size * 0.86,
+                borderRadius: plain ? 8 : 6,
+                opacity: 1,
+              }}
+              resizeMode="contain"
+            />
           ) : (
             <Text style={[court.roundLabel, { fontSize: font }]} numberOfLines={2}>
               {label}
             </Text>
           )}
+          <CommandMarks badge={badge} cooldownWait={cooldownWait} cooldownMax={cooldownMax} size={size} />
           <Animated.View pointerEvents="none" style={[local.shade, { opacity: shade }]} />
           <Animated.View
             pointerEvents="none"

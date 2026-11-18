@@ -20,6 +20,7 @@ import type {
   QueueView,
 } from './protocol.js';
 import { advancedAtLevel } from '../combat/advanced.js';
+import { strikeRestMs } from './combatPace.js';
 import { arenaHeroKit, professionFromAvatar } from '../combat/classSkills.js';
 import {
   applyOwnerMastery,
@@ -868,6 +869,10 @@ export class Arena {
       socket.emit('battle:error', { message: 'Chưa tới lượt của bạn.' });
       return;
     }
+    if (room.deadline - Date.now() > TURN_MS + 40) {
+      socket.emit('battle:error', { message: 'Chưa hết nhịp nghỉ.' });
+      return;
+    }
     const skill = payload && typeof payload === 'object' && 'skill' in payload && payload.skill === 1 ? 1 : 0;
     const targetId = payload && typeof payload === 'object' && 'targetId' in payload && typeof payload.targetId === 'string' ? payload.targetId : undefined;
     await this.playTurn(room, action, skill, targetId);
@@ -947,7 +952,7 @@ export class Arena {
       await this.closeBout(room, livingOwners[0] ?? null);
       return;
     }
-    this.advance(room);
+    this.advance(room, strikeRestMs(resolved.lastHit));
     room.resolving = false;
     this.emitRoom(room);
   }
@@ -1003,7 +1008,7 @@ export class Arena {
   }
 
   /** Next living unit in this round, or a fresh speed order when the round ends. */
-  private advance(room: Room) {
+  private advance(room: Room, restMs = 0) {
     const take = (unit: CombatUnit, preface?: string) => {
       if (unit.staggered) {
         unit.staggered = false;
@@ -1011,7 +1016,7 @@ export class Arena {
         return false;
       }
       room.turnId = unit.id;
-      room.deadline = Date.now() + TURN_MS;
+      room.deadline = Date.now() + restMs + TURN_MS;
       room.log.push(`${preface ? `${preface} ` : ''}Tới lượt ${unit.name}.`);
       return true;
     };
@@ -1029,7 +1034,7 @@ export class Arena {
       if (take(unit, `Hiệp ${room.round}.`)) return;
     }
     room.turnId = room.order[0] ?? room.turnId;
-    room.deadline = Date.now() + TURN_MS;
+    room.deadline = Date.now() + restMs + TURN_MS;
   }
 
   private async finish(room: Room, winnerId: string | null) {
@@ -1600,6 +1605,7 @@ function toUnitView(unit: CombatUnit, viewerId: string): DuelUnitView {
     staggered: Boolean(unit.staggered),
     kindId: unit.kindId,
     element: unit.element,
+    basicId: unit.basic?.id,
     shieldHp: unit.shieldHp ?? 0,
     statuses: statusViewOf(unit),
   };

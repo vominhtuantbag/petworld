@@ -1,7 +1,8 @@
 import type { Rect, Vec } from './types';
+import { PLAINS_TOWN_GRID_BLOCKS } from './townGridPlains';
 
 /** Shared 5000×5000 town collision from the red/green valley grid mask. */
-export const TOWN_NAV_VERSION = 1;
+export const TOWN_NAV_VERSION = 2;
 export const TOWN_MAP_SIZE = 5000;
 
 /** Solid red blocks in world pixels (5000×5000). Green paths are the complement. */
@@ -46,8 +47,16 @@ export const TOWN_GRID_BLOCKS: readonly Rect[] = [
   { x: 1350, y: 4850, w: 1125, h: 25 },
 ];
 
-export function hitsTownGrid(x: number, y: number, radius = 0): boolean {
-  for (const block of TOWN_GRID_BLOCKS) {
+/**
+ * Collision mask for a regional town. Đồng Bằng (`plains`) uses its own
+ * hand-authored red/green map; the other 15 towns keep the shared mask.
+ */
+export function townGridBlocksFor(regionId?: string | null): readonly Rect[] {
+  return regionId === 'plains' ? PLAINS_TOWN_GRID_BLOCKS : TOWN_GRID_BLOCKS;
+}
+
+export function hitsTownGrid(x: number, y: number, radius = 0, blocks: readonly Rect[] = TOWN_GRID_BLOCKS): boolean {
+  for (const block of blocks) {
     if (x + radius > block.x && x - radius < block.x + block.w && y + radius > block.y && y - radius < block.y + block.h) {
       return true;
     }
@@ -55,36 +64,41 @@ export function hitsTownGrid(x: number, y: number, radius = 0): boolean {
   return false;
 }
 
-export function isTownWalkable(x: number, y: number, radius = 14): boolean {
+export function isTownWalkable(x: number, y: number, radius = 14, blocks: readonly Rect[] = TOWN_GRID_BLOCKS): boolean {
   if (x < 8 || y < 8 || x > TOWN_MAP_SIZE - 8 || y > TOWN_MAP_SIZE - 8) return false;
-  return !hitsTownGrid(x, y, radius);
+  return !hitsTownGrid(x, y, radius, blocks);
 }
 
-export function snapTownWalk(x: number, y: number, maxRadius = 400): Vec {
-  if (isTownWalkable(x, y, 12)) return { x, y };
+export function snapTownWalk(x: number, y: number, maxRadius = 400, blocks: readonly Rect[] = TOWN_GRID_BLOCKS): Vec {
+  if (isTownWalkable(x, y, 12, blocks)) return { x, y };
   for (let radius = 12; radius <= maxRadius; radius += 12) {
     for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 16) {
       const nx = Math.round(x + Math.cos(angle) * radius);
       const ny = Math.round(y + Math.sin(angle) * radius);
-      if (isTownWalkable(nx, ny, 12)) return { x: nx, y: ny };
+      if (isTownWalkable(nx, ny, 12, blocks)) return { x: nx, y: ny };
     }
   }
   return { x, y };
 }
 
-export function resolveTownWalkTarget(x: number, y: number, maxRadius = 400): Vec | null {
-  const snapped = snapTownWalk(x, y, maxRadius);
-  if (!isTownWalkable(snapped.x, snapped.y, 12)) return null;
+export function resolveTownWalkTarget(
+  x: number,
+  y: number,
+  maxRadius = 400,
+  blocks: readonly Rect[] = TOWN_GRID_BLOCKS,
+): Vec | null {
+  const snapped = snapTownWalk(x, y, maxRadius, blocks);
+  if (!isTownWalkable(snapped.x, snapped.y, 12, blocks)) return null;
   return snapped;
 }
 
 const PATH_CELL = 50;
 
 /** A* along green corridors on the shared town grid. */
-export function findTownPath(from: Vec, to: Vec, maxNodes = 2500): Vec[] | null {
-  const start = snapTownWalk(from.x, from.y, 200);
-  const goal = snapTownWalk(to.x, to.y, 280);
-  if (!isTownWalkable(start.x, start.y, 10) || !isTownWalkable(goal.x, goal.y, 10)) return null;
+export function findTownPath(from: Vec, to: Vec, maxNodes = 2500, blocks: readonly Rect[] = TOWN_GRID_BLOCKS): Vec[] | null {
+  const start = snapTownWalk(from.x, from.y, 200, blocks);
+  const goal = snapTownWalk(to.x, to.y, 280, blocks);
+  if (!isTownWalkable(start.x, start.y, 10, blocks) || !isTownWalkable(goal.x, goal.y, 10, blocks)) return null;
   const key = (x: number, y: number) => `${x}:${y}`;
   const startCell = { x: Math.round(start.x / PATH_CELL) * PATH_CELL, y: Math.round(start.y / PATH_CELL) * PATH_CELL };
   const goalCell = { x: Math.round(goal.x / PATH_CELL) * PATH_CELL, y: Math.round(goal.y / PATH_CELL) * PATH_CELL };
@@ -114,7 +128,7 @@ export function findTownPath(from: Vec, to: Vec, maxNodes = 2500): Vec[] | null 
     for (const [dx, dy] of dirs) {
       const nx = current.x + dx;
       const ny = current.y + dy;
-      if (!isTownWalkable(nx, ny, 12)) continue;
+      if (!isTownWalkable(nx, ny, 12, blocks)) continue;
       const step = Math.hypot(dx, dy);
       const g = current.g + step;
       const id = key(nx, ny);

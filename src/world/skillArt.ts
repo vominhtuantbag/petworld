@@ -102,6 +102,7 @@ const CLASS_ICONS: Record<string, Record<number, ImageSourcePropType>> = {
 
 export const NET_SKILL_ART: ImageSourcePropType = require('../../assets/skills/char/luoi.png');
 export const DEFEND_SKILL_ART: ImageSourcePropType = require('../../assets/skills/char/phongthu.png');
+export const PET_DEFEND_ART: ImageSourcePropType = require('../../assets/skills/pet/phongthu.png');
 
 export function classSkillArt(professionId: string | undefined, slot: number): ImageSourcePropType | null {
   const folder = CLASS_FOLDER[professionId ?? ''];
@@ -292,4 +293,14 @@ export function petBiomeArt(biome: string | undefined, slot: number): ImageSourc
   const folder = BIOME_FOLDER[biome ?? ''];
   if (!folder || slot < 1 || slot > 5) return null;
   return BIOME_ICONS[folder]?.[slot] ?? null;
+}
+
+/** Combat button for a monster skill: basic 1–12, or a regional skill such as `plains-2`. */
+export function petSkillArt(skillId: string | undefined | null): ImageSourcePropType | null {
+  if (!skillId) return null;
+  const basic = petBasicSlot(skillId);
+  if (basic) return petBasicArt(basic);
+  const match = /^([a-z]+)-([1-5])$/.exec(skillId);
+  if (!match || !BIOME_FOLDER[match[1]]) return null;
+  return petBiomeArt(match[1], Number(match[2]));
 }

@@ -38,6 +38,7 @@ export function FloatingCombatText({ amount, x, y, onDone, kind, onImpact }: Pro
   const heal = resolved === 'heal';
   const crit = resolved === 'crit';
   const miss = resolved === 'miss';
+  const mana = resolved === 'mana';
   const label = miss
     ? 'NÉ TRÁNH'
     : crit
@@ -84,15 +85,15 @@ export function FloatingCombatText({ amount, x, y, onDone, kind, onImpact }: Pro
 
   const translateY = progress.interpolate({
     inputRange: [0, 0.45, 1],
-    outputRange: crit ? [8, -28, -56] : miss ? [0, -22, -42] : heal ? [0, -30, -54] : [6, -34, -50],
+    outputRange: crit ? [8, -28, -56] : miss ? [0, -22, -42] : heal || mana ? [0, -30, -54] : [6, -34, -50],
   });
   const translateX = progress.interpolate({
     inputRange: [0, 0.35, 1],
-    outputRange: crit ? [0, scatter * 0.7, scatter] : miss ? [0, arcX * 0.2, arcX * 0.35] : heal ? [0, 0, 0] : [0, arcX * 0.55, arcX * 0.15],
+    outputRange: crit ? [0, scatter * 0.7, scatter] : miss ? [0, arcX * 0.2, arcX * 0.35] : heal || mana ? [0, 0, 0] : [0, arcX * 0.55, arcX * 0.15],
   });
 
   const baseSize = crit ? 27 : miss ? 15 : 18;
-  const color = miss ? '#9ec5e8' : crit ? '#ef4444' : heal ? '#22c55e' : '#fff6d6';
+  const color = miss ? '#9ec5e8' : crit ? '#ef4444' : mana ? '#b39ddb' : heal ? '#22c55e' : '#fff6d6';
   const ghostColor = miss ? 'rgba(158,197,232,0.45)' : undefined;
 
   return (

@@ -294,7 +294,11 @@ export type BattleState = {
   chantTurns?: number;
   chantHpPct?: number;
   chantMpPct?: number;
+  /** HP/MP applied as the next turn opens (poison, burn, regen). Not an attack. */
+  turnTicks?: TurnTick[];
 };
+
+export type TurnTick = { id: string; hpDelta: number; mpDelta: number };
 
 export function makePlayer(input: {
   name: string;
@@ -942,7 +946,17 @@ function clearStagger(fighter: Fighter): Fighter {
 }
 
 function after(state: BattleState, actedId: string, log: string): BattleState {
-  let next = { ...state, log };
+  const turnTicks: TurnTick[] = [];
+  let next: BattleState = { ...state, log, turnTicks };
+  const openTurn = (id: string) => {
+    const beforeUnit = unit(next, id);
+    next = beginTurnAuras(next, id) as BattleState;
+    const afterUnit = unit(next, id);
+    if (!beforeUnit || !afterUnit) return;
+    const hpDelta = afterUnit.hp - beforeUnit.hp;
+    const mpDelta = afterUnit.mp - beforeUnit.mp;
+    if (hpDelta !== 0 || mpDelta !== 0) turnTicks.push({ id, hpDelta, mpDelta });
+  };
   const actor = unit(next, actedId);
   const friendsEarly = friendlies(next).some((fighter) => fighter.hp > 0);
   if (!friendsEarly) return { ...next, over: 'lose' };
@@ -969,8 +983,17 @@ function after(state: BattleState, actedId: string, log: string): BattleState {
     for (let step = fromIndex + 1; step < fromOrder.length; step += 1) {
       let fighter = unit(next, fromOrder[step]);
       if (!fighter || fighter.hp <= 0) continue;
-      next = beginTurnAuras(next, fighter.id) as BattleState;
+      openTurn(fighter.id);
       fighter = unit(next, fighter.id)!;
+      if (fighter.hp <= 0) {
+        next = {
+          ...next,
+          log: `${next.log} ${fighter.name} gục vì hiệu ứng và bỏ lượt.`.trim(),
+        };
+        if (!friendlies(next).some((entry) => entry.hp > 0)) return { ...next, over: 'lose' };
+        if (next.foes.every((foe) => foe.hp <= 0)) return { ...next, over: 'win' };
+        continue;
+      }
       const skip = shouldSkipTurn(fighter);
       if (skip) {
         next = replace(next, clearStagger(tickFighterTimers({ ...fighter, staggered: false })));
