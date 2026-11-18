@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Image, Pressable, Text, View } from 'react-native';
 
 import type { PortalLayout } from '../../world/portals';
@@ -8,25 +9,33 @@ type Props = {
   pose: PortalLayout;
   label: string;
   onPress: () => void;
+  /** Regional art sized to `pose.imgW × pose.imgH`. Default is the stone arch. */
+  art?: ReactNode;
 };
 
 /** Upright transition. The arch art is drawn facing the path, with no compass turn. */
-export function PortalGate({ pose, label, onPress }: Props) {
+export function PortalGate({ pose, label, onPress, art }: Props) {
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0 }}>
-      <Image
-        source={GATE}
-        resizeMode="contain"
-        pointerEvents="none"
-        accessibilityLabel={label}
-        style={{
-          position: 'absolute',
-          left: pose.left,
-          top: pose.top,
-          width: pose.imgW,
-          height: pose.imgH,
-        }}
-      />
+      {art ? (
+        <View pointerEvents="none" style={{ position: 'absolute', left: pose.left, top: pose.top }}>
+          {art}
+        </View>
+      ) : (
+        <Image
+          source={GATE}
+          resizeMode="contain"
+          pointerEvents="none"
+          accessibilityLabel={label}
+          style={{
+            position: 'absolute',
+            left: pose.left,
+            top: pose.top,
+            width: pose.imgW,
+            height: pose.imgH,
+          }}
+        />
+      )}
       <Text
         pointerEvents="none"
         style={{

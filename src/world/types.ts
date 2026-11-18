@@ -93,6 +93,14 @@ export type Rect = {
    * Desert decor: `crack` (×0.90), `quicksand` (×0.80, −2 máu/giây), `straw`. Older `bush` and `tumbleweed` still draw.
    * Swamp solids: `mangrove`, `log`, `boulder`. Swamp decor: `dry`, `mud`,
    * `moss`, `reed`, `lily`, `shroom`, `fog`, `firefly`, `bubble`.
+   * Ocean solids: `searock`, `wreck`, `ruin`. Ocean decor: `sandbar`, `coral`,
+   * `kelp`, `glowcoral`, `seamist`, `seabubble`, `whirlpool` (×0.85, −2 thể lực/giây),
+   * `reef` (×0.80, −2 máu/giây).
+   * Swamp hunting-map solids: `cypress`, `vineruin` (plus `log`, `boulder`).
+   * Swamp hunting-map decor: `cattail`, `tallreed`, `waterlily`, `duckweed`,
+   * `swamppool`, `plank` (runs along its long side), `sunkenlog`, `glowshroom`,
+   * `swampfog`, `dragonfly`, `gasbubble`, `bones`, `bunlay` (×0.80, −2 thể lực/giây),
+   * `khidoc` (×0.90, −2 máu/giây).
    * `slow` is a speed multiplier while the player stands inside.
    */
   kind?:
@@ -127,7 +135,34 @@ export type Rect = {
     | 'bubble'
     | 'mangrove'
     | 'log'
-    | 'boulder';
+    | 'boulder'
+    | 'sandbar'
+    | 'coral'
+    | 'kelp'
+    | 'glowcoral'
+    | 'seamist'
+    | 'seabubble'
+    | 'searock'
+    | 'wreck'
+    | 'ruin'
+    | 'whirlpool'
+    | 'reef'
+    | 'cattail'
+    | 'tallreed'
+    | 'waterlily'
+    | 'duckweed'
+    | 'swamppool'
+    | 'plank'
+    | 'sunkenlog'
+    | 'cypress'
+    | 'glowshroom'
+    | 'swampfog'
+    | 'dragonfly'
+    | 'gasbubble'
+    | 'bones'
+    | 'vineruin'
+    | 'bunlay'
+    | 'khidoc';
   /** Pixels per second. Tumbleweeds, fireflies, and bubbles drift by this. */
   drift?: { vx: number; vy: number };
   /** Speed multiplier while the player stands inside. Mud, cracked earth, quicksand, and plains water use a value below 1. */
@@ -331,7 +366,11 @@ export type FieldEvent =
   | { type: 'hazard'; dt: number }
   | { type: 'march'; distance: number; dt: number }
   | { type: 'quicksand' }
-  | { type: 'puddle' };
+  | { type: 'puddle' }
+  | { type: 'whirlpool' }
+  | { type: 'reef' }
+  | { type: 'bunlay' }
+  | { type: 'khidoc' };
 
 export type Encounter = {
   id: string;

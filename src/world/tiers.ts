@@ -1,5 +1,5 @@
 import type { RegionId } from '../types/game';
-import { hashString, mulberry32 } from './grid';
+import { hashString, mulberry32, tierMapSize } from './grid';
 import type { MapZone, Rect, Sensor, Vec } from './types';
 
 /**
@@ -253,7 +253,7 @@ export function sampleInZone(
 /**
  * West, east, return, and (except on tier 10) the far ascent.
  * West arrives on the neighbor's east pad, and east on their west pad,
- * because every hunting map uses the same width and height.
+ * measured on the neighbor's own map size (Đại Dương is smaller).
  */
 export function huntingSensors(input: {
   townId: string;
@@ -270,6 +270,8 @@ export function huntingSensors(input: {
   const back = returnGate(width, height);
   const west = westGate(width, height);
   const east = eastGate(width, height);
+  const westMap = tierMapSize(input.west.id);
+  const eastMap = tierMapSize(input.east.id);
   const sensors: Sensor[] = [
     {
       id: 'return',
@@ -288,7 +290,7 @@ export function huntingSensors(input: {
       label: input.west.label,
       toZone: tierZoneId(input.west.id, tier),
       unlock: input.west.regionId,
-      arrive: inwardPad(east, width, height),
+      arrive: inwardPad(eastGate(westMap.w, westMap.h), westMap.w, westMap.h),
     },
     {
       id: 'east',
@@ -298,7 +300,7 @@ export function huntingSensors(input: {
       label: input.east.label,
       toZone: tierZoneId(input.east.id, tier),
       unlock: input.east.regionId,
-      arrive: inwardPad(west, width, height),
+      arrive: inwardPad(westGate(eastMap.w, eastMap.h), eastMap.w, eastMap.h),
     },
   ];
   if (tier < MAP_TIERS) {

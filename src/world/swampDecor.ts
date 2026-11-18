@@ -1,5 +1,6 @@
 import { hashString, mulberry32 } from './grid';
-import type { FieldState, Rect } from './types';
+import type { FieldState, MapZone, Rect } from './types';
+import { pick, placeHazard, placeIn, zoneCtx } from './zoneDecor';
 
 /**
  * Swamp combat dressing for one sector. The same zone id always rebuilds
@@ -156,9 +157,239 @@ export function generateSwamp(zoneId: string, width: number, height: number): Sw
   return { soft, solids };
 }
 
-/** Generic swamp sectors had no marsh dressing. Rebuild those. */
+/** Generic swamp sectors had no marsh dressing, and older hunting maps had no zones. Rebuild those. */
 export function swampNeedsDressing(field: FieldState): boolean {
-  return field.provinceId === 'swamp' && field.chunkSize > 0 && !field.decor.some((rect) => rect.label === 'swamp-marsh-2');
+  if (field.provinceId !== 'swamp' || field.chunkSize <= 0) return false;
+  // Cypress solids only come from the zoned map and always sit clear of the pads.
+  if (field.tier >= 1) return !field.blocks.some((rect) => rect.kind === 'cypress');
+  return !field.decor.some((rect) => rect.label === 'swamp-marsh-2');
+}
+
+/** Terrain ramp from the town gate to the core: damp mud, moss, olive pools, black mud. */
+export const SWAMP_MUD = '#5C4B3B';
+export const SWAMP_MOSS = '#2E473B';
+export const SWAMP_OLIVE = '#4A5D3F';
+export const SWAMP_CORE = '#232924';
+/** How many of each prop the 10× hunting map tries to place, per zone. */
+export const SWAMP_MAP_DENSITY = {
+  edge: { dry: 14, cattails: 34, tallreeds: 16, pools: 4, lilies: 22, duckweed: 14 },
+  mudflats: { pools: 9, sunkenlogs: 9, logs: 10, boulders: 10, duckweed: 12, bubbles: 8 },
+  maze: { cypress: 36, shrooms: 12, tallreeds: 8, pools: 3 },
+  grove: { fog: 14, shrooms: 30, cypress: 10, pools: 4, bubbles: 6 },
+  core: { pools: 8, bones: 10, ruins: 5, cypress: 6, fog: 6, shrooms: 8 },
+  fireflies: 48,
+  dragonflies: 16,
+  bunlay: 6,
+  khidoc: 6,
+};
+
+/** Collision boxes for the hunting map. Canopies, roots, and vines hang outside. */
+export const SWAMP_MAP_HITBOX = {
+  cypress: { w: 60, h: 44 },
+  log: { w: 110, h: 34 },
+  boulder: { w: 64, h: 42 },
+  vineruin: { w: 130, h: 70 },
+};
+
+const PASTEL_LILY = ['#f6c6d8', '#fbe3a8', '#d9c8f6', '#f2f2f2'];
+const GLOW_SHROOM = ['#b46bff', '#38e0ff', '#d07bff', '#5ef0e0'];
+const PLANK_W = 34;
+
+/**
+ * Đầm Lầy hunting map, dressed per hidden zone from `buildZones`:
+ *
+ * - 0 Cattail Marsh Edge — dry earth by the gate, cattails, reeds, lilies.
+ * - 1 Rotting Log Mudflats — olive pools linked by plank bridges, sunken logs,
+ *   solid logs and mossy boulders.
+ * - 2 Mangrove Root Maze — dense twisted cypress with roots and vines.
+ * - 3 Foggy Toxic Grove — thick fog banks and glowing mushroom clusters.
+ * - 4 Dark Abyssal Core — black mud pools, old bones, vine-covered ruins.
+ *
+ * Fireflies and dragonflies drift across the whole marsh. Deep mud (bunlay)
+ * and toxic gas (khidoc) are 8× hazards kept off every gate.
+ */
+export function generateSwampMap(zoneId: string, width: number, height: number, zones: readonly MapZone[]): SwampDressing {
+  const ctx = zoneCtx(`${zoneId}:swamp-map`, width, height, zones);
+  const { rng } = ctx;
+  const soft: Rect[] = [];
+  const solids: Rect[] = [];
+  const add = (bucket: Rect[], rect: Rect | null) => {
+    if (rect) bucket.push(rect);
+    return rect;
+  };
+  const pools = (zone: number, count: number, fill: string) => {
+    const placed: Rect[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const w = 200 + rng() * 160;
+      const pool = add(soft, placeIn(ctx, zone, { w, h: w * (0.5 + rng() * 0.2), kind: 'swamppool', fill }, false));
+      if (pool) placed.push(pool);
+    }
+    return placed;
+  };
+  const near = (rect: Rect, dx: number, dy: number) => ({ x: rect.x + rect.w / 2 + dx, y: rect.y + rect.h / 2 + dy });
+
+  const edge = SWAMP_MAP_DENSITY.edge;
+  for (let index = 0; index < edge.dry; index += 1) {
+    const w = 120 + rng() * 120;
+    add(soft, placeIn(ctx, 0, { w, h: w * 0.4, kind: 'dry', fill: index % 2 === 0 ? '#8a6a44' : '#6e5434' }, false, false, 0.22));
+  }
+  const edgePools = pools(0, edge.pools, SWAMP_OLIVE);
+  for (let index = 0; index < edge.lilies; index += 1) {
+    const pool = edgePools[index % Math.max(1, edgePools.length)];
+    const at = pool ? near(pool, (rng() - 0.5) * pool.w * 0.6, (rng() - 0.5) * pool.h * 0.5) : undefined;
+    add(soft, placeIn(ctx, 0, { w: 34, h: 26, kind: 'waterlily', fill: pick(rng, PASTEL_LILY), at }, false, true));
+  }
+  for (let index = 0; index < edge.cattails; index += 1) {
+    add(soft, placeIn(ctx, 0, { w: 34, h: 70, kind: 'cattail' }, false));
+  }
+  for (let index = 0; index < edge.tallreeds; index += 1) {
+    add(soft, placeIn(ctx, 0, { w: 90, h: 80, kind: 'tallreed' }, false));
+  }
+  for (let index = 0; index < edge.duckweed; index += 1) {
+    add(soft, placeIn(ctx, 0, { w: 60 + rng() * 40, h: 30 + rng() * 16, kind: 'duckweed' }, false, true));
+  }
+
+  const flats = SWAMP_MAP_DENSITY.mudflats;
+  const flatPools = pools(1, flats.pools, SWAMP_OLIVE);
+  for (const plank of boardwalk(flatPools)) {
+    soft.push(plank);
+    ctx.occupied.push(plank);
+  }
+  for (let index = 0; index < flats.sunkenlogs; index += 1) {
+    const pool = flatPools[index % Math.max(1, flatPools.length)];
+    if (!pool) break;
+    add(soft, placeIn(ctx, 1, { w: pool.w * 0.4, h: 26, kind: 'sunkenlog', at: near(pool, (rng() - 0.5) * pool.w * 0.3, (rng() - 0.5) * pool.h * 0.3) }, false, true));
+  }
+  for (let index = 0; index < flats.bubbles; index += 1) {
+    const pool = flatPools[index % Math.max(1, flatPools.length)];
+    if (!pool) break;
+    add(soft, placeIn(ctx, 1, { w: 44, h: 90, kind: 'gasbubble', at: near(pool, (rng() - 0.5) * pool.w * 0.4, 0) }, false, true));
+  }
+  for (let index = 0; index < flats.logs; index += 1) {
+    add(solids, placeIn(ctx, 1, { ...SWAMP_MAP_HITBOX.log, kind: 'log', fill: '#5c4030' }, true));
+  }
+  for (let index = 0; index < flats.boulders; index += 1) {
+    const scale = 0.8 + rng() * 0.5;
+    add(solids, placeIn(ctx, 1, { w: SWAMP_MAP_HITBOX.boulder.w * scale, h: SWAMP_MAP_HITBOX.boulder.h * scale, kind: 'boulder', fill: '#5d6a58' }, true));
+  }
+  for (let index = 0; index < flats.duckweed; index += 1) {
+    const pool = flatPools[index % Math.max(1, flatPools.length)];
+    const at = pool ? near(pool, (rng() - 0.5) * pool.w * 0.5, (rng() - 0.5) * pool.h * 0.4) : undefined;
+    add(soft, placeIn(ctx, 1, { w: 60 + rng() * 30, h: 30, kind: 'duckweed', at }, false, true));
+  }
+
+  const trees = (zone: number, count: number) => {
+    const placed: Rect[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const scale = 0.85 + rng() * 0.35;
+      const tree = add(solids, placeIn(ctx, zone, { w: SWAMP_MAP_HITBOX.cypress.w * scale, h: SWAMP_MAP_HITBOX.cypress.h * scale, kind: 'cypress', fill: '#1c3a24' }, true));
+      if (tree) placed.push(tree);
+    }
+    return placed;
+  };
+  const shrooms = (zone: number, count: number, roots: readonly Rect[]) => {
+    for (let index = 0; index < count; index += 1) {
+      const root = roots.length > 0 && index % 2 === 0 ? roots[index % roots.length] : undefined;
+      const at = root ? { x: root.x + (rng() > 0.5 ? root.w + 18 : -18), y: root.y + root.h - 6 } : undefined;
+      add(soft, placeIn(ctx, zone, { w: 30, h: 28, kind: 'glowshroom', fill: pick(rng, GLOW_SHROOM), at }, false));
+    }
+  };
+  const fog = (zone: number, count: number) => {
+    for (let index = 0; index < count; index += 1) {
+      const w = 340 + rng() * 260;
+      add(soft, placeIn(ctx, zone, { w, h: w * 0.32, kind: 'swampfog', fill: 'rgba(196, 214, 184, 0.16)' }, false, true));
+    }
+  };
+
+  const maze = SWAMP_MAP_DENSITY.maze;
+  pools(2, maze.pools, SWAMP_OLIVE);
+  const mazeTrees = trees(2, maze.cypress);
+  shrooms(2, maze.shrooms, mazeTrees);
+  for (let index = 0; index < maze.tallreeds; index += 1) {
+    add(soft, placeIn(ctx, 2, { w: 90, h: 80, kind: 'tallreed' }, false));
+  }
+
+  const grove = SWAMP_MAP_DENSITY.grove;
+  const grovePools = pools(3, grove.pools, '#3c4a34');
+  for (let index = 0; index < grove.bubbles; index += 1) {
+    const pool = grovePools[index % Math.max(1, grovePools.length)];
+    if (!pool) break;
+    add(soft, placeIn(ctx, 3, { w: 44, h: 90, kind: 'gasbubble', at: near(pool, (rng() - 0.5) * pool.w * 0.4, 0) }, false, true));
+  }
+  const groveTrees = trees(3, grove.cypress);
+  shrooms(3, grove.shrooms, groveTrees);
+  fog(3, grove.fog);
+
+  const core = SWAMP_MAP_DENSITY.core;
+  pools(4, core.pools, SWAMP_CORE);
+  for (let index = 0; index < core.ruins; index += 1) {
+    add(solids, placeIn(ctx, 4, { ...SWAMP_MAP_HITBOX.vineruin, kind: 'vineruin', fill: '#4a4f48' }, true));
+  }
+  for (let index = 0; index < core.bones; index += 1) {
+    add(soft, placeIn(ctx, 4, { w: 70, h: 40, kind: 'bones' }, false));
+  }
+  const coreTrees = trees(4, core.cypress);
+  shrooms(4, core.shrooms, coreTrees);
+  fog(4, core.fog);
+
+  for (let index = 0; index < SWAMP_MAP_DENSITY.bunlay; index += 1) {
+    add(soft, placeHazard(ctx, 'bunlay', [1, 2, 4]));
+  }
+  for (let index = 0; index < SWAMP_MAP_DENSITY.khidoc; index += 1) {
+    add(soft, placeHazard(ctx, 'khidoc', [2, 3, 4]));
+  }
+
+  for (let index = 0; index < SWAMP_MAP_DENSITY.fireflies; index += 1) {
+    const angle = rng() * Math.PI * 2;
+    soft.push({
+      x: rng() * width,
+      y: rng() * height,
+      w: 10,
+      h: 10,
+      kind: 'firefly',
+      fill: index % 4 === 0 ? '#9ef7ff' : '#e6f27a',
+      drift: { vx: Math.cos(angle) * 14, vy: Math.sin(angle) * 10 },
+    });
+  }
+  for (let index = 0; index < SWAMP_MAP_DENSITY.dragonflies; index += 1) {
+    const angle = rng() * Math.PI * 2;
+    soft.push({
+      x: rng() * width,
+      y: rng() * height,
+      w: 40,
+      h: 30,
+      kind: 'dragonfly',
+      fill: index % 2 === 0 ? '#3aa0c8' : '#6ac87a',
+      drift: { vx: Math.cos(angle) * 60, vy: Math.sin(angle) * 40 },
+    });
+  }
+
+  return { soft, solids };
+}
+
+/**
+ * Decayed boardwalk between neighboring pools: one horizontal and one
+ * vertical run per link, so each plank stays an axis-aligned rect.
+ */
+function boardwalk(pools: readonly Rect[]): Rect[] {
+  const planks: Rect[] = [];
+  const order = [...pools].sort((a, b) => a.x - b.x);
+  for (let index = 1; index < order.length; index += 1) {
+    const a = order[index - 1]!;
+    const b = order[index]!;
+    const ax = a.x + a.w / 2;
+    const ay = a.y + a.h / 2;
+    const bx = b.x + b.w / 2;
+    const by = b.y + b.h / 2;
+    if (Math.hypot(bx - ax, by - ay) > 1100) continue;
+    const left = Math.min(ax, bx);
+    planks.push({ x: left, y: ay - PLANK_W / 2, w: Math.abs(bx - ax) + PLANK_W / 2, h: PLANK_W, kind: 'plank', fill: '#7a5a3a' });
+    const top = Math.min(ay, by);
+    if (Math.abs(by - ay) > PLANK_W) {
+      planks.push({ x: bx - PLANK_W / 2, y: top, w: PLANK_W, h: Math.abs(by - ay), kind: 'plank', fill: '#7a5a3a' });
+    }
+  }
+  return planks;
 }
 
 function layOpening(soft: Rect[], solids: Rect[], occupied: Rect[], width: number, height: number, rng: () => number) {

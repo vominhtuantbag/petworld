@@ -13,7 +13,8 @@ import {
   SECTOR_ROWS,
   sectorZoneId,
 } from './atlas';
-import { CHUNK_SIZE, hashString, mulberry32, SECTOR_SIZE, TIER_MAP_H, TIER_MAP_W } from './grid';
+import { CHUNK_SIZE, hashString, mulberry32, SECTOR_SIZE, tierMapSize } from './grid';
+import { generateOcean, OCEAN_MID, oceanNeedsDressing } from './oceanDecor';
 import { generateDesert, DESERT_SAND, desertNeedsDressing } from './desertDecor';
 import { omitHazardsOnPads } from './hazards';
 import { locomotion } from './gait';
@@ -25,7 +26,7 @@ import { expansionSpecies, MAP1_ROSTER_VERSION, townSpecies, type MonsterSpecies
 import { generatePlains, hitsSolid, PLAINS_GRASS, plainsNeedsVista } from './plainsDecor';
 import { generateSavannah, SAVANNAH_GRASS } from './savannahDecor';
 import { generateScatter } from './scatterDecor';
-import { generateSwamp, SWAMP_GROUND, swampNeedsDressing } from './swampDecor';
+import { generateSwamp, generateSwampMap, SWAMP_GROUND, SWAMP_MOSS, swampNeedsDressing } from './swampDecor';
 import {
   buildZones,
   clearPads,
@@ -43,7 +44,7 @@ import {
   ascentReturnPad,
 } from './tiers';
 import { createTownField, townNeedsResize, townReturnPad, townZoneId as hubTownZoneId } from './townManager';
-import type { FieldState, ItemId, LootActor, MonsterActor, Rect, Sensor } from './types';
+import type { FieldState, ItemId, LootActor, MapZone, MonsterActor, Rect, Sensor } from './types';
 
 /**
  * Maps, monsters, and loot.
@@ -99,7 +100,9 @@ export function fieldNeedsRebuild(field: FieldState): boolean {
   if (townNeedsResize(field)) return true;
   if (plainsNeedsVista(field) || desertNeedsDressing(field) || swampNeedsDressing(field)) return true;
   if (field.chunkSize > 0 && isRingTown(field.provinceId)) {
-    if (field.tier < 1 || field.width < TIER_MAP_W || field.height < TIER_MAP_H) return true;
+    const size = tierMapSize(field.provinceId);
+    if (field.tier < 1 || field.width !== size.w || field.height !== size.h) return true;
+    if (oceanNeedsDressing(field)) return true;
     if (!field.zones || field.zones.length !== ZONE_COUNT) return true;
     if (field.faunaRoster !== MAP1_ROSTER_VERSION) return true;
   }
@@ -262,8 +265,9 @@ function createTierMap(zoneId: string): FieldState {
   if (!map) return createTownField('forest');
   const { province, tier, levelMin, levelMax } = map;
   const region = getRegion(province.regionId);
-  const width = TIER_MAP_W;
-  const height = TIER_MAP_H;
+  const size = tierMapSize(province.id);
+  const width = size.w;
+  const height = size.h;
   const zones = buildZones(map.zoneId, width, height, tier);
   const neighbors = ringNeighbors(province.id);
   const sensors: Sensor[] = neighbors
@@ -279,7 +283,7 @@ function createTierMap(zoneId: string): FieldState {
         townArrive: townReturnPad(province.regionId),
       })
     : [];
-  const dressed = dressMap(province.id, map.zoneId, width, height);
+  const dressed = dressMap(province.id, map.zoneId, width, height, zones);
   const entrance = entrancePad(width, height);
   const pads = [
     entrance,
@@ -328,7 +332,17 @@ function createTierMap(zoneId: string): FieldState {
   return withGroundLoot(built);
 }
 
-function dressMap(provinceId: string, zoneId: string, width: number, height: number): { ground: string | null; soft: Rect[]; solids: Rect[] } {
+function dressMap(
+  provinceId: string,
+  zoneId: string,
+  width: number,
+  height: number,
+  zones: readonly MapZone[],
+): { ground: string | null; soft: Rect[]; solids: Rect[] } {
+  if (provinceId === 'ocean') {
+    const dress = generateOcean(zoneId, width, height, zones);
+    return { ground: OCEAN_MID, ...dress };
+  }
   if (provinceId === 'plains') {
     const dress = generatePlains(zoneId, width, height);
     return { ground: PLAINS_GRASS, ...dress };
@@ -338,8 +352,8 @@ function dressMap(provinceId: string, zoneId: string, width: number, height: num
     return { ground: DESERT_SAND, ...dress };
   }
   if (provinceId === 'swamp') {
-    const dress = generateSwamp(zoneId, width, height);
-    return { ground: SWAMP_GROUND, ...dress };
+    const dress = generateSwampMap(zoneId, width, height, zones);
+    return { ground: SWAMP_MOSS, ...dress };
   }
   if (provinceId === 'savannah') {
     const dress = generateSavannah(zoneId, width, height);

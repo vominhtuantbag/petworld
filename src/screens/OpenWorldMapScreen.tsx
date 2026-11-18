@@ -73,11 +73,11 @@ export function OpenWorldMapScreen() {
       world.march(event.distance, event.dt);
       return;
     }
-    if (event.type === 'quicksand') {
+    if (event.type === 'quicksand' || event.type === 'reef' || event.type === 'khidoc') {
       world.hurtQuicksand();
       return;
     }
-    if (event.type === 'puddle') {
+    if (event.type === 'puddle' || event.type === 'whirlpool' || event.type === 'bunlay') {
       world.drainPuddle();
       return;
     }

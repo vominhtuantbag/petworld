@@ -35,6 +35,35 @@ export const HAZARD_TICK_SEC = 1;
 export const HAZARD_HP_PER_TICK = 2;
 export const HAZARD_STAMINA_PER_TICK = 2;
 
+/**
+ * Đại Dương and Đầm Lầy hazards. Vector art, so the native box is the
+ * drawing's design size. Trigger and picture are both `VECTOR_HAZARD_SCALE`
+ * times that box.
+ * - whirlpool (xoáy nước): ×0.85, −2 thể lực/giây
+ * - reef (bãi đá ngầm): ×0.80, −2 máu/giây
+ * - bunlay (bùn lầy): ×0.80, −2 thể lực/giây
+ * - khidoc (khí độc): ×0.90, −2 máu/giây
+ */
+export const VECTOR_HAZARD_SCALE = 8;
+export const VECTOR_HAZARD_ART = {
+  whirlpool: { w: 56, h: 56 },
+  reef: { w: 64, h: 40 },
+  bunlay: { w: 48, h: 32 },
+  khidoc: { w: 40, h: 40 },
+} as const;
+export type VectorHazardKind = keyof typeof VECTOR_HAZARD_ART;
+export const VECTOR_HAZARD_SPEED: Record<VectorHazardKind, number> = {
+  whirlpool: 0.85,
+  reef: 0.8,
+  bunlay: 0.8,
+  khidoc: 0.9,
+};
+
+export function vectorHazardSize(kind: VectorHazardKind): { w: number; h: number } {
+  const art = VECTOR_HAZARD_ART[kind];
+  return { w: art.w * VECTOR_HAZARD_SCALE, h: art.h * VECTOR_HAZARD_SCALE };
+}
+
 export function hazardSize(kind: HazardKind): { w: number; h: number } {
   const art = HAZARD_ART[kind];
   return { w: art.w * HAZARD_SCALE, h: art.h * HAZARD_SCALE };
@@ -165,8 +194,13 @@ function insideMap(rect: Rect, width: number, height: number): boolean {
   return rect.x >= 24 && rect.y >= 24 && rect.x + rect.w <= width - 24 && rect.y + rect.h <= height - 24;
 }
 
-function isHazardKind(kind: Rect['kind']): kind is HazardKind {
-  return kind === 'crack' || kind === 'quicksand' || kind === 'puddle';
+function isHazardKind(kind: Rect['kind']): boolean {
+  return (
+    kind === 'crack' ||
+    kind === 'quicksand' ||
+    kind === 'puddle' ||
+    (kind != null && kind in VECTOR_HAZARD_ART)
+  );
 }
 
 function clamp(min: number, max: number, value: number): number {

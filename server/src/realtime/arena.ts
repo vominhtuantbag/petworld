@@ -20,7 +20,7 @@ import type {
   QueueView,
 } from './protocol.js';
 import { advancedAtLevel } from '../combat/advanced.js';
-import { strikeRestMs } from './combatPace.js';
+import { TURN_MS, actorRestMs } from '@game/combat/flow.js';
 import { arenaHeroKit, professionFromAvatar } from '../combat/classSkills.js';
 import {
   applyOwnerMastery,
@@ -46,7 +46,6 @@ export type DuelHint = {
   maxHp: number;
 };
 
-const TURN_MS = 30_000;
 const DISCONNECT_GRACE_MS = 12_000;
 const PICK_MS = 20_000;
 const BAN_MS = 15_000;
@@ -941,6 +940,7 @@ export class Arena {
       return;
     }
 
+    const beforeHp = room.units.map((unit) => ({ id: unit.id, hp: unit.hp }));
     const resolved = resolveDuelAction(room.units, actor.id, action, skillIndex, targetId);
     room.units = resolved.units as CombatUnit[];
     if (resolved.log) room.log.push(resolved.log);
@@ -952,7 +952,7 @@ export class Arena {
       await this.closeBout(room, livingOwners[0] ?? null);
       return;
     }
-    this.advance(room, strikeRestMs(resolved.lastHit));
+    this.advance(room, actorRestMs(beforeHp, room.units));
     room.resolving = false;
     this.emitRoom(room);
   }

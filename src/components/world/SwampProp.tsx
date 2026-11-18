@@ -1,6 +1,7 @@
-import { StyleSheet, View } from 'react-native';
+import { Animated, StyleSheet, View } from 'react-native';
 
 import type { Rect } from '../../world/types';
+import { useLoop } from './useLoop';
 
 const SWAMP_KINDS = new Set([
   'dry',
@@ -159,11 +160,13 @@ function Fog({ rect }: { rect: Rect }) {
 }
 
 function Firefly({ rect }: { rect: Rect }) {
+  const flicker = useLoop(1400 + (Math.abs(Math.round(rect.w * 97 + rect.h * 31)) % 5) * 180, (Math.abs(rect.x) % 89) / 89);
+  const opacity = flicker.interpolate({ inputRange: [0, 0.35, 0.5, 0.65, 1], outputRange: [0.25, 1, 0.4, 1, 0.25] });
   return (
-    <View pointerEvents="none" style={[styles.abs, { left: rect.x, top: rect.y, width: rect.w, height: rect.h }]}>
+    <Animated.View pointerEvents="none" style={[styles.abs, { left: rect.x, top: rect.y, width: rect.w, height: rect.h, opacity }]}>
       <View style={styles.glow} />
       <View style={[styles.spark, { backgroundColor: rect.fill ?? '#e6f27a' }]} />
-    </View>
+    </Animated.View>
   );
 }
 

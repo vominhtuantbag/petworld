@@ -1,7 +1,7 @@
 import type { Server, Socket } from 'socket.io';
 
 import { advancedAtLevel } from '../combat/advanced.js';
-import { strikeRestMs } from './combatPace.js';
+import { TURN_MS, actorRestMs } from '@game/combat/flow.js';
 import { arenaHeroKit, professionFromAvatar } from '../combat/classSkills.js';
 import { petLoadoutSkills, resolveRaidAction, statusViewOf, type DuelCombatUnit } from '@game/combat/duelBridge.js';
 import type { Skill } from '@game/combat/model.js';
@@ -26,7 +26,6 @@ import type {
 type HeroSkillLoadout = { professionId: string; basicId: string; skillIds: string[] };
 
 const LOBBY_MS = 30_000;
-const TURN_MS = 30_000;
 const NPC_TURN_MS = 450;
 const TAME_MS = 15_000;
 const TAME_CAP = 30;
@@ -423,6 +422,7 @@ export class DungeonRaids {
       this.finish(room, actor.kind === 'hero');
       return;
     }
+    const beforeHp = room.units.map((unit) => ({ id: unit.id, hp: unit.hp }));
     const castUnits: DuelCombatUnit[] = room.units.map((unit) => ({
       ...unit,
       ownerId: unit.ownerId ?? (unit.kind === 'hero' ? unit.id : `foe:${unit.id}`),
@@ -450,7 +450,7 @@ export class DungeonRaids {
     });
     if (resolved.log) room.log.push(resolved.log);
     room.lastHit = resolved.lastHit;
-    const restMs = strikeRestMs(resolved.lastHit);
+    const restMs = actorRestMs(beforeHp, room.units);
     const heroesAlive = room.units.some((unit) => unit.kind === 'hero' && unit.hp > 0);
     const foesAlive = room.units.some((unit) => unit.kind !== 'hero' && unit.hp > 0);
     if (!foesAlive) {

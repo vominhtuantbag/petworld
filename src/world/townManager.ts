@@ -1,7 +1,7 @@
 import type { RegionId } from '../types/game';
 import { getRegion } from '../data/regions';
 import { isRingTown, sectorZoneId } from './atlas';
-import { SECTOR_SIZE, TIER_MAP_H, TIER_MAP_W } from './grid';
+import { SECTOR_SIZE, tierMapSize } from './grid';
 import { TRAVEL_COST } from './items';
 import { MAP1_ROSTER_VERSION } from './monsters';
 import { getRegionalTown, listExpansionTowns, listRingTowns, type RegionalTownConfig } from './regionConfig';
@@ -98,6 +98,7 @@ export function townRegionFromZone(zoneId: string): RegionId | null {
 export function openWorldExit(regionId: RegionId): TownExit {
   const ring = isRingTown(regionId);
   const gate = snapTownWalk(4900, 2500, 400, townGridBlocksFor(regionId));
+  const hunt = tierMapSize(regionId);
   return {
     id: 'gate',
     x: gate.x,
@@ -105,7 +106,7 @@ export function openWorldExit(regionId: RegionId): TownExit {
     r: GATE_R,
     label: 'Cổng ra ngoài',
     toZone: ring ? tierZoneId(regionId, 1) : sectorZoneId(regionId, 0, 0),
-    arrive: ring ? entrancePad(TIER_MAP_W, TIER_MAP_H) : { x: 180, y: SECTOR_SIZE / 2 },
+    arrive: ring ? entrancePad(hunt.w, hunt.h) : { x: 180, y: SECTOR_SIZE / 2 },
   };
 }
 

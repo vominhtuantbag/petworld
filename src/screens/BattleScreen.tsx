@@ -66,7 +66,7 @@ import {
 import { combatSfx } from '../world/combat/combatSfx';
 import { allowsFallenTargets, selectableCombatants } from '../world/combat/faint';
 import { describeSkill } from '../world/combat/kits';
-import { dodgeNamesFromLog, floatKindFromLog, SLASH_MS, STANCE_MS, STANCE_PX, TEAR_MS, TURN_GAP_MS, TURN_MS } from '../world/combat/loop';
+import { dodgeNamesFromLog, floatKindFromLog, STANCE_MS, STANCE_PX, TURN_MS, strikeFlow } from '../world/combat/loop';
 import { upcomingQueue } from '../world/combat/order';
 import { battleAim, skillAim } from '../world/combat/skillAim';
 import { MINE_WAVE_COUNT, mineClearDrops, mineEncounter, mineLabel } from '../world/dungeons';
@@ -446,6 +446,13 @@ export function BattleScreen() {
     const captured = new Set(next.tamed.map((monster) => monster.id).filter((id) => !before.tamed.some((monster) => monster.id === id)));
     const struck = hits.filter((hit) => !captured.has(hit.id));
     const lethal = struck.some((hit) => hit.hp <= 0);
+    const flow = strikeFlow({
+      struck: struck.length > 0,
+      lethal,
+      captured: captured.size > 0,
+      turnChanged: next.turnId !== before.turnId,
+      over: Boolean(next.over),
+    });
     const ticks = next.turnTicks ?? [];
     const shakeTicks = () => {
       const impact: Record<string, number> = {};
@@ -494,25 +501,22 @@ export function BattleScreen() {
       restHome();
       beatRef.current = 'hold';
       setBeat('hold');
-      const gap = !next.over && next.turnId !== before.turnId ? TURN_GAP_MS : 0;
-      later(gap, () => release(gen, next));
+      later(flow.gapMs, () => release(gen, next));
     };
-    if (struck.length === 0) {
-      if (captured.size > 0 && next.turnId !== before.turnId) {
-        const gen = ++strikeGen.current;
-        setBattle({ ...visual, turnId: before.turnId, over: null });
+    if (!flow.playStrike) {
+      if (flow.restMs === 0) {
+        setBattle(next);
+        return;
+      }
+      const gen = ++strikeGen.current;
+      setBattle({ ...visual, turnId: before.turnId, over: null });
+      if (flow.swingMs > 0) {
         beatRef.current = 'hold';
         setBeat('hold');
-        later(TEAR_MS, () => handoff(gen));
+        later(flow.swingMs, () => handoff(gen));
         return;
       }
-      if (next.turnId !== before.turnId && !next.over) {
-        const gen = ++strikeGen.current;
-        setBattle({ ...visual, turnId: before.turnId, over: null });
-        handoff(gen);
-        return;
-      }
-      setBattle(next);
+      handoff(gen);
       return;
     }
     const marks: Record<string, number> = {};
@@ -538,7 +542,7 @@ export function BattleScreen() {
     const gen = ++strikeGen.current;
     beatRef.current = 'slash';
     setBeat('slash');
-    later(lethal ? SLASH_MS + TEAR_MS : SLASH_MS, () => handoff(gen));
+    later(flow.swingMs, () => handoff(gen));
   };
 
   const liveQueue = useMemo(() => {

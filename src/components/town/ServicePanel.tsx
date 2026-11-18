@@ -7,7 +7,7 @@ import { useLayout } from '../../theme/useLayout';
 import { getRegion } from '../../data/regions';
 import { isRingTown, isSpecialRegion, tierWindow } from '../../world/atlas';
 import { badgeSetNotice } from '../../world/badges';
-import { TIER_MAP_H, TIER_MAP_W } from '../../world/grid';
+import { tierMapSize } from '../../world/grid';
 import { entrancePad, MAP_TIERS, tierRange, tierZoneId } from '../../world/tiers';
 import {
   GEAR_SLOTS,
@@ -272,7 +272,10 @@ function TravelRows() {
                 title={`Bản đồ ${tier}`}
                 detail={open ? `Cấp ${band.levelMin}–${band.levelMax}` : 'Chưa đúng cấp'}
                 action="Đến"
-                onPress={() => world.travelTo(tierZoneId(here, tier), entrancePad(TIER_MAP_W, TIER_MAP_H))}
+                onPress={() => {
+                  const hunt = tierMapSize(here);
+                  world.travelTo(tierZoneId(here, tier), entrancePad(hunt.w, hunt.h));
+                }}
               />
             );
           })}

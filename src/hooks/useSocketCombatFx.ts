@@ -2,11 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 
 import type { Step } from '../components/battle/CourtFx';
 import {
-  IMPACT_MS,
-  SLASH_MS,
   STANCE_PX,
-  TURN_GAP_MS,
   classifyLastHit,
+  hpStrikeFacts,
+  strikeFlow,
   type CombatFloat,
   type LastHitView,
 } from '../world/combat/loop';
@@ -16,9 +15,8 @@ type UnitLike = { id: string; hp: number };
 type SlotFn = (id: string) => { x: number; y: number } | null;
 
 /**
- * Shared CourtFx + float pipeline for Socket-driven battles (arena / raid).
- * Step A: active unit steps toward focus. Step D/E: HP deltas trigger slash →
- * shake → floating numbers with crit/miss kinds from lastHit.
+ * Shared CourtFx + float pipeline for socket battles (dungeon, challenge, rank).
+ * Turn timing comes from `strikeFlow`, the same schedule PvE uses.
  */
 export function useSocketCombatFx(input: {
   units: UnitLike[];
@@ -40,6 +38,9 @@ export function useSocketCombatFx(input: {
   const [presentedTurnId, setPresentedTurnId] = useState<string | null>(turnId);
   const [resting, setResting] = useState(false);
   const missMark = useRef<string | null>(null);
+  const presentedHp = useRef<Map<string, number> | null>(null);
+  const unitsRef = useRef(units);
+  unitsRef.current = units;
   const hpKey = units.map((unit) => `${unit.id}:${unit.hp}`).join('|');
 
   useEffect(() => {
@@ -107,35 +108,37 @@ export function useSocketCombatFx(input: {
     }
     if (hitIds.length === 0) return;
     const slashMarks: Record<string, number> = {};
+    const impact: Record<string, number> = {};
     for (const id of hitIds) {
       serial.current += 1;
       slashMarks[id] = serial.current;
+      serial.current += 1;
+      impact[id] = serial.current;
     }
     setSlashes((current) => ({ ...current, ...slashMarks }));
-    const timer = setTimeout(() => {
-      const impact: Record<string, number> = {};
-      for (const id of hitIds) {
-        serial.current += 1;
-        impact[id] = serial.current;
-      }
-      setShakes((current) => ({ ...current, ...impact }));
-    }, SLASH_MS + IMPACT_MS * 0);
-    return () => clearTimeout(timer);
+    setShakes((current) => ({ ...current, ...impact }));
   }, [finished, hpKey, lastHit, lastLog, turnId, units]);
 
   useEffect(() => {
+    const hpNow = unitsRef.current.map((unit) => ({ id: unit.id, hp: unit.hp }));
     if (presentedTurnId === turnId) {
+      presentedHp.current = new Map(hpNow.map((unit) => [unit.id, unit.hp]));
       setResting(false);
       return;
     }
-    const swing = lastHit && lastHit.damage > 0 ? SLASH_MS : 0;
-    const homeTimer = setTimeout(() => setResting(true), swing);
-    const timer = setTimeout(() => setPresentedTurnId(turnId), swing + TURN_GAP_MS);
+    const before = presentedHp.current;
+    const facts = before
+      ? hpStrikeFacts([...before].map(([id, hp]) => ({ id, hp })), hpNow)
+      : { struck: Boolean(lastHit && lastHit.damage > 0), lethal: false };
+    const flow = strikeFlow({ ...facts, captured: false, turnChanged: true, over: Boolean(finished) });
+    presentedHp.current = new Map(hpNow.map((unit) => [unit.id, unit.hp]));
+    const homeTimer = setTimeout(() => setResting(true), flow.swingMs);
+    const timer = setTimeout(() => setPresentedTurnId(turnId), flow.restMs);
     return () => {
       clearTimeout(homeTimer);
       clearTimeout(timer);
     };
-  }, [lastHit, presentedTurnId, turnId]);
+  }, [finished, lastHit, presentedTurnId, turnId, hpKey]);
 
   // Step-forward anticipation toward the focused (or first living) foe.
   useEffect(() => {

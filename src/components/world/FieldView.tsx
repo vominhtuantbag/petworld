@@ -4,14 +4,35 @@ import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { portalLayout } from '../../world/portals';
 import { portalFade } from '../../world/sim';
 import { townMapSource } from '../../world/townAssets';
+import { depthAxis } from '../../world/zoneDecor';
 import type { FieldState, LootActor, Rect, Sensor } from '../../world/types';
 import { ItemIcon } from '../ItemIcon';
+import { DepthGradient } from './DepthGradient';
 import { DesertProp, desertFootY, isDesertKind } from './DesertProp';
 import { stepHorizontalFacing } from './facing';
 import { PortalGate } from './PortalGate';
 import { advanceStride, createStride, type StridePose } from './stride';
 import { MonsterToken } from './MonsterToken';
+import {
+  FloatingLoot,
+  isOceanKind,
+  OCEAN_DEPTH_STOPS,
+  OceanGateArt,
+  oceanGateVariant,
+  OceanProp,
+  SailboatBack,
+  SailboatHull,
+  WakeTrail,
+} from './OceanProp';
 import { PlainsProp } from './PlainsProp';
+import {
+  isSwampMapKind,
+  SWAMP_DEPTH_STOPS,
+  SwampGateArt,
+  swampGateVariant,
+  SwampLoot,
+  SwampMapProp,
+} from './SwampMapProp';
 import { isSwampKind, SwampMist, SwampProp } from './SwampProp';
 import { TownHouse } from './TownHouse';
 
@@ -71,6 +92,32 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
   const shown = (rect: Rect) => frame != null && overlapsFrame(rect, frame);
   const desert = field.provinceId === 'desert' && field.chunkSize > 0;
   const swamp = field.provinceId === 'swamp' && field.chunkSize > 0;
+  const ocean = field.provinceId === 'ocean' && field.chunkSize > 0;
+  const toScreen = (point: { x: number; y: number }) =>
+    focus
+      ? { x: view.w / 2 + (point.x - focus.x) * scale, y: playH / 2 + (point.y - focus.y) * scale }
+      : { x: point.x + camera.x, y: point.y + camera.y };
+  const swampMap = swamp && zoned;
+  const depthStops = ocean ? OCEAN_DEPTH_STOPS : swampMap ? SWAMP_DEPTH_STOPS : null;
+  const axis = depthStops ? depthAxis(field) : null;
+  const depthFrom = axis ? toScreen(axis.from) : null;
+  const depthTo = axis ? toScreen(axis.to) : null;
+  const gateArt = ocean
+    ? (sensor: Sensor, w: number, h: number) => <OceanGateArt variant={oceanGateVariant(sensor.id)} width={w} height={h} />
+    : swampMap
+      ? (sensor: Sensor, w: number, h: number) => <SwampGateArt variant={swampGateVariant(sensor.id)} width={w} height={h} />
+      : undefined;
+  // Rocking on the swell replaces the walking bob while sailing.
+  const sailPose: StridePose = ocean
+    ? {
+        ...stridePose,
+        bob: Math.sin(stridePose.now / 380) * 2.4,
+        tilt: Math.sin(stridePose.now / 520) * 1.6,
+        sway: 0,
+        breathX: 1,
+        breathY: 1,
+      }
+    : stridePose;
   const terrain = field.decor.filter((rect) => TERRAIN.has(rect.kind ?? '') && shown(rect));
   const rolling = field.decor.filter((rect) => AMBIENT.has(rect.kind ?? '') && shown(rect));
   const flora = field.decor.filter((rect) => !TERRAIN.has(rect.kind ?? '') && !AMBIENT.has(rect.kind ?? '') && shown(rect));
@@ -153,6 +200,17 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
         setView({ w: width, h: height });
       }}
     >
+      {depthStops && depthFrom && depthTo ? (
+        <DepthGradient
+          width={view.w}
+          height={view.h}
+          x1={snap(depthFrom.x)}
+          y1={snap(depthFrom.y)}
+          x2={snap(depthTo.x)}
+          y2={snap(depthTo.y)}
+          stops={depthStops}
+        />
+      ) : null}
       {/* The meadow fills the screen. Standing trees and rocks sort with actors by foot position. */}
       <View style={[styles.pane, { top: 0 }]}>
         <View
@@ -232,10 +290,10 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
                       pointerEvents="none"
                       style={{ position: 'absolute', left: 0, top: 0, zIndex: Math.round(drop.y * 10) }}
                     >
-                      <FieldLootMark drop={drop} />
+                      {ocean ? <FloatingLoot drop={drop} /> : swamp ? <SwampLoot drop={drop} /> : <FieldLootMark drop={drop} />}
                     </View>
                   ))}
-                {gateNodes(field, frame, onSensor).map((item) => (
+                {gateNodes(field, frame, onSensor, gateArt).map((item) => (
                   <View
                     key={item.key}
                     pointerEvents="box-none"
@@ -250,16 +308,22 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
                   collapsable={false}
                   style={{ position: 'absolute', left: 0, top: 0, zIndex: Math.round((field.player.y + 28) * 10) }}
                 >
-                  <StepDust pose={stridePose} />
+                  {ocean ? <WakeTrail pose={stridePose} /> : <StepDust pose={stridePose} />}
                   <PortalSwirl x={field.player.x} y={field.player.y} />
+                  {ocean ? (
+                    <SailboatBack x={field.player.x} y={field.player.y} facing={playerFacing.current} bob={sailPose.bob} />
+                  ) : null}
                   <PlayerMark
                     x={field.player.x}
                     y={field.player.y}
                     facing={playerFacing.current}
                     facesRight={playerFacesRight}
-                    pose={stridePose}
+                    pose={sailPose}
                     player={player}
                   />
+                  {ocean ? (
+                    <SailboatHull x={field.player.x} y={field.player.y} facing={playerFacing.current} bob={sailPose.bob} />
+                  ) : null}
                 </View>
               </>
             )}
@@ -311,10 +375,15 @@ function placeRemotes(remotes: FieldRemote[] | undefined): { key: string; y: num
     .map((remote) => ({ key: remote.id, y: remote.y + 28, node: remote.node }));
 }
 
+function snap(value: number) {
+  return Math.round(value / 4) * 4;
+}
+
 function gateNodes(
   field: FieldState,
   frame: { x: number; y: number; w: number; h: number } | null,
   onSensor: (sensor: Sensor) => void,
+  art?: (sensor: Sensor, w: number, h: number) => ReactNode,
 ) {
   if (!frame) return [];
   const nodes: { key: string; y: number; node: ReactNode }[] = [];
@@ -325,7 +394,14 @@ function gateNodes(
     nodes.push({
       key: `gate-${sensor.id}`,
       y: pose.sortY,
-      node: <PortalGate pose={pose} label={sensor.label} onPress={() => onSensor(sensor)} />,
+      node: (
+        <PortalGate
+          pose={pose}
+          label={sensor.label}
+          onPress={() => onSensor(sensor)}
+          art={art?.(sensor, pose.imgW, pose.imgH)}
+        />
+      ),
     });
   }
   return nodes;
@@ -430,9 +506,58 @@ function StepDust({ pose }: { pose: StridePose }) {
   );
 }
 
-const TERRAIN = new Set(['light', 'dune', 'oasis', 'crack', 'quicksand', 'puddle', 'dry', 'mud']);
-const AMBIENT = new Set(['tumbleweed', 'firefly', 'bubble', 'fog']);
-const COVER = new Set(['tree', 'acacia', 'rock', 'saguaro', 'barrel', 'bunny', 'cactus', 'palm', 'mangrove', 'log', 'boulder']);
+const TERRAIN = new Set([
+  'light',
+  'dune',
+  'oasis',
+  'crack',
+  'quicksand',
+  'puddle',
+  'dry',
+  'mud',
+  'sandbar',
+  'coral',
+  'kelp',
+  'glowcoral',
+  'whirlpool',
+  'reef',
+  'swamppool',
+  'plank',
+  'sunkenlog',
+  'duckweed',
+  'waterlily',
+  'bones',
+  'bunlay',
+]);
+/** Drawn above actors. Tall reeds double as light cover; toxic gas hangs over whoever stands in it. */
+const AMBIENT = new Set([
+  'tumbleweed',
+  'firefly',
+  'bubble',
+  'fog',
+  'seamist',
+  'seabubble',
+  'tallreed',
+  'swampfog',
+  'dragonfly',
+  'gasbubble',
+  'khidoc',
+]);
+const COVER = new Set([
+  'tree',
+  'acacia',
+  'rock',
+  'saguaro',
+  'barrel',
+  'bunny',
+  'cactus',
+  'palm',
+  'mangrove',
+  'log',
+  'boulder',
+  'cypress',
+  'vineruin',
+]);
 /** Trees, single rocks, and rock piles share the actor depth list on the plains. */
 const PLAINS_STANDING = new Set(['tree', 'rock', 'pile']);
 const DESERT_STANDING = new Set(['dune', 'rock', 'oasis', 'cactus', 'saguaro', 'barrel', 'bunny', 'palm']);
@@ -443,6 +568,8 @@ function shownTall(rect: Rect, frame: { x: number; y: number; w: number; h: numb
 }
 
 function drawProp(rect: Rect, index: number, prefix: string, desert: boolean, swamp: boolean, sprites = false) {
+  if (isOceanKind(rect.kind)) return <OceanProp key={`${prefix}-${index}`} rect={rect} />;
+  if (isSwampMapKind(rect.kind)) return <SwampMapProp key={`${prefix}-${index}`} rect={rect} />;
   if (swamp && isSwampKind(rect.kind)) return <SwampProp key={`${prefix}-${index}`} rect={rect} />;
   if (desert && (isDesertKind(rect.kind) || rect.kind === 'rock')) {
     return <DesertProp key={`${prefix}-${index}`} rect={rect} sprites />;
@@ -458,6 +585,8 @@ function drawProp(rect: Rect, index: number, prefix: string, desert: boolean, sw
 
 function drawStructure(rect: Rect, index: number) {
   if (rect.roof) return <TownHouse key={`house-${index}`} house={rect} />;
+  if (isOceanKind(rect.kind)) return <OceanProp key={`block-${index}`} rect={rect} />;
+  if (isSwampMapKind(rect.kind)) return <SwampMapProp key={`block-${index}`} rect={rect} />;
   return (
     <View
       key={`block-${index}`}

@@ -10,6 +10,7 @@ export * from './duelBridge.js';
 export * from './elements.js';
 export * from './executeCombatAction.js';
 export * from './faint.js';
+export * from './flow.js';
 export * from './kits.js';
 export * from './locomotionTypes.js';
 export * from './model.js';

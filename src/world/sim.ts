@@ -133,20 +133,29 @@ function mudSlow(field: FieldState, x: number, y: number, player = false): numbe
   let slow = 1;
   for (const rect of field.decor) {
     if (rect.slow == null) continue;
-    if (!player && (rect.kind === 'crack' || rect.kind === 'quicksand' || rect.kind === 'puddle')) continue;
+    if (!player && PLAYER_ONLY_SLOW.has(rect.kind ?? '')) continue;
     if (x < rect.x || x > rect.x + rect.w || y < rect.y || y > rect.y + rect.h) continue;
     slow = Math.min(slow, rect.slow);
   }
   return slow;
 }
 
+const PLAYER_ONLY_SLOW = new Set(['crack', 'quicksand', 'puddle', 'whirlpool', 'reef', 'bunlay', 'khidoc']);
+
 /**
- * Seconds already spent inside cát lún or a vũng nước. Each clock is cleared
- * the frame the player is outside that zone, and both clear when the map changes.
- * The frame loop owns the tick, so leaving the zone does not leave a timer behind.
+ * Seconds already spent inside each draining hazard: cát lún, vũng nước,
+ * xoáy nước, bãi đá ngầm. Each clock is cleared the frame the player is
+ * outside that zone, and all clear when the map changes. The frame loop owns
+ * the tick, so leaving the zone does not leave a timer behind.
  */
-const terrainClock = { quicksand: 0, puddle: 0 };
+type DrainKind = 'quicksand' | 'puddle' | 'whirlpool' | 'reef' | 'bunlay' | 'khidoc';
+const DRAIN_KINDS: readonly DrainKind[] = ['quicksand', 'puddle', 'whirlpool', 'reef', 'bunlay', 'khidoc'];
+const terrainClock: Record<DrainKind, number> = { quicksand: 0, puddle: 0, whirlpool: 0, reef: 0, bunlay: 0, khidoc: 0 };
 let terrainZone = '';
+
+function clearTerrainClocks() {
+  for (const kind of DRAIN_KINDS) terrainClock[kind] = 0;
+}
 
 type PortalChannel = {
   id: string;
@@ -181,8 +190,7 @@ export function rejectPortal() {
 /** Drop partial hazard seconds. Called when the open map changes. */
 export function resetTerrainHazards() {
   terrainZone = '';
-  terrainClock.quicksand = 0;
-  terrainClock.puddle = 0;
+  clearTerrainClocks();
 }
 
 /** A tap on the gate uses the same one-second departure as walking in. */
@@ -247,24 +255,19 @@ function advancePortal(dt: number, events: FieldEvent[]) {
 function tickTerrainHazards(field: FieldState, x: number, y: number, dt: number, events: FieldEvent[]) {
   if (terrainZone !== field.zoneId) {
     terrainZone = field.zoneId;
-    terrainClock.quicksand = 0;
-    terrainClock.puddle = 0;
+    clearTerrainClocks();
   }
-  let quicksand = false;
-  let puddle = false;
+  const inside = new Set<DrainKind>();
   for (const rect of field.decor) {
-    if (rect.kind !== 'quicksand' && rect.kind !== 'puddle') continue;
-    if (!pointInRect(x, y, rect)) continue;
-    if (rect.kind === 'quicksand') quicksand = true;
-    else puddle = true;
-    if (quicksand && puddle) break;
+    const kind = rect.kind as DrainKind | undefined;
+    if (!kind || !DRAIN_KINDS.includes(kind) || inside.has(kind)) continue;
+    if (pointInRect(x, y, rect)) inside.add(kind);
   }
-  // Sa mạc only places quicksand. Đồng bằng only places water. One tick per second.
-  tickDrain('quicksand', quicksand, dt, events);
-  tickDrain('puddle', puddle, dt, events);
+  // One tick per second for each hazard the player stands in.
+  for (const kind of DRAIN_KINDS) tickDrain(kind, inside.has(kind), dt, events);
 }
 
-function tickDrain(kind: 'quicksand' | 'puddle', inside: boolean, dt: number, events: FieldEvent[]) {
+function tickDrain(kind: DrainKind, inside: boolean, dt: number, events: FieldEvent[]) {
   if (!inside) {
     terrainClock[kind] = 0;
     return;
