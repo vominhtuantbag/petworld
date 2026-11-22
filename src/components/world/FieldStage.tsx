@@ -7,7 +7,8 @@ import { useLayout } from '../../theme/useLayout';
 import { stepField, armPortal, resetPortal, resetTerrainHazards, type FieldAxes } from '../../world/sim';
 import type { FieldEvent, FieldState, LootActor } from '../../world/types';
 import { DebugGrid } from '../battle/DebugGrid';
-import { FieldView, type FieldRemote } from './FieldView';
+import type { WalkIdentity } from './characterWalk';
+import { FieldView, type FieldHazardFloat, type FieldRemote } from './FieldView';
 import { MovePad } from './MovePad';
 
 type Props = {
@@ -22,6 +23,8 @@ type Props = {
   player: ReactNode;
   /** False when the portrait is painted facing left. */
   playerFacesRight?: boolean;
+  /** Directional walk sheet (e.g. Lãng Khách nam). */
+  walkCharacter?: WalkIdentity | null;
   /** 1 keeps the original framing. Town and the open world pass a smaller value on mobile. */
   zoom?: number;
   remotes?: FieldRemote[];
@@ -29,6 +32,8 @@ type Props = {
   dungeonOpen?: boolean;
   /** Added to the 230 px/s walk speed. Shoes feed this. */
   speedBonus?: number;
+  hazardFloats?: FieldHazardFloat[];
+  onHazardFloatDone?: (id: number) => void;
   children?: ReactNode;
 };
 
@@ -36,7 +41,26 @@ type Props = {
  * Shared loop for the town and the wilderness. `paused` freezes the player
  * while a shop is open; monsters still advance so the world does not nap.
  */
-export function FieldStage({ field, onField, onEvent, canTake, paused, playerLevel = 1, stamina, testID, player, playerFacesRight = true, zoom = 1, remotes, dungeonOpen = false, speedBonus = 0, children }: Props) {
+export function FieldStage({
+  field,
+  onField,
+  onEvent,
+  canTake,
+  paused,
+  playerLevel = 1,
+  stamina,
+  testID,
+  player,
+  playerFacesRight = true,
+  walkCharacter = null,
+  zoom = 1,
+  remotes,
+  dungeonOpen = false,
+  speedBonus = 0,
+  hazardFloats,
+  onHazardFloatDone,
+  children,
+}: Props) {
   const insets = useSafeAreaInsets();
   const { s, height } = useLayout();
   const pad = Math.round(Math.min(height * 0.34, Math.max(96, s(118))));
@@ -107,8 +131,12 @@ export function FieldStage({ field, onField, onEvent, canTake, paused, playerLev
         field={field}
         player={player}
         playerFacesRight={playerFacesRight}
+        walkCharacter={walkCharacter}
         zoom={zoom}
         remotes={remotes}
+        hazardFloats={hazardFloats}
+        onHazardFloatDone={onHazardFloatDone}
+        stamina={stamina}
         onSensor={(sensor) => {
           if (pausedRef.current) return;
           if (sensor.dungeon) onEventRef.current({ type: 'dungeon', dungeon: sensor.dungeon });

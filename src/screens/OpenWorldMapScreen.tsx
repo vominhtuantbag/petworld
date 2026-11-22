@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { CharacterAvatar } from '../components/CharacterAvatar';
 import { MapHud, type MapMenuId } from '../components/map/MapHud';
 import { portraitFacesRight } from '../components/world/facing';
 import { FieldStage } from '../components/world/FieldStage';
+import type { FieldHazardFloat } from '../components/world/FieldView';
 import { MapChat } from '../components/world/MapChat';
 import { toNearby } from '../components/world/PvpChallenge';
 import { PlayerInfoHUD } from '../components/world/PlayerInfoHUD';
@@ -36,7 +37,17 @@ export function OpenWorldMapScreen() {
   const [menu, setMenu] = useState<MapMenuId | null>(null);
   const [customizing, setCustomizing] = useState(false);
   const [chatFocused, setChatFocused] = useState(false);
+  const [hazardFloats, setHazardFloats] = useState<FieldHazardFloat[]>([]);
+  const floatSeq = useRef(0);
   const look = useAvatarLook(setup.player?.baseCharacterId);
+  const pushHazardFloat = useCallback((kind: 'hp' | 'stamina', amount: number) => {
+    if (amount <= 0) return;
+    const id = (floatSeq.current += 1);
+    setHazardFloats((current) => [...current.slice(-7), { id, amount, kind }]);
+  }, []);
+  const clearHazardFloat = useCallback((id: number) => {
+    setHazardFloats((current) => current.filter((entry) => entry.id !== id));
+  }, []);
   const character = getCharacter(setup.player?.baseCharacterId);
   const others = useMultiplayer(
     setup.player
@@ -73,12 +84,36 @@ export function OpenWorldMapScreen() {
       world.march(event.distance, event.dt);
       return;
     }
-    if (event.type === 'quicksand' || event.type === 'reef' || event.type === 'khidoc') {
-      world.hurtQuicksand();
+    if (
+      event.type === 'quicksand' ||
+      event.type === 'reef' ||
+      event.type === 'khidoc' ||
+      event.type === 'dalo' ||
+      event.type === 'buigai' ||
+      event.type === 'vosoc' ||
+      event.type === 'khebang' ||
+      event.type === 'datnutthaonguyen' ||
+      event.type === 'dungnham_nuilua' ||
+      event.type === 'datnut_samac' ||
+      event.type === 'buigai_dongbang'
+    ) {
+      pushHazardFloat('hp', world.hurtQuicksand());
       return;
     }
-    if (event.type === 'puddle' || event.type === 'whirlpool' || event.type === 'bunlay') {
-      world.drainPuddle();
+    if (
+      event.type === 'puddle' ||
+      event.type === 'whirlpool' ||
+      event.type === 'bunlay' ||
+      event.type === 'gioloc' ||
+      event.type === 'dayleo' ||
+      event.type === 'catnong' ||
+      event.type === 'baotruyet' ||
+      event.type === 'giothaonguyen' ||
+      event.type === 'hoinong_nuilua' ||
+      event.type === 'catlun_samac' ||
+      event.type === 'bunlay_dongbang'
+    ) {
+      pushHazardFloat('stamina', world.drainPuddle());
       return;
     }
     if (event.type === 'encounter') {
@@ -142,6 +177,11 @@ export function OpenWorldMapScreen() {
         dungeonOpen={battle.goldenHour.active}
         speedBonus={world.speed}
         playerFacesRight={portraitFacesRight(character?.professionId, character?.gender)}
+        walkCharacter={
+          character ? { professionId: character.professionId, gender: character.gender } : null
+        }
+        hazardFloats={hazardFloats}
+        onHazardFloatDone={clearHazardFloat}
         remotes={others.players.map((player) => ({
           id: player.userId,
           x: player.x,

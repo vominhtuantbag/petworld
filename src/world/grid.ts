@@ -32,11 +32,22 @@ function snapToChunk(px: number): number {
 export const TIER_MAP_W = snapToChunk(REFERENCE_VIEW_W * MAP_SCALE);
 export const TIER_MAP_H = snapToChunk(REFERENCE_VIEW_H * MAP_SCALE);
 
-/** Đại Dương and Đầm Lầy use a tighter map: 10 viewports per axis instead of `MAP_SCALE`. */
-export const COMPACT_MAP_SCALE = 10;
+/** Ring hunting maps use 15 viewports per axis instead of `MAP_SCALE`. */
+export const COMPACT_MAP_SCALE = 15;
 export const COMPACT_MAP_W = snapToChunk(REFERENCE_VIEW_W * COMPACT_MAP_SCALE);
 export const COMPACT_MAP_H = snapToChunk(REFERENCE_VIEW_H * COMPACT_MAP_SCALE);
-const COMPACT_TOWNS = new Set(['ocean', 'swamp']);
+const COMPACT_TOWNS = new Set([
+  'ocean',
+  'swamp',
+  'mountains',
+  'forest',
+  'beach',
+  'tundra',
+  'savannah',
+  'volcano',
+  'desert',
+  'plains',
+]);
 
 /** Hunting-map size for one ring town. Gates use the destination's size for arrival pads. */
 export function tierMapSize(townId: string): { w: number; h: number } {

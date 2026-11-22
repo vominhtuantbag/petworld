@@ -101,6 +101,38 @@ export type Rect = {
    * `swamppool`, `plank` (runs along its long side), `sunkenlog`, `glowshroom`,
    * `swampfog`, `dragonfly`, `gasbubble`, `bones`, `bunlay` (×0.80, −2 thể lực/giây),
    * `khidoc` (×0.90, −2 máu/giây).
+   * Mountain solids: `cliff`, `abyss`, `stonewall`, `pillar`. Mountain decor:
+   * `foothill`, `gravel`, `stream`, `pine`, `wildflower`, `mtngrass`, `trail`,
+   * `ropebridge`, `nest`, `cave`, `bamboo`, `mtcloud`, `eagle`, `snow`,
+   * `gioloc` (×0.85, −2 thể lực/giây), `dalo` (×0.80, −2 máu/giây).
+   * Forest solids: `foresttree`, `rootwall`, `rootruin` (plus `log`). Forest
+   * decor: `mossgrass`, `leaflitter`, `sunbeam`, `fern`, `hangingvine`,
+   * `forestshroom`, `forestfog`, `watcheye`, `spore`,
+   * `dayleo` (×0.85, −2 thể lực/giây), `buigai` (×0.80, −2 máu/giây).
+   * Beach solids: `coastrock`, `leanpalm`, `tikihut`. Beach decor: `driesand`,
+   * `wetsand`, `shallow`, `foam`, `seashell`, `starfish`, `umbrella`, `seaweed`,
+   * `beachchair`, `sunray`, `seagull`,
+   * `catnong` (×0.85, −2 thể lực/giây), `vosoc` (×0.80, −2 máu/giây).
+   * Frost solids: `glacierock`, `icepillar`, `frostcliff`. Frost decor:
+   * `frostsnow`, `jadeice`, `cobaltice`, `snowdrift`, `frostbush`,
+   * `crystalshard`, `snowflake`, `frostwind`, `iceglare`,
+   * `baotruyet` (×0.85, −2 thể lực/giây), `khebang` (×0.80, −2 máu/giây).
+   * Savannah solids: `savacacia`, `savrock`. Savannah decor: `tempgrass`,
+   * `goldgrass`, `dryearth`, `savstream`, `flatstone`, `savreed`, `mound`,
+   * `heatshimmer`, `giothaonguyen` (×0.85, −2 thể lực/giây),
+   * `datnutthaonguyen` (×0.80, −2 máu/giây).
+   * Volcano solids: `basaltcrag`, `volrock`. Volcano decor: `ashsoil`,
+   * `pumice`, `basalt`, `heatcrack`, `magmachannel`, `sulfurvent`,
+   * `ashdrift`, `ember`, `hoinong_nuilua` (×0.85, −2 thể lực/giây),
+   * `dungnham_nuilua` (×0.80, −2 máu/giây).
+   * Desert-map solids: `desdune`, `sandridge`, `oasispalm`, `descactus`,
+   * `desrock`. Desert-map decor: `goldsand`, `redstone`, `drygrass`,
+   * `oasisgreen`, `oasispool`, `scrub`, `caravantrail`, `dustwisp`,
+   * `catlun_samac` (×0.85, −2 thể lực/giây), `datnut_samac` (×0.80, −2 máu/giây).
+   * Plains-map solids: `plmtree`, `plmrock`, `plmbush`. Plains-map decor:
+   * `meadow`, `damppatch`, `flowerbed`, `reed`, `stream`, `hillock`,
+   * `thicketgrass`, `dawnglow`, `bunlay_dongbang` (×0.85, −2 thể lực/giây),
+   * `buigai_dongbang` (×0.80, −2 máu/giây).
    * `slow` is a speed multiplier while the player stands inside.
    */
   kind?:
@@ -162,7 +194,123 @@ export type Rect = {
     | 'bones'
     | 'vineruin'
     | 'bunlay'
-    | 'khidoc';
+    | 'khidoc'
+    | 'foothill'
+    | 'gravel'
+    | 'stream'
+    | 'pine'
+    | 'wildflower'
+    | 'mtngrass'
+    | 'cliff'
+    | 'abyss'
+    | 'stonewall'
+    | 'trail'
+    | 'ropebridge'
+    | 'nest'
+    | 'cave'
+    | 'bamboo'
+    | 'mtcloud'
+    | 'eagle'
+    | 'pillar'
+    | 'snow'
+    | 'gioloc'
+    | 'dalo'
+    | 'mossgrass'
+    | 'leaflitter'
+    | 'sunbeam'
+    | 'fern'
+    | 'hangingvine'
+    | 'forestshroom'
+    | 'foresttree'
+    | 'rootwall'
+    | 'rootruin'
+    | 'forestfog'
+    | 'watcheye'
+    | 'spore'
+    | 'dayleo'
+    | 'buigai'
+    | 'driesand'
+    | 'wetsand'
+    | 'shallow'
+    | 'foam'
+    | 'seashell'
+    | 'starfish'
+    | 'umbrella'
+    | 'seaweed'
+    | 'beachchair'
+    | 'coastrock'
+    | 'leanpalm'
+    | 'tikihut'
+    | 'sunray'
+    | 'seagull'
+    | 'catnong'
+    | 'vosoc'
+    | 'frostsnow'
+    | 'jadeice'
+    | 'cobaltice'
+    | 'snowdrift'
+    | 'frostbush'
+    | 'crystalshard'
+    | 'glacierock'
+    | 'icepillar'
+    | 'frostcliff'
+    | 'snowflake'
+    | 'frostwind'
+    | 'iceglare'
+    | 'baotruyet'
+    | 'khebang'
+    | 'tempgrass'
+    | 'goldgrass'
+    | 'dryearth'
+    | 'savstream'
+    | 'flatstone'
+    | 'savreed'
+    | 'mound'
+    | 'savacacia'
+    | 'savrock'
+    | 'heatshimmer'
+    | 'giothaonguyen'
+    | 'datnutthaonguyen'
+    | 'ashsoil'
+    | 'pumice'
+    | 'basalt'
+    | 'heatcrack'
+    | 'magmachannel'
+    | 'sulfurvent'
+    | 'ashdrift'
+    | 'ember'
+    | 'basaltcrag'
+    | 'volrock'
+    | 'hoinong_nuilua'
+    | 'dungnham_nuilua'
+    | 'goldsand'
+    | 'redstone'
+    | 'drygrass'
+    | 'oasisgreen'
+    | 'oasispool'
+    | 'scrub'
+    | 'caravantrail'
+    | 'dustwisp'
+    | 'desdune'
+    | 'sandridge'
+    | 'oasispalm'
+    | 'descactus'
+    | 'desrock'
+    | 'catlun_samac'
+    | 'datnut_samac'
+    | 'meadow'
+    | 'damppatch'
+    | 'flowerbed'
+    | 'reed'
+    | 'stream'
+    | 'hillock'
+    | 'thicketgrass'
+    | 'dawnglow'
+    | 'plmtree'
+    | 'plmrock'
+    | 'plmbush'
+    | 'bunlay_dongbang'
+    | 'buigai_dongbang';
   /** Pixels per second. Tumbleweeds, fireflies, and bubbles drift by this. */
   drift?: { vx: number; vy: number };
   /** Speed multiplier while the player stands inside. Mud, cracked earth, quicksand, and plains water use a value below 1. */
@@ -370,7 +518,23 @@ export type FieldEvent =
   | { type: 'whirlpool' }
   | { type: 'reef' }
   | { type: 'bunlay' }
-  | { type: 'khidoc' };
+  | { type: 'khidoc' }
+  | { type: 'gioloc' }
+  | { type: 'dalo' }
+  | { type: 'dayleo' }
+  | { type: 'buigai' }
+  | { type: 'catnong' }
+  | { type: 'vosoc' }
+  | { type: 'baotruyet' }
+  | { type: 'khebang' }
+  | { type: 'giothaonguyen' }
+  | { type: 'datnutthaonguyen' }
+  | { type: 'hoinong_nuilua' }
+  | { type: 'dungnham_nuilua' }
+  | { type: 'catlun_samac' }
+  | { type: 'datnut_samac' }
+  | { type: 'bunlay_dongbang' }
+  | { type: 'buigai_dongbang' };
 
 export type Encounter = {
   id: string;

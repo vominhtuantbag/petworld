@@ -9,7 +9,12 @@ import { dropChance } from './progression';
 import { zoneIndexAt } from './tiers';
 import type { ChunkRecord, FieldEvent, FieldState, LootActor, MonsterActor, Rect, Sensor, Vec } from './types';
 
-export const PLAYER_SPEED = 230;
+/** Open-map run speed in world px/s. */
+export const PLAYER_SPEED = 180;
+/** Town hub walk speed — slower than the open-map run. */
+export const TOWN_SPEED = 150;
+/** Empty-SP crawl on the open map: PLAYER_SPEED * this = 90. */
+export const EMPTY_STAMINA_PACE = 0.5;
 const LOOT_CAP = 96;
 const PICKUP_R = 24;
 /** How long the map stays safe after the player runs from a fight. */
@@ -37,7 +42,10 @@ export function stepField(
   const events: FieldEvent[] = [];
   const beforeX = awake.player.x;
   const beforeY = awake.player.y;
-  const pace = stamina <= 0 ? 0.5 : 1;
+  const inTown = awake.zoneId.startsWith('town:');
+  // Open map: run, or crawl when SP is empty. Town: always walk (no shoe bonus).
+  const base = inTown ? TOWN_SPEED : PLAYER_SPEED + Math.max(0, speedBonus);
+  const pace = !inTown && stamina <= 0 ? EMPTY_STAMINA_PACE : 1;
   const channeling = portalChannel != null && !portalChannel.fired;
   const moveAxes = channeling ? { x: 0, y: 0 } : axes;
   const player = moveBody(
@@ -45,7 +53,7 @@ export function stepField(
     awake.player.y,
     awake.player.r,
     moveAxes,
-    (PLAYER_SPEED + Math.max(0, speedBonus)) * mudSlow(awake, awake.player.x, awake.player.y, true) * pace,
+    base * mudSlow(awake, awake.player.x, awake.player.y, true) * pace,
     dt,
     awake,
   );
@@ -125,9 +133,8 @@ function driftAmbient(field: FieldState, dt: number): Rect[] {
 }
 
 /**
- * Lowest overlapping terrain multiplier. Cracked earth (×0.90), quicksand
- * (×0.80), and plains water (×0.85) slow only the player. Swamp mud still
- * slows whoever is standing in it.
+ * Lowest overlapping terrain multiplier. Hazards slow only the player.
+ * Swamp mud still slows whoever is standing in it.
  */
 function mudSlow(field: FieldState, x: number, y: number, player = false): number {
   let slow = 1;
@@ -140,17 +147,113 @@ function mudSlow(field: FieldState, x: number, y: number, player = false): numbe
   return slow;
 }
 
-const PLAYER_ONLY_SLOW = new Set(['crack', 'quicksand', 'puddle', 'whirlpool', 'reef', 'bunlay', 'khidoc']);
+const PLAYER_ONLY_SLOW = new Set([
+  'crack',
+  'quicksand',
+  'puddle',
+  'whirlpool',
+  'reef',
+  'bunlay',
+  'khidoc',
+  'gioloc',
+  'dalo',
+  'dayleo',
+  'buigai',
+  'catnong',
+  'vosoc',
+  'baotruyet',
+  'khebang',
+  'giothaonguyen',
+  'datnutthaonguyen',
+  'hoinong_nuilua',
+  'dungnham_nuilua',
+  'catlun_samac',
+  'datnut_samac',
+  'bunlay_dongbang',
+  'buigai_dongbang',
+]);
+
+/** True while the player stands inside any slow/drain hazard. */
+export function playerInHazard(field: FieldState): boolean {
+  return mudSlow(field, field.player.x, field.player.y, true) < 1;
+}
 
 /**
- * Seconds already spent inside each draining hazard: cát lún, vũng nước,
- * xoáy nước, bãi đá ngầm. Each clock is cleared the frame the player is
- * outside that zone, and all clear when the map changes. The frame loop owns
- * the tick, so leaving the zone does not leave a timer behind.
+ * Seconds already spent inside each draining hazard. Each clock is cleared
+ * the frame the player is outside that zone, and all clear when the map
+ * changes. The frame loop owns the tick, so leaving does not leave a timer.
  */
-type DrainKind = 'quicksand' | 'puddle' | 'whirlpool' | 'reef' | 'bunlay' | 'khidoc';
-const DRAIN_KINDS: readonly DrainKind[] = ['quicksand', 'puddle', 'whirlpool', 'reef', 'bunlay', 'khidoc'];
-const terrainClock: Record<DrainKind, number> = { quicksand: 0, puddle: 0, whirlpool: 0, reef: 0, bunlay: 0, khidoc: 0 };
+type DrainKind =
+  | 'quicksand'
+  | 'puddle'
+  | 'whirlpool'
+  | 'reef'
+  | 'bunlay'
+  | 'khidoc'
+  | 'gioloc'
+  | 'dalo'
+  | 'dayleo'
+  | 'buigai'
+  | 'catnong'
+  | 'vosoc'
+  | 'baotruyet'
+  | 'khebang'
+  | 'giothaonguyen'
+  | 'datnutthaonguyen'
+  | 'hoinong_nuilua'
+  | 'dungnham_nuilua'
+  | 'catlun_samac'
+  | 'datnut_samac'
+  | 'bunlay_dongbang'
+  | 'buigai_dongbang';
+const DRAIN_KINDS: readonly DrainKind[] = [
+  'quicksand',
+  'puddle',
+  'whirlpool',
+  'reef',
+  'bunlay',
+  'khidoc',
+  'gioloc',
+  'dalo',
+  'dayleo',
+  'buigai',
+  'catnong',
+  'vosoc',
+  'baotruyet',
+  'khebang',
+  'giothaonguyen',
+  'datnutthaonguyen',
+  'hoinong_nuilua',
+  'dungnham_nuilua',
+  'catlun_samac',
+  'datnut_samac',
+  'bunlay_dongbang',
+  'buigai_dongbang',
+];
+const terrainClock: Record<DrainKind, number> = {
+  quicksand: 0,
+  puddle: 0,
+  whirlpool: 0,
+  reef: 0,
+  bunlay: 0,
+  khidoc: 0,
+  gioloc: 0,
+  dalo: 0,
+  dayleo: 0,
+  buigai: 0,
+  catnong: 0,
+  vosoc: 0,
+  baotruyet: 0,
+  khebang: 0,
+  giothaonguyen: 0,
+  datnutthaonguyen: 0,
+  hoinong_nuilua: 0,
+  dungnham_nuilua: 0,
+  catlun_samac: 0,
+  datnut_samac: 0,
+  bunlay_dongbang: 0,
+  buigai_dongbang: 0,
+};
 let terrainZone = '';
 
 function clearTerrainClocks() {

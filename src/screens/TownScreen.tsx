@@ -78,6 +78,9 @@ export function TownScreen() {
         testID="town-screen"
         zoom={worldZoom()}
         playerFacesRight={portraitFacesRight(character?.professionId, character?.gender)}
+        walkCharacter={
+          character ? { professionId: character.professionId, gender: character.gender } : null
+        }
         remotes={others.players.map((player) => ({
           id: player.userId,
           x: player.x,

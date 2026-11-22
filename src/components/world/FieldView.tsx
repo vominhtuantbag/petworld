@@ -2,14 +2,27 @@ import { useRef, useState, type ReactNode } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { portalLayout } from '../../world/portals';
-import { portalFade } from '../../world/sim';
+import { playerInHazard, portalFade } from '../../world/sim';
 import { townMapSource } from '../../world/townAssets';
 import { depthAxis } from '../../world/zoneDecor';
 import type { FieldState, LootActor, Rect, Sensor } from '../../world/types';
+import { FloatingCombatText } from '../battle/FloatingCombatText';
 import { ItemIcon } from '../ItemIcon';
 import { DepthGradient } from './DepthGradient';
 import { DesertProp, desertFootY, isDesertKind } from './DesertProp';
-import { stepHorizontalFacing } from './facing';
+import {
+  DESERT_DEPTH_STOPS,
+  DesertGateArt,
+  desertGateVariant,
+  DesertHaze,
+  DesertMapLoot,
+  DesertMapProp,
+  isDesertMapKind,
+} from './DesertMapProp';
+import { hasWalkPack, isFrameWalkPack, walkSource, type WalkDir, type WalkIdentity } from './characterWalk';
+import { DaoChichPuppet, isDaoChichPuppet } from './DaoChichPuppet';
+import { stepCardinalFacing, stepHorizontalFacing } from './facing';
+import { easeGaitAxis, feelFromAxis, targetPlayerGait, type GaitFeel } from './playerGait';
 import { PortalGate } from './PortalGate';
 import { advanceStride, createStride, type StridePose } from './stride';
 import { MonsterToken } from './MonsterToken';
@@ -24,7 +37,58 @@ import {
   SailboatHull,
   WakeTrail,
 } from './OceanProp';
+import {
+  isMountainKind,
+  MOUNTAIN_DEPTH_STOPS,
+  MountainGateArt,
+  mountainGateVariant,
+  MountainLoot,
+  MountainProp,
+} from './MountainProp';
+import {
+  BEACH_DEPTH_STOPS,
+  BeachGateArt,
+  beachGateVariant,
+  BeachLoot,
+  BeachProp,
+  isBeachKind,
+} from './BeachProp';
+import {
+  FOREST_DEPTH_STOPS,
+  ForestGateArt,
+  forestGateVariant,
+  ForestLoot,
+  ForestProp,
+  isForestKind,
+} from './ForestProp';
+import {
+  FROST_DEPTH_STOPS,
+  FrostGateArt,
+  frostGateVariant,
+  FrostLoot,
+  FrostProp,
+  FrostSnow,
+  isFrostKind,
+} from './FrostProp';
 import { PlainsProp } from './PlainsProp';
+import {
+  isPlainsMapKind,
+  PlainsDawn,
+  PlainsGateArt,
+  plainsGateVariant,
+  PlainsMapBackdrop,
+  PlainsMapLoot,
+  PlainsMapProp,
+} from './PlainsMapProp';
+import {
+  isSavannaKind,
+  SAVANNAH_DEPTH_STOPS,
+  SavannaGateArt,
+  savannaGateVariant,
+  SavannaHaze,
+  SavannaLoot,
+  SavannaProp,
+} from './SavannaProp';
 import {
   isSwampMapKind,
   SWAMP_DEPTH_STOPS,
@@ -35,14 +99,30 @@ import {
 } from './SwampMapProp';
 import { isSwampKind, SwampMist, SwampProp } from './SwampProp';
 import { TownHouse } from './TownHouse';
+import {
+  isVolcanoKind,
+  VOLCANO_DEPTH_STOPS,
+  VolcanoAsh,
+  VolcanoGateArt,
+  volcanoGateVariant,
+  VolcanoLoot,
+  VolcanoProp,
+} from './VolcanoProp';
 
 const LOOT_SIZE = 40;
+/** Matches `PlayerMark` body box so hazard floats sit just above the head. */
+const PLAYER_DRAW_H = 109;
+const PLAYER_FEET = 28;
+
+export type FieldHazardFloat = { id: number; amount: number; kind: 'hp' | 'stamina' };
 
 type Props = {
   field: FieldState;
   player: ReactNode;
   /** False when the drawn portrait already looks left, so the mirror faces right. */
   playerFacesRight?: boolean;
+  /** When set and a walk pack exists, field uses directional walk frames. */
+  walkCharacter?: WalkIdentity | null;
   /**
    * 1 is one world pixel per screen pixel. A smaller value pulls the camera
    * back. Web and native both use the wide camera.
@@ -51,6 +131,11 @@ type Props = {
   onSensor: (sensor: Sensor) => void;
   /** Other accounts already positioned in world pixels. */
   remotes?: FieldRemote[];
+  /** Hazard drain popups anchored in world space above the player. */
+  hazardFloats?: FieldHazardFloat[];
+  onHazardFloatDone?: (id: number) => void;
+  /** Current stamina — empty stamina also suppresses step dust. */
+  stamina?: number;
 };
 
 export type FieldRemote = {
@@ -65,25 +150,62 @@ export type FieldRemote = {
  * player stays near the middle. Building and gate labels are pressable, so
  * a tap works as well as walking into the sensor.
  */
-export function FieldView({ field, player, playerFacesRight = true, zoom = 1, onSensor, remotes }: Props) {
+export function FieldView({
+  field,
+  player,
+  playerFacesRight = true,
+  walkCharacter = null,
+  zoom = 1,
+  onSensor,
+  remotes,
+  hazardFloats,
+  onHazardFloatDone,
+  stamina,
+}: Props) {
   const [view, setView] = useState({ w: 0, h: 0 });
   const lastPlayer = useRef({ x: field.player.x, y: field.player.y });
   const playerFacing = useRef<1 | -1>(1);
+  const walkDir = useRef<WalkDir>('down');
   const stride = useRef(createStride());
+  const gaitAxis = useRef(1);
+  const gaitClock = useRef(Date.now());
   const playerDx = field.player.x - lastPlayer.current.x;
   const playerDy = field.player.y - lastPlayer.current.y;
   playerFacing.current = stepHorizontalFacing(playerFacing.current, playerDx, 0.35, playerDy);
+  walkDir.current = stepCardinalFacing(walkDir.current, playerDx, playerDy, 0.35);
+  const useWalk = hasWalkPack(walkCharacter);
+  const onHazard = playerInHazard(field);
+  const inTown = field.zoneId.startsWith('town:');
+  const winded = stamina != null && stamina <= 0;
+  const moving = Math.hypot(playerDx, playerDy) > 0.35;
+  const now = Date.now();
+  const gaitDt = Math.min(0.05, Math.max(0, (now - gaitClock.current) / 1000));
+  gaitClock.current = now;
+  gaitAxis.current = easeGaitAxis(gaitAxis.current, targetPlayerGait(inTown, stamina, moving), gaitDt);
+  const gaitFeel = feelFromAxis(gaitAxis.current);
+  // Dust = open-map run only. Town walk and empty-SP crawl stay clean.
   const stridePose = advanceStride(
     stride.current,
-    Math.hypot(playerDx, playerDy) > 0.35,
+    moving,
     field.player.x,
     field.player.y,
     playerDx,
     playerDy,
+    now,
+    !inTown && !onHazard && !winded,
+    {
+      cadence: gaitFeel.cadence,
+      bobScale: gaitFeel.bob / 3.4,
+      tiltScale: gaitFeel.tilt / 5.2,
+      swayScale: gaitFeel.sway / 2.1,
+    },
   );
   lastPlayer.current = { x: field.player.x, y: field.player.y };
-  const scenic = field.provinceId === 'plains' && field.chunkSize > 0;
+  const plains = field.provinceId === 'plains' && field.chunkSize > 0;
   const zoned = (field.zones?.length ?? 0) >= 5;
+  const plainsMap = plains && zoned;
+  /** Legacy sprite plains (sector / pre-zone) keeps depth-sorted standing props. */
+  const scenic = plains && !plainsMap;
   const playH = view.h;
   const scale = zoom > 0 && zoom < 1 ? zoom : 1;
   const focus = scale < 1 && view.w > 0 ? cameraFocus(field, view.w, playH, scale) : null;
@@ -93,12 +215,45 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
   const desert = field.provinceId === 'desert' && field.chunkSize > 0;
   const swamp = field.provinceId === 'swamp' && field.chunkSize > 0;
   const ocean = field.provinceId === 'ocean' && field.chunkSize > 0;
+  const mountains = field.provinceId === 'mountains' && field.chunkSize > 0;
+  const forest = field.provinceId === 'forest' && field.chunkSize > 0;
+  const beach = field.provinceId === 'beach' && field.chunkSize > 0;
+  const frost = field.provinceId === 'tundra' && field.chunkSize > 0;
+  const savannah = field.provinceId === 'savannah' && field.chunkSize > 0;
+  const volcano = field.provinceId === 'volcano' && field.chunkSize > 0;
   const toScreen = (point: { x: number; y: number }) =>
     focus
       ? { x: view.w / 2 + (point.x - focus.x) * scale, y: playH / 2 + (point.y - focus.y) * scale }
       : { x: point.x + camera.x, y: point.y + camera.y };
   const swampMap = swamp && zoned;
-  const depthStops = ocean ? OCEAN_DEPTH_STOPS : swampMap ? SWAMP_DEPTH_STOPS : null;
+  const mountainMap = mountains && zoned;
+  const forestMap = forest && zoned;
+  const beachMap = beach && zoned;
+  const frostMap = frost && zoned;
+  const savannahMap = savannah && zoned;
+  const volcanoMap = volcano && zoned;
+  const desertMap = desert && zoned;
+  /** Legacy sprite desert (sector / pre-zone) keeps depth-sorted standing props. */
+  const desertLegacy = desert && !desertMap;
+  const depthStops = ocean
+    ? OCEAN_DEPTH_STOPS
+    : swampMap
+      ? SWAMP_DEPTH_STOPS
+      : mountainMap
+        ? MOUNTAIN_DEPTH_STOPS
+        : forestMap
+          ? FOREST_DEPTH_STOPS
+          : beachMap
+            ? BEACH_DEPTH_STOPS
+            : frostMap
+              ? FROST_DEPTH_STOPS
+              : savannahMap
+                ? SAVANNAH_DEPTH_STOPS
+                : volcanoMap
+                  ? VOLCANO_DEPTH_STOPS
+                  : desertMap
+                    ? DESERT_DEPTH_STOPS
+                    : null;
   const axis = depthStops ? depthAxis(field) : null;
   const depthFrom = axis ? toScreen(axis.from) : null;
   const depthTo = axis ? toScreen(axis.to) : null;
@@ -106,7 +261,31 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
     ? (sensor: Sensor, w: number, h: number) => <OceanGateArt variant={oceanGateVariant(sensor.id)} width={w} height={h} />
     : swampMap
       ? (sensor: Sensor, w: number, h: number) => <SwampGateArt variant={swampGateVariant(sensor.id)} width={w} height={h} />
-      : undefined;
+      : mountainMap
+        ? (sensor: Sensor, w: number, h: number) => <MountainGateArt variant={mountainGateVariant(sensor.id)} width={w} height={h} />
+        : forestMap
+          ? (sensor: Sensor, w: number, h: number) => <ForestGateArt variant={forestGateVariant(sensor.id)} width={w} height={h} />
+          : beachMap
+            ? (sensor: Sensor, w: number, h: number) => <BeachGateArt variant={beachGateVariant(sensor.id)} width={w} height={h} />
+            : frostMap
+              ? (sensor: Sensor, w: number, h: number) => <FrostGateArt variant={frostGateVariant(sensor.id)} width={w} height={h} />
+              : savannahMap
+                ? (sensor: Sensor, w: number, h: number) => (
+                    <SavannaGateArt variant={savannaGateVariant(sensor.id)} width={w} height={h} />
+                  )
+                : volcanoMap
+                  ? (sensor: Sensor, w: number, h: number) => (
+                      <VolcanoGateArt variant={volcanoGateVariant(sensor.id)} width={w} height={h} />
+                    )
+                  : desertMap
+                    ? (sensor: Sensor, w: number, h: number) => (
+                        <DesertGateArt variant={desertGateVariant(sensor.id)} width={w} height={h} />
+                      )
+                    : plainsMap
+                      ? (sensor: Sensor, w: number, h: number) => (
+                          <PlainsGateArt variant={plainsGateVariant(sensor.id)} width={w} height={h} />
+                        )
+                      : undefined;
   // Rocking on the swell replaces the walking bob while sailing.
   const sailPose: StridePose = ocean
     ? {
@@ -120,29 +299,31 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
     : stridePose;
   const terrain = field.decor.filter((rect) => TERRAIN.has(rect.kind ?? '') && shown(rect));
   const rolling = field.decor.filter((rect) => AMBIENT.has(rect.kind ?? '') && shown(rect));
-  const flora = field.decor.filter((rect) => !TERRAIN.has(rect.kind ?? '') && !AMBIENT.has(rect.kind ?? '') && shown(rect));
+  const flora = field.decor.filter(
+    (rect) => !TERRAIN.has(rect.kind ?? '') && !AMBIENT.has(rect.kind ?? '') && rect.kind !== 'watcheye' && shown(rect),
+  );
   const overlay = field.blocks.filter(
     (rect) =>
       COVER.has(rect.kind ?? '') &&
       shown(rect) &&
       !(scenic && PLAINS_STANDING.has(rect.kind ?? '')) &&
-      !(desert && DESERT_STANDING.has(rect.kind ?? '')),
+      !(desertLegacy && DESERT_STANDING.has(rect.kind ?? '')),
   );
   const structures = field.blocks.filter((rect) => {
     if (!shown(rect) || COVER.has(rect.kind ?? '')) return false;
     // Collision-only rects (Bãi Biển path mask) stay invisible.
     if (!rect.kind && !rect.roof && !rect.fill) return false;
     if (scenic && (rect.kind === 'puddle' || PLAINS_STANDING.has(rect.kind ?? ''))) return false;
-    if (desert && DESERT_STANDING.has(rect.kind ?? '')) return false;
+    if (desertLegacy && DESERT_STANDING.has(rect.kind ?? '')) return false;
     return true;
   });
   const floorWater = scenic ? field.blocks.filter((rect) => rect.kind === 'puddle' && shown(rect)) : [];
   const standing = scenic
     ? field.blocks.filter((rect) => PLAINS_STANDING.has(rect.kind ?? '') && shownTall(rect, frame))
-    : desert
+    : desertLegacy
       ? field.blocks.filter((rect) => DESERT_STANDING.has(rect.kind ?? '') && shownTall(rect, frame))
       : [];
-  const depth = scenic || desert
+  const depth = scenic || desertLegacy
     ? [
         ...standing.map((rect, index) => ({
           key: `stand-${index}-${rect.kind ?? 'prop'}`,
@@ -185,6 +366,9 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
                 facesRight={playerFacesRight}
                 pose={stridePose}
                 player={player}
+                walk={useWalk ? walkCharacter : null}
+                walkDir={walkDir.current}
+                gaitFeel={gaitFeel}
               />
             </>
           ),
@@ -238,7 +422,8 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
               style={{ position: 'absolute', left: 0, top: 0, width: field.width, height: field.height }}
             />
           ) : null}
-          {terrain.map((rect, index) => drawProp(rect, index, 'terrain', desert, swamp, scenic))}
+          {plainsMap ? <PlainsMapBackdrop width={field.width} height={field.height} frame={frame} /> : null}
+          {terrain.map((rect, index) => drawProp(rect, index, 'terrain', desert, swamp, scenic, field.player))}
           {field.hazards.filter((hazard) => shown(hazard)).map((hazard) => (
             <View
               key={hazard.id}
@@ -248,7 +433,7 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
               {hazard.label ? <Text style={styles.blockLabel}>{hazard.label}</Text> : null}
             </View>
           ))}
-          {flora.map((rect, index) => drawProp(rect, index, 'decor', desert, swamp, scenic))}
+          {flora.map((rect, index) => drawProp(rect, index, 'decor', desert, swamp, scenic, field.player))}
           {floorWater.map((rect, index) => drawProp(rect, index, 'water', false, false, true))}
           {structures.map((rect, index) => drawStructure(rect, index))}
           {/* Level zones, the quiet entrance, and agro circles stay in the sim. They are not drawn. */}
@@ -290,7 +475,29 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
                       pointerEvents="none"
                       style={{ position: 'absolute', left: 0, top: 0, zIndex: Math.round(drop.y * 10) }}
                     >
-                      {ocean ? <FloatingLoot drop={drop} /> : swamp ? <SwampLoot drop={drop} /> : <FieldLootMark drop={drop} />}
+                      {ocean ? (
+                        <FloatingLoot drop={drop} />
+                      ) : swamp ? (
+                        <SwampLoot drop={drop} />
+                      ) : mountains ? (
+                        <MountainLoot drop={drop} />
+                      ) : forest ? (
+                        <ForestLoot drop={drop} />
+                      ) : beach ? (
+                        <BeachLoot drop={drop} />
+                      ) : frost ? (
+                        <FrostLoot drop={drop} />
+                      ) : savannah ? (
+                        <SavannaLoot drop={drop} />
+                      ) : volcano ? (
+                        <VolcanoLoot drop={drop} />
+                      ) : desertMap ? (
+                        <DesertMapLoot drop={drop} />
+                      ) : plainsMap ? (
+                        <PlainsMapLoot drop={drop} />
+                      ) : (
+                        <FieldLootMark drop={drop} />
+                      )}
                     </View>
                   ))}
                 {gateNodes(field, frame, onSensor, gateArt).map((item) => (
@@ -320,6 +527,9 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
                     facesRight={playerFacesRight}
                     pose={sailPose}
                     player={player}
+                    walk={useWalk ? walkCharacter : null}
+                    walkDir={walkDir.current}
+                    gaitFeel={gaitFeel}
                   />
                   {ocean ? (
                     <SailboatHull x={field.player.x} y={field.player.y} facing={playerFacing.current} bob={sailPose.bob} />
@@ -327,8 +537,13 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
                 </View>
               </>
             )}
-          {rolling.map((rect, index) => drawProp(rect, index, 'weed', desert, swamp, scenic))}
-          {overlay.map((rect, index) => drawProp(rect, index, 'cover', desert, swamp))}
+          {rolling.map((rect, index) => drawProp(rect, index, 'weed', desert, swamp, scenic, field.player))}
+          {overlay.map((rect, index) => drawProp(rect, index, 'cover', desert, swamp, false, field.player))}
+          {field.decor
+            .filter((rect) => rect.kind === 'watcheye' && shown(rect))
+            .map((rect, index) => (
+              <ForestProp key={`eye-${index}`} rect={rect} player={field.player} />
+            ))}
           {placeRemotes(remotes).map((item) => (
             <View
               key={item.key}
@@ -361,9 +576,34 @@ export function FieldView({ field, player, playerFacesRight = true, zoom = 1, on
               <Text style={styles.sensorLabel}>{sensor.label}</Text>
             </Pressable>
           ))}
+          {(hazardFloats ?? []).map((note) => {
+            const stack = (hazardFloats ?? []).filter((entry) => entry.kind === note.kind);
+            const slot = stack.findIndex((entry) => entry.id === note.id);
+            const side = note.kind === 'stamina' ? 14 : -14;
+            // Avatar top is feetY - drawH; sit a few px above the hairline.
+            const headX = field.player.x + side + (slot - (stack.length - 1) / 2) * 10;
+            const headY = field.player.y + PLAYER_FEET - PLAYER_DRAW_H - 4 + stridePose.bob;
+            return (
+              <FloatingCombatText
+                key={note.id}
+                amount={-note.amount}
+                kind="damage"
+                color={note.kind === 'stamina' ? '#22c55e' : '#ef4444'}
+                text={note.kind === 'stamina' ? `-${Math.round(note.amount)} SP` : `-${Math.round(note.amount)} HP`}
+                x={headX}
+                y={headY}
+                onDone={() => onHazardFloatDone?.(note.id)}
+              />
+            );
+          })}
         </View>
       </View>
       {swamp ? <SwampMist /> : null}
+      {frost ? <FrostSnow /> : null}
+      {savannah ? <SavannaHaze /> : null}
+      {volcano ? <VolcanoAsh /> : null}
+      {desertMap ? <DesertHaze /> : null}
+      {plainsMap ? <PlainsDawn /> : null}
     </View>
   );
 }
@@ -437,6 +677,9 @@ function PlayerMark({
   facesRight,
   pose,
   player,
+  walk,
+  walkDir,
+  gaitFeel,
 }: {
   x: number;
   y: number;
@@ -444,20 +687,30 @@ function PlayerMark({
   facesRight: boolean;
   pose: StridePose;
   player: ReactNode;
+  walk?: WalkIdentity | null;
+  walkDir?: WalkDir;
+  gaitFeel: GaitFeel;
 }) {
-  // Facing 1 is a step to the right. facesRight is false for every class sheet,
-  // matching Nữ hộ vệ, so a step right stays unmirrored. Squash stays positive.
-  const face = facing * (facesRight ? -1 : 1);
-  const drawH = 109;
-  const drawW = Math.round(drawH / 1.22);
+  const puppet = walk && walkDir && isDaoChichPuppet(walk.professionId, walk.gender);
+  const source =
+    walk && walkDir && isFrameWalkPack(walk) ? walkSource(walk, walkDir, pose.walkFrame) : null;
+  // Directional sheets / puppets already paint left/right — never mirror them.
+  const face = source || puppet ? 1 : facing * (facesRight ? -1 : 1);
+  const drawH = PLAYER_DRAW_H;
+  const drawW = puppet ? Math.round(drawH * 0.72) : source ? Math.round(drawH * 0.58) : Math.round(drawH / 1.22);
   const fade = portalFade();
+  const bob = source || puppet ? pose.bob * 0.35 : pose.bob;
+  const sway = source || puppet ? pose.sway * 0.4 : pose.sway;
+  const tilt = source || puppet ? pose.tilt * 0.25 : pose.tilt;
+  const breathX = source || puppet ? 1 : pose.breathX;
+  const breathY = source || puppet ? 1 : pose.breathY;
   return (
     <View
       pointerEvents="none"
       style={{
         position: 'absolute',
         left: x - drawW / 2,
-        top: y + 28 - drawH + pose.bob,
+        top: y + PLAYER_FEET - drawH + bob,
         width: drawW,
         height: drawH,
         alignItems: 'center',
@@ -466,15 +719,21 @@ function PlayerMark({
     >
       <View
         style={{
-          transform: [
-            { translateX: pose.sway },
-            { rotate: `${pose.tilt}deg` },
-            { scaleX: face * pose.breathX },
-            { scaleY: pose.breathY },
-          ],
+          transform: [{ translateX: sway }, { rotate: `${tilt}deg` }, { scaleX: face * breathX }, { scaleY: breathY }],
         }}
       >
-        {player}
+        {puppet && walkDir ? (
+          <DaoChichPuppet dir={walkDir} pose={pose} feel={gaitFeel} width={drawW} height={drawH} />
+        ) : source ? (
+          <Image
+            source={source}
+            resizeMode="contain"
+            style={{ width: drawW, height: drawH }}
+            accessibilityIgnoresInvertColors
+          />
+        ) : (
+          player
+        )}
       </View>
     </View>
   );
@@ -528,6 +787,56 @@ const TERRAIN = new Set([
   'waterlily',
   'bones',
   'bunlay',
+  'foothill',
+  'gravel',
+  'stream',
+  'trail',
+  'ropebridge',
+  'snow',
+  'gioloc',
+  'dalo',
+  'mossgrass',
+  'leaflitter',
+  'dayleo',
+  'buigai',
+  'driesand',
+  'wetsand',
+  'shallow',
+  'foam',
+  'catnong',
+  'vosoc',
+  'frostsnow',
+  'jadeice',
+  'cobaltice',
+  'snowdrift',
+  'baotruyet',
+  'khebang',
+  'tempgrass',
+  'goldgrass',
+  'dryearth',
+  'savstream',
+  'flatstone',
+  'giothaonguyen',
+  'datnutthaonguyen',
+  'ashsoil',
+  'pumice',
+  'basalt',
+  'heatcrack',
+  'magmachannel',
+  'hoinong_nuilua',
+  'dungnham_nuilua',
+  'goldsand',
+  'redstone',
+  'oasisgreen',
+  'oasispool',
+  'caravantrail',
+  'catlun_samac',
+  'datnut_samac',
+  'meadow',
+  'damppatch',
+  'stream',
+  'bunlay_dongbang',
+  'buigai_dongbang',
 ]);
 /** Drawn above actors. Tall reeds double as light cover; toxic gas hangs over whoever stands in it. */
 const AMBIENT = new Set([
@@ -542,6 +851,37 @@ const AMBIENT = new Set([
   'dragonfly',
   'gasbubble',
   'khidoc',
+  'pine',
+  'mtngrass',
+  'bamboo',
+  'mtcloud',
+  'eagle',
+  'sunbeam',
+  'hangingvine',
+  'fern',
+  'forestfog',
+  'spore',
+  'sunray',
+  'seagull',
+  'umbrella',
+  'seaweed',
+  'snowflake',
+  'frostwind',
+  'iceglare',
+  'savreed',
+  'mound',
+  'heatshimmer',
+  'sulfurvent',
+  'ashdrift',
+  'ember',
+  'drygrass',
+  'scrub',
+  'dustwisp',
+  'flowerbed',
+  'reed',
+  'hillock',
+  'thicketgrass',
+  'dawnglow',
 ]);
 const COVER = new Set([
   'tree',
@@ -557,6 +897,31 @@ const COVER = new Set([
   'boulder',
   'cypress',
   'vineruin',
+  'cliff',
+  'abyss',
+  'stonewall',
+  'pillar',
+  'foresttree',
+  'rootwall',
+  'rootruin',
+  'coastrock',
+  'leanpalm',
+  'tikihut',
+  'glacierock',
+  'icepillar',
+  'frostcliff',
+  'savacacia',
+  'savrock',
+  'basaltcrag',
+  'volrock',
+  'desdune',
+  'sandridge',
+  'oasispalm',
+  'descactus',
+  'desrock',
+  'plmtree',
+  'plmrock',
+  'plmbush',
 ]);
 /** Trees, single rocks, and rock piles share the actor depth list on the plains. */
 const PLAINS_STANDING = new Set(['tree', 'rock', 'pile']);
@@ -567,9 +932,27 @@ function shownTall(rect: Rect, frame: { x: number; y: number; w: number; h: numb
   return overlapsFrame({ x: rect.x - 70, y: rect.y - 170, w: rect.w + 140, h: rect.h + 170 }, frame);
 }
 
-function drawProp(rect: Rect, index: number, prefix: string, desert: boolean, swamp: boolean, sprites = false) {
+function drawProp(
+  rect: Rect,
+  index: number,
+  prefix: string,
+  desert: boolean,
+  swamp: boolean,
+  sprites = false,
+  player?: { x: number; y: number },
+) {
   if (isOceanKind(rect.kind)) return <OceanProp key={`${prefix}-${index}`} rect={rect} />;
   if (isSwampMapKind(rect.kind)) return <SwampMapProp key={`${prefix}-${index}`} rect={rect} />;
+  if (isMountainKind(rect.kind)) return <MountainProp key={`${prefix}-${index}`} rect={rect} />;
+  if (isForestKind(rect.kind) || (rect.kind === 'log' && !swamp)) {
+    return <ForestProp key={`${prefix}-${index}`} rect={rect} player={player} />;
+  }
+  if (isBeachKind(rect.kind)) return <BeachProp key={`${prefix}-${index}`} rect={rect} />;
+  if (isFrostKind(rect.kind)) return <FrostProp key={`${prefix}-${index}`} rect={rect} />;
+  if (isSavannaKind(rect.kind)) return <SavannaProp key={`${prefix}-${index}`} rect={rect} />;
+  if (isVolcanoKind(rect.kind)) return <VolcanoProp key={`${prefix}-${index}`} rect={rect} />;
+  if (isDesertMapKind(rect.kind)) return <DesertMapProp key={`${prefix}-${index}`} rect={rect} />;
+  if (isPlainsMapKind(rect.kind)) return <PlainsMapProp key={`${prefix}-${index}`} rect={rect} />;
   if (swamp && isSwampKind(rect.kind)) return <SwampProp key={`${prefix}-${index}`} rect={rect} />;
   if (desert && (isDesertKind(rect.kind) || rect.kind === 'rock')) {
     return <DesertProp key={`${prefix}-${index}`} rect={rect} sprites />;
@@ -587,6 +970,14 @@ function drawStructure(rect: Rect, index: number) {
   if (rect.roof) return <TownHouse key={`house-${index}`} house={rect} />;
   if (isOceanKind(rect.kind)) return <OceanProp key={`block-${index}`} rect={rect} />;
   if (isSwampMapKind(rect.kind)) return <SwampMapProp key={`block-${index}`} rect={rect} />;
+  if (isMountainKind(rect.kind)) return <MountainProp key={`block-${index}`} rect={rect} />;
+  if (isForestKind(rect.kind)) return <ForestProp key={`block-${index}`} rect={rect} />;
+  if (isBeachKind(rect.kind)) return <BeachProp key={`block-${index}`} rect={rect} />;
+  if (isFrostKind(rect.kind)) return <FrostProp key={`block-${index}`} rect={rect} />;
+  if (isSavannaKind(rect.kind)) return <SavannaProp key={`block-${index}`} rect={rect} />;
+  if (isVolcanoKind(rect.kind)) return <VolcanoProp key={`block-${index}`} rect={rect} />;
+  if (isDesertMapKind(rect.kind)) return <DesertMapProp key={`block-${index}`} rect={rect} />;
+  if (isPlainsMapKind(rect.kind)) return <PlainsMapProp key={`block-${index}`} rect={rect} />;
   return (
     <View
       key={`block-${index}`}

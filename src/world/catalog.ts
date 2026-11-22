@@ -14,8 +14,12 @@ import {
   sectorZoneId,
 } from './atlas';
 import { CHUNK_SIZE, hashString, mulberry32, SECTOR_SIZE, tierMapSize } from './grid';
+import { generateBeach, BEACH_SAND, beachNeedsDressing } from './beachDecor';
+import { generateForest, FOREST_MOSS, forestNeedsDressing } from './forestDecor';
+import { generateFrost, FROST_SNOW, frostNeedsDressing } from './frostDecor';
+import { generateMountain, MOUNTAIN_MOSS, mountainNeedsDressing } from './mountainDecor';
 import { generateOcean, OCEAN_MID, oceanNeedsDressing } from './oceanDecor';
-import { generateDesert, DESERT_SAND, desertNeedsDressing } from './desertDecor';
+import { generateDesert, generateDesertMap, DESERT_GOLD, DESERT_SAND, desertNeedsDressing } from './desertDecor';
 import { omitHazardsOnPads } from './hazards';
 import { locomotion } from './gait';
 import { monsterAdvanced } from './combat/advanced';
@@ -23,10 +27,11 @@ import { monsterMana } from './growth';
 import { ITEMS } from './items';
 import { withGroundLoot } from './scatterLoot';
 import { expansionSpecies, MAP1_ROSTER_VERSION, townSpecies, type MonsterSpecies } from './monsters';
-import { generatePlains, hitsSolid, PLAINS_GRASS, plainsNeedsVista } from './plainsDecor';
-import { generateSavannah, SAVANNAH_GRASS } from './savannahDecor';
+import { generatePlains, generatePlainsMap, hitsSolid, PLAINS_GRASS, PLAINS_MEADOW, plainsNeedsVista } from './plainsDecor';
+import { generateSavannah, generateSavannahMap, SAVANNAH_TEMP, savannahNeedsDressing } from './savannahDecor';
 import { generateScatter } from './scatterDecor';
 import { generateSwamp, generateSwampMap, SWAMP_GROUND, SWAMP_MOSS, swampNeedsDressing } from './swampDecor';
+import { generateVolcano, VOLCANO_ASH, volcanoNeedsDressing } from './volcanoDecor';
 import {
   buildZones,
   clearPads,
@@ -102,7 +107,18 @@ export function fieldNeedsRebuild(field: FieldState): boolean {
   if (field.chunkSize > 0 && isRingTown(field.provinceId)) {
     const size = tierMapSize(field.provinceId);
     if (field.tier < 1 || field.width !== size.w || field.height !== size.h) return true;
-    if (oceanNeedsDressing(field)) return true;
+    if (
+      oceanNeedsDressing(field) ||
+      mountainNeedsDressing(field) ||
+      forestNeedsDressing(field) ||
+      beachNeedsDressing(field) ||
+      frostNeedsDressing(field) ||
+      savannahNeedsDressing(field) ||
+      volcanoNeedsDressing(field) ||
+      desertNeedsDressing(field) ||
+      plainsNeedsVista(field)
+    )
+      return true;
     if (!field.zones || field.zones.length !== ZONE_COUNT) return true;
     if (field.faunaRoster !== MAP1_ROSTER_VERSION) return true;
   }
@@ -344,20 +360,40 @@ function dressMap(
     return { ground: OCEAN_MID, ...dress };
   }
   if (provinceId === 'plains') {
-    const dress = generatePlains(zoneId, width, height);
-    return { ground: PLAINS_GRASS, ...dress };
+    const dress = zones.length >= 5 ? generatePlainsMap(zoneId, width, height, zones) : generatePlains(zoneId, width, height);
+    return { ground: zones.length >= 5 ? PLAINS_MEADOW : PLAINS_GRASS, ...dress };
   }
   if (provinceId === 'desert') {
-    const dress = generateDesert(zoneId, width, height);
-    return { ground: DESERT_SAND, ...dress };
+    const dress = zones.length >= 5 ? generateDesertMap(zoneId, width, height, zones) : generateDesert(zoneId, width, height);
+    return { ground: zones.length >= 5 ? DESERT_GOLD : DESERT_SAND, ...dress };
   }
   if (provinceId === 'swamp') {
     const dress = generateSwampMap(zoneId, width, height, zones);
     return { ground: SWAMP_MOSS, ...dress };
   }
+  if (provinceId === 'mountains') {
+    const dress = generateMountain(zoneId, width, height, zones);
+    return { ground: MOUNTAIN_MOSS, ...dress };
+  }
+  if (provinceId === 'forest') {
+    const dress = generateForest(zoneId, width, height, zones);
+    return { ground: FOREST_MOSS, ...dress };
+  }
+  if (provinceId === 'beach') {
+    const dress = generateBeach(zoneId, width, height, zones);
+    return { ground: BEACH_SAND, ...dress };
+  }
+  if (provinceId === 'tundra') {
+    const dress = generateFrost(zoneId, width, height, zones);
+    return { ground: FROST_SNOW, ...dress };
+  }
   if (provinceId === 'savannah') {
-    const dress = generateSavannah(zoneId, width, height);
-    return { ground: SAVANNAH_GRASS, ...dress };
+    const dress = zones.length >= 5 ? generateSavannahMap(zoneId, width, height, zones) : generateSavannah(zoneId, width, height);
+    return { ground: SAVANNAH_TEMP, ...dress };
+  }
+  if (provinceId === 'volcano') {
+    const dress = generateVolcano(zoneId, width, height, zones);
+    return { ground: VOLCANO_ASH, ...dress };
   }
   const dress = generateScatter(zoneId, width, height);
   return { ground: null, ...dress };

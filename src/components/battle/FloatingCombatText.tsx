@@ -12,6 +12,10 @@ type Props = {
   kind?: CombatFloatKind;
   /** Crit impact: screen flash / shake host. */
   onImpact?: (kind: 'crit' | 'hit') => void;
+  /** Override the default ±amount / miss / crit label (e.g. map hazard "-10 HP"). */
+  text?: string;
+  /** Override the default kind color. */
+  color?: string;
 };
 
 const NORMAL_MS = 800;
@@ -22,7 +26,7 @@ const CRIT_MS = 950;
 /**
  * Weighted combat numbers: parabolic damage, explosive crit, floaty miss, rising heal.
  */
-export function FloatingCombatText({ amount, x, y, onDone, kind, onImpact }: Props) {
+export function FloatingCombatText({ amount, x, y, onDone, kind, onImpact, text, color: colorOverride }: Props) {
   const progress = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(kind === 'crit' ? 0 : 0.85)).current;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -39,11 +43,13 @@ export function FloatingCombatText({ amount, x, y, onDone, kind, onImpact }: Pro
   const crit = resolved === 'crit';
   const miss = resolved === 'miss';
   const mana = resolved === 'mana';
-  const label = miss
-    ? 'NÉ TRÁNH'
-    : crit
-      ? `CHÍ MẠNG!\n-${Math.abs(Math.round(amount)) || ''}`
-      : `${heal ? '+' : '-'}${Math.abs(Math.round(amount))}`;
+  const label =
+    text ??
+    (miss
+      ? 'NÉ TRÁNH'
+      : crit
+        ? `CHÍ MẠNG!\n-${Math.abs(Math.round(amount)) || ''}`
+        : `${heal ? '+' : '-'}${Math.abs(Math.round(amount))}`);
 
   useEffect(() => {
     if (crit) onImpactRef.current?.('crit');
@@ -93,7 +99,9 @@ export function FloatingCombatText({ amount, x, y, onDone, kind, onImpact }: Pro
   });
 
   const baseSize = crit ? 27 : miss ? 15 : 18;
-  const color = miss ? '#9ec5e8' : crit ? '#ef4444' : mana ? '#b39ddb' : heal ? '#22c55e' : '#fff6d6';
+  const color =
+    colorOverride ??
+    (miss ? '#9ec5e8' : crit ? '#ef4444' : mana ? '#b39ddb' : heal ? '#22c55e' : '#fff6d6');
   const ghostColor = miss ? 'rgba(158,197,232,0.45)' : undefined;
 
   return (

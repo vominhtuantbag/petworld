@@ -32,18 +32,23 @@ type DesertKind =
   | 'crack'
   | 'quicksand';
 
-const ART = {
-  dune: require('../../../assets/desert/concat.png'),
-  rock: require('../../../assets/desert/conda.png'),
-  oasis: require('../../../assets/desert/ocdao.png'),
-  cactus: require('../../../assets/desert/xuongrong.png'),
-  crack: require('../../../assets/desert/datnutne.png'),
-  quicksand: require('../../../assets/desert/catlun.png'),
-  straw: require('../../../assets/desert/coromvang.png'),
-} as const;
+/**
+ * Legacy desert PNG pack (`assets/desert/*`) is optional. When missing, Metro
+ * must still bundle — FieldView imports this module on every town/open map.
+ * Re-add requires here once the pack is restored under `assets/desert/`.
+ */
+const ART: Partial<
+  Record<
+    'dune' | 'rock' | 'oasis' | 'cactus' | 'crack' | 'quicksand' | 'straw',
+    number
+  >
+> = {};
 
 /** Painted size relative to the collision foot. Base anchors sit on the hitbox floor. */
-const BOX: Record<keyof typeof ART, { foot: number; w: number; h: number; anchor: 'base' | 'center' }> = {
+const BOX: Record<
+  'dune' | 'rock' | 'oasis' | 'cactus' | 'crack' | 'quicksand' | 'straw',
+  { foot: number; w: number; h: number; anchor: 'base' | 'center' }
+> = {
   dune: { foot: 220, w: 300, h: 71, anchor: 'base' },
   rock: { foot: 96, w: 150, h: 93, anchor: 'base' },
   oasis: { foot: 200, w: 250, h: 196, anchor: 'base' },
@@ -54,7 +59,7 @@ const BOX: Record<keyof typeof ART, { foot: number; w: number; h: number; anchor
 };
 
 /** Fraction of the painted sprite where the visible foot line sits. */
-const FOOT_LINE: Partial<Record<keyof typeof ART, number>> = {
+const FOOT_LINE: Partial<Record<'dune' | 'rock' | 'oasis' | 'cactus', number>> = {
   dune: 0.995,
   rock: 0.916,
   oasis: 0.942,
@@ -85,9 +90,12 @@ type Props = {
  * still draw when a saved field has not rebuilt yet.
  */
 export function DesertProp({ rect, sprites }: Props) {
-  if (sprites && rect.kind && rect.kind in ART) {
+  if (sprites && rect.kind) {
     const kind = rect.kind as keyof typeof ART;
-    return <DesertSprite rect={rect} source={ART[kind]} box={BOX[kind]} />;
+    const source = ART[kind];
+    if (source != null && kind in BOX) {
+      return <DesertSprite rect={rect} source={source} box={BOX[kind]} />;
+    }
   }
   if (rect.kind === 'dune') return <Dune rect={rect} />;
   if (rect.kind === 'straw') return <Straw rect={rect} />;

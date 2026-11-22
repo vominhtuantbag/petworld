@@ -20,7 +20,7 @@
 import type { AdvancedInput, MonsterCombatRole } from './combat/advanced';
 import { locomotionTypeOf, type LocomotionType } from './combat/petSkills';
 
-export const MAP1_ROSTER_VERSION = 2;
+export const MAP1_ROSTER_VERSION = 4;
 
 export type { MonsterCombatRole, LocomotionType };
 

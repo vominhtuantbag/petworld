@@ -18,6 +18,12 @@ export type StridePose = {
   breathY: number;
   dust: DustMote[];
   now: number;
+  /** Raw stride oscillator — limb puppets sync to this. */
+  phase: number;
+  /** 0→1→2→1 walk-cycle index for directional sprite sheets. */
+  walkFrame: 0 | 1 | 2;
+  /** 1 while moving, eases to 0 after stop. */
+  weight: number;
 };
 
 type StrideClock = {
@@ -34,6 +40,14 @@ const STEP_RATE = 11;
 const STEP_HEIGHT = 3.4;
 const TILT = 4.2;
 const REST_MS = 100;
+
+export type StrideMotion = {
+  /** Cadence multiplier (crawl < walk < run). */
+  cadence?: number;
+  bobScale?: number;
+  tiltScale?: number;
+  swayScale?: number;
+};
 
 export function createStride(): StrideClock {
   return { phase: 0, weight: 0, last: 0, stepSign: 1, trickle: 0, nextId: 1, dust: [] };
@@ -53,26 +67,36 @@ export function advanceStride(
   dx = 0,
   dy = 0,
   now = Date.now(),
+  /** False inside hazards — walk bob stays, dust trail stops. */
+  emitDust = true,
+  motion: StrideMotion = {},
 ): StridePose {
   const dt = clock.last === 0 ? 0 : Math.min(0.05, Math.max(0, (now - clock.last) / 1000));
   clock.last = now;
+  const cadence = motion.cadence ?? 1;
+  const bobScale = motion.bobScale ?? 1;
+  const tiltScale = motion.tiltScale ?? 1;
+  const swayScale = motion.swayScale ?? 1;
   if (moving) {
-    clock.phase += dt * STEP_RATE;
+    clock.phase += dt * STEP_RATE * cadence;
     clock.weight = 1;
   } else {
     clock.weight = Math.max(0, clock.weight - (dt * 1000) / REST_MS);
   }
 
   const weight = clock.weight;
-  const bob = Math.sin(clock.phase) * STEP_HEIGHT * weight;
-  const tilt = Math.sin(clock.phase) * TILT * weight;
+  const bob = Math.sin(clock.phase) * STEP_HEIGHT * bobScale * weight;
+  const tilt = Math.sin(clock.phase) * TILT * tiltScale * weight;
   const pulse = Math.sin(clock.phase * 2) * weight;
   const breathY = 1 + pulse * 0.045;
   const breathX = 1 - pulse * 0.032;
-  const sway = Math.sin(clock.phase + Math.PI / 2) * 1.7 * weight;
+  const sway = Math.sin(clock.phase + Math.PI / 2) * 1.7 * swayScale * weight;
 
   const plant = Math.sin(clock.phase);
-  if (moving) {
+  if (!emitDust) {
+    clock.dust = [];
+    clock.trickle = 0;
+  } else if (moving) {
     const crossed = clock.stepSign !== 0 && plant !== 0 && Math.sign(plant) !== Math.sign(clock.stepSign);
     if (crossed) puff(clock, x, y, dx, dy, now, 8);
     clock.trickle += dt;
@@ -86,7 +110,13 @@ export function advanceStride(
     clock.dust = clock.dust.filter((mote) => now - mote.born < mote.life);
   }
 
-  return { bob, sway, tilt, breathX, breathY, dust: clock.dust, now };
+  // One full 0→1→2→1 cycle per 2π of phase — locked to the bob sine.
+  const turn = ((clock.phase / (Math.PI * 2)) % 1 + 1) % 1;
+  const walkStep = Math.floor(turn * 4) % 4;
+  const walkFrame: 0 | 1 | 2 =
+    weight < 0.12 ? 1 : walkStep === 0 ? 0 : walkStep === 1 ? 1 : walkStep === 2 ? 2 : 1;
+
+  return { bob, sway, tilt, breathX, breathY, dust: clock.dust, now, phase: clock.phase, walkFrame, weight };
 }
 
 /**

@@ -24,25 +24,32 @@ export const HAZARD_ART = {
 
 export type HazardKind = keyof typeof HAZARD_ART;
 
+/** Shared slow while standing in any hazard (`playerSpeed = base * this`). */
+export const HAZARD_SLOW = 0.5;
+
 /** `playerSpeed = baseSpeed * multiplier` while standing inside. */
 export const HAZARD_SPEED: Record<HazardKind, number> = {
-  crack: 0.9,
-  quicksand: 0.8,
-  puddle: 0.85,
+  crack: HAZARD_SLOW,
+  quicksand: HAZARD_SLOW,
+  puddle: HAZARD_SLOW,
 };
 
 export const HAZARD_TICK_SEC = 1;
-export const HAZARD_HP_PER_TICK = 2;
-export const HAZARD_STAMINA_PER_TICK = 2;
+/** Fraction of max HP / max SP drained each second inside a matching hazard. */
+export const HAZARD_DRAIN_RATE = 0.05;
+
+export function hazardHpLoss(maxHp: number): number {
+  return Math.max(1, Math.round(Math.max(0, maxHp) * HAZARD_DRAIN_RATE));
+}
+
+export function hazardStaminaLoss(maxStamina: number): number {
+  return Math.max(1, Math.round(Math.max(0, maxStamina) * HAZARD_DRAIN_RATE));
+}
 
 /**
- * Đại Dương and Đầm Lầy hazards. Vector art, so the native box is the
- * drawing's design size. Trigger and picture are both `VECTOR_HAZARD_SCALE`
- * times that box.
- * - whirlpool (xoáy nước): ×0.85, −2 thể lực/giây
- * - reef (bãi đá ngầm): ×0.80, −2 máu/giây
- * - bunlay (bùn lầy): ×0.80, −2 thể lực/giây
- * - khidoc (khí độc): ×0.90, −2 máu/giây
+ * Vector hazards for the ring hunting maps. Trigger and picture are both
+ * `VECTOR_HAZARD_SCALE` times the design box. All slow to `HAZARD_SLOW`
+ * (50% speed) and tick −5% max HP or −5% max SP per second.
  */
 export const VECTOR_HAZARD_SCALE = 8;
 export const VECTOR_HAZARD_ART = {
@@ -50,13 +57,45 @@ export const VECTOR_HAZARD_ART = {
   reef: { w: 64, h: 40 },
   bunlay: { w: 48, h: 32 },
   khidoc: { w: 40, h: 40 },
+  gioloc: { w: 48, h: 32 },
+  dalo: { w: 56, h: 36 },
+  dayleo: { w: 48, h: 36 },
+  buigai: { w: 52, h: 32 },
+  catnong: { w: 52, h: 32 },
+  vosoc: { w: 48, h: 36 },
+  baotruyet: { w: 52, h: 36 },
+  khebang: { w: 48, h: 40 },
+  giothaonguyen: { w: 52, h: 36 },
+  datnutthaonguyen: { w: 56, h: 32 },
+  hoinong_nuilua: { w: 52, h: 36 },
+  dungnham_nuilua: { w: 56, h: 34 },
+  catlun_samac: { w: 52, h: 36 },
+  datnut_samac: { w: 56, h: 32 },
+  bunlay_dongbang: { w: 52, h: 34 },
+  buigai_dongbang: { w: 52, h: 32 },
 } as const;
 export type VectorHazardKind = keyof typeof VECTOR_HAZARD_ART;
 export const VECTOR_HAZARD_SPEED: Record<VectorHazardKind, number> = {
-  whirlpool: 0.85,
-  reef: 0.8,
-  bunlay: 0.8,
-  khidoc: 0.9,
+  whirlpool: HAZARD_SLOW,
+  reef: HAZARD_SLOW,
+  bunlay: HAZARD_SLOW,
+  khidoc: HAZARD_SLOW,
+  gioloc: HAZARD_SLOW,
+  dalo: HAZARD_SLOW,
+  dayleo: HAZARD_SLOW,
+  buigai: HAZARD_SLOW,
+  catnong: HAZARD_SLOW,
+  vosoc: HAZARD_SLOW,
+  baotruyet: HAZARD_SLOW,
+  khebang: HAZARD_SLOW,
+  giothaonguyen: HAZARD_SLOW,
+  datnutthaonguyen: HAZARD_SLOW,
+  hoinong_nuilua: HAZARD_SLOW,
+  dungnham_nuilua: HAZARD_SLOW,
+  catlun_samac: HAZARD_SLOW,
+  datnut_samac: HAZARD_SLOW,
+  bunlay_dongbang: HAZARD_SLOW,
+  buigai_dongbang: HAZARD_SLOW,
 };
 
 export function vectorHazardSize(kind: VectorHazardKind): { w: number; h: number } {

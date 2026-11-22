@@ -4,7 +4,7 @@ import { Alert } from 'react-native';
 import { getCharacter } from '../data/characters';
 import { getRegion } from '../data/regions';
 import { professionPools } from '../world/growth';
-import { HAZARD_HP_PER_TICK, HAZARD_STAMINA_PER_TICK } from '../world/hazards';
+import { hazardHpLoss, hazardStaminaLoss } from '../world/hazards';
 import { emptyQuests, findQuest, normalizeQuests, type QuestTrack } from '../world/quests';
 import type { RegionId } from '../types/game';
 import { useSetup } from './SetupContext';
@@ -178,8 +178,10 @@ type WorldContextValue = WorldState & {
   resolveBattle: (result: BattleResult) => void;
   march: (distance: number, dt: number) => void;
   sufferHazard: (dt: number) => void;
-  hurtQuicksand: () => void;
-  drainPuddle: () => void;
+  /** Returns how much HP was actually removed this tick. */
+  hurtQuicksand: () => number;
+  /** Returns how much stamina was actually removed this tick. */
+  drainPuddle: () => number;
   saveField: (field: FieldState) => void;
   takeField: (zoneId: string) => FieldState;
   clearArrival: () => void;
@@ -936,19 +938,33 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const hurtQuicksand = useCallback(() => {
-    setState((current) => {
-      const hp = Math.max(0, current.vitals.hp - HAZARD_HP_PER_TICK);
-      if (hp === current.vitals.hp) return current;
-      return { ...current, vitals: { ...current.vitals, hp } };
-    });
+    // Read via stateRef — game-loop callers are outside React events, so a
+    // deferred setState updater would leave a local `drained` stuck at 0.
+    const current = stateRef.current.vitals;
+    const loss = hazardHpLoss(current.maxHp);
+    const hp = Math.max(0, current.hp - loss);
+    const drained = current.hp - hp;
+    if (drained <= 0) return 0;
+    stateRef.current = { ...stateRef.current, vitals: { ...current, hp } };
+    setState((snap) => ({
+      ...snap,
+      vitals: { ...snap.vitals, hp: Math.max(0, snap.vitals.hp - loss) },
+    }));
+    return drained;
   }, []);
 
   const drainPuddle = useCallback(() => {
-    setState((current) => {
-      const stamina = Math.max(0, current.vitals.stamina - HAZARD_STAMINA_PER_TICK);
-      if (stamina === current.vitals.stamina) return current;
-      return { ...current, vitals: { ...current.vitals, stamina } };
-    });
+    const current = stateRef.current.vitals;
+    const loss = hazardStaminaLoss(current.maxStamina);
+    const stamina = Math.max(0, current.stamina - loss);
+    const drained = current.stamina - stamina;
+    if (drained <= 0) return 0;
+    stateRef.current = { ...stateRef.current, vitals: { ...current, stamina } };
+    setState((snap) => ({
+      ...snap,
+      vitals: { ...snap.vitals, stamina: Math.max(0, snap.vitals.stamina - loss) },
+    }));
+    return drained;
   }, []);
 
   const sufferHazard = useCallback((dt: number) => {

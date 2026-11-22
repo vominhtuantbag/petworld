@@ -1,7 +1,8 @@
 import { hashString, mulberry32 } from './grid';
 import { placeHazards } from './hazards';
 import { PLACE_TRIES, placementBlocked } from './spacing';
-import type { FieldState, Rect } from './types';
+import type { FieldState, MapZone, Rect } from './types';
+import { pick, placeHazard, placeIn, zoneCtx } from './zoneDecor';
 
 /**
  * Plains combat dressing for one sector.
@@ -22,6 +23,10 @@ import type { FieldState, Rect } from './types';
  */
 
 export const PLAINS_GRASS = '#7ad44a';
+export const PLAINS_MEADOW = '#7CB342';
+export const PLAINS_DAMP = '#66BB6A';
+export const PLAINS_DEEP = '#43A047';
+export const PLAINS_SUN = '#FFF59D';
 
 /**
  * How far the backdrop drifts compared with the meadow.
@@ -325,7 +330,165 @@ function margin(size: number, rng: () => number): number {
 
 /** Saved meadows from before this vista have no marker band. Rebuild those. */
 export function plainsNeedsVista(field: FieldState): boolean {
-  return field.provinceId === 'plains' && field.chunkSize > 0 && !field.decor.some((rect) => rect.label === 'plains-vista-8');
+  if (field.provinceId !== 'plains' || field.chunkSize <= 0) return false;
+  if (field.tier >= 1 && (field.zones?.length ?? 0) >= 5) {
+    return !field.blocks.some((rect) => rect.kind === 'plmtree');
+  }
+  return !field.decor.some((rect) => rect.label === 'plains-vista-8');
+}
+
+export const PLAINS_MAP_DENSITY = {
+  meadow: { grass: 14, flowers: 16, rocks: 6 },
+  stream: { damp: 10, reeds: 12, streams: 8, bushes: 8 },
+  mounds: { hills: 12, grass: 8, rocks: 10, trees: 8 },
+  thicket: { tall: 14, bushes: 12, flowers: 8, glow: 8 },
+  deep: { grass: 12, trees: 12, bushes: 10, hills: 8 },
+  glow: 36,
+  bunlay_dongbang: 6,
+  buigai_dongbang: 6,
+};
+
+export const PLAINS_MAP_HITBOX = {
+  plmtree: { w: 72, h: 20 },
+  plmrock: { w: 56, h: 24 },
+  plmbush: { w: 44, h: 22 },
+};
+
+const GREEN = ['#7CB342', '#8BC34A', '#66BB6A', '#9CCC65'];
+const FLOWER = ['#ff4f93', '#ff77b0', '#fff59d', '#81d4fa', '#ce93d8'];
+
+/**
+ * Đồng Bằng hunting map, dressed per hidden zone from `buildZones`:
+ *
+ * - 0 Sunlit Morning Meadow — fresh green grass and wildflowers.
+ * - 1 Damp Stream & Reed Banks — damp grass and waterside edges.
+ * - 2 Rolling Grass Mounds — gentle hills and low stones.
+ * - 3 Tall Grass & Thicket Plains — taller grass and denser bushes.
+ * - 4 Deep Great Plains — farthest high-level expanse.
+ *
+ * Bùn lầy (bunlay_dongbang) and bụi gai (buigai_dongbang) are 8× hazards
+ * kept off every gate.
+ */
+export function generatePlainsMap(
+  zoneId: string,
+  width: number,
+  height: number,
+  zones: readonly MapZone[],
+): PlainsDressing {
+  const ctx = zoneCtx(`${zoneId}:plains-map`, width, height, zones);
+  const { rng } = ctx;
+  const soft: Rect[] = [];
+  const solids: Rect[] = [];
+  const add = (bucket: Rect[], rect: Rect | null) => {
+    if (rect) bucket.push(rect);
+    return rect;
+  };
+
+  const meadow = PLAINS_MAP_DENSITY.meadow;
+  for (let index = 0; index < meadow.grass; index += 1) {
+    const w = 160 + rng() * 140;
+    add(soft, placeIn(ctx, 0, { w, h: w * 0.36, kind: 'meadow', fill: GREEN[index % GREEN.length] }, false, false, 0.22));
+  }
+  for (let index = 0; index < meadow.flowers; index += 1) {
+    add(soft, placeIn(ctx, 0, { w: 22, h: 18, kind: 'flowerbed', fill: pick(rng, FLOWER) }, false));
+  }
+  for (let index = 0; index < meadow.rocks; index += 1) {
+    add(solids, placeIn(ctx, 0, { ...PLAINS_MAP_HITBOX.plmrock, kind: 'plmrock', fill: '#90a4ae' }, true));
+  }
+
+  const stream = PLAINS_MAP_DENSITY.stream;
+  for (let index = 0; index < stream.damp; index += 1) {
+    const w = 140 + rng() * 100;
+    add(soft, placeIn(ctx, 1, { w, h: w * 0.38, kind: 'damppatch', fill: PLAINS_DAMP }, false));
+  }
+  for (let index = 0; index < stream.reeds; index += 1) {
+    add(soft, placeIn(ctx, 1, { w: 36 + rng() * 20, h: 44 + rng() * 16, kind: 'reed', fill: '#9e9d24' }, false));
+  }
+  for (let index = 0; index < stream.streams; index += 1) {
+    add(soft, placeIn(ctx, 1, { w: 180 + rng() * 120, h: 28 + rng() * 10, kind: 'stream', fill: '#64B5F6' }, false));
+  }
+  for (let index = 0; index < stream.bushes; index += 1) {
+    add(solids, placeIn(ctx, 1, { ...PLAINS_MAP_HITBOX.plmbush, kind: 'plmbush', fill: '#558b2f' }, true));
+  }
+
+  const mounds = PLAINS_MAP_DENSITY.mounds;
+  for (let index = 0; index < mounds.hills; index += 1) {
+    add(soft, placeIn(ctx, 2, { w: 100 + rng() * 80, h: 36 + rng() * 16, kind: 'hillock', fill: '#8BC34A' }, false));
+  }
+  for (let index = 0; index < mounds.grass; index += 1) {
+    const w = 140 + rng() * 100;
+    add(soft, placeIn(ctx, 2, { w, h: w * 0.34, kind: 'meadow', fill: PLAINS_MEADOW }, false));
+  }
+  for (let index = 0; index < mounds.rocks; index += 1) {
+    add(solids, placeIn(ctx, 2, { ...PLAINS_MAP_HITBOX.plmrock, kind: 'plmrock', fill: '#78909c' }, true));
+  }
+  for (let index = 0; index < mounds.trees; index += 1) {
+    const scale = 0.85 + rng() * 0.35;
+    add(
+      solids,
+      placeIn(
+        ctx,
+        2,
+        {
+          w: PLAINS_MAP_HITBOX.plmtree.w * scale,
+          h: PLAINS_MAP_HITBOX.plmtree.h * scale,
+          kind: 'plmtree',
+          fill: '#2e7d32',
+        },
+        true,
+      ),
+    );
+  }
+
+  const thicket = PLAINS_MAP_DENSITY.thicket;
+  for (let index = 0; index < thicket.tall; index += 1) {
+    add(soft, placeIn(ctx, 3, { w: 70 + rng() * 50, h: 40 + rng() * 20, kind: 'thicketgrass', fill: '#558b2f' }, false));
+  }
+  for (let index = 0; index < thicket.bushes; index += 1) {
+    add(solids, placeIn(ctx, 3, { ...PLAINS_MAP_HITBOX.plmbush, kind: 'plmbush', fill: '#33691e' }, true));
+  }
+  for (let index = 0; index < thicket.flowers; index += 1) {
+    add(soft, placeIn(ctx, 3, { w: 20, h: 16, kind: 'flowerbed', fill: pick(rng, FLOWER) }, false));
+  }
+  for (let index = 0; index < thicket.glow; index += 1) {
+    add(soft, placeIn(ctx, 3, { w: 80, h: 100, kind: 'dawnglow', fill: 'rgba(255, 245, 157, 0.18)' }, false, true));
+  }
+
+  const deep = PLAINS_MAP_DENSITY.deep;
+  for (let index = 0; index < deep.grass; index += 1) {
+    const w = 160 + rng() * 120;
+    add(soft, placeIn(ctx, 4, { w, h: w * 0.36, kind: 'meadow', fill: PLAINS_DEEP }, false));
+  }
+  for (let index = 0; index < deep.trees; index += 1) {
+    add(solids, placeIn(ctx, 4, { ...PLAINS_MAP_HITBOX.plmtree, kind: 'plmtree', fill: '#1b5e20' }, true));
+  }
+  for (let index = 0; index < deep.bushes; index += 1) {
+    add(solids, placeIn(ctx, 4, { ...PLAINS_MAP_HITBOX.plmbush, kind: 'plmbush', fill: '#33691e' }, true));
+  }
+  for (let index = 0; index < deep.hills; index += 1) {
+    add(soft, placeIn(ctx, 4, { w: 120 + rng() * 80, h: 40, kind: 'hillock', fill: '#689f38' }, false));
+  }
+
+  for (let index = 0; index < PLAINS_MAP_DENSITY.bunlay_dongbang; index += 1) {
+    add(soft, placeHazard(ctx, 'bunlay_dongbang', [1, 3, 4]));
+  }
+  for (let index = 0; index < PLAINS_MAP_DENSITY.buigai_dongbang; index += 1) {
+    add(soft, placeHazard(ctx, 'buigai_dongbang', [2, 3, 4]));
+  }
+
+  for (let index = 0; index < PLAINS_MAP_DENSITY.glow; index += 1) {
+    soft.push({
+      x: rng() * width,
+      y: rng() * height,
+      w: 10 + rng() * 14,
+      h: 8 + rng() * 12,
+      kind: 'dawnglow',
+      fill: 'rgba(255, 245, 157, 0.28)',
+      drift: { vx: (rng() - 0.5) * 10, vy: -6 - rng() * 10 },
+    });
+  }
+
+  return { soft, solids };
 }
 
 /** True when a monster body would be standing inside a solid prop. */
